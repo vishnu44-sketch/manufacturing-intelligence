@@ -132,7 +132,7 @@ ITEMS = [
     {"id": "Q54", "question": "Which items were in stock on 20-Mar-2027 but had no sales between 21-Sep-2026 and 20-Mar-2027?",
      "must_have": ["4,097", "872"], "must_not": ["ca0092", "test bench"]},
     {"id": "Q55", "question": "How many sales orders are still open, and what is their total value?",
-     "must": "SELECT ROUND(SUM(total_amount), 2) FROM fact_sales_order_lines WHERE status = 'Open'",
+     "must": "SELECT ROUND(SUM(total_amount), 2) FROM fact_sales_order_lines WHERE status = 'Open' AND order_date <= CURDATE()",
      "must_have": ["before gst"]},
     {"id": "Q56", "question": "Which orders in FY 2026-27 had a delivery date more than 30 days after the order date",
      "must_not": ["delivered on"]},

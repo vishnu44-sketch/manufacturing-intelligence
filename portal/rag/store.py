@@ -127,7 +127,10 @@ def rebuild(chunks, path=None):
     vectors = embed.embed_documents([c.get("embed_text", c["text"]) for c in chunks]) if chunks else []
     points = [models.PointStruct(id=point_id(c["id"]), vector=vector,
                                  payload={"id": c["id"], "text": c["text"], "source": c["source"],
-                                          "heading": c["heading"], "kind": c["kind"]})
+                                          "heading": c["heading"], "kind": c["kind"],
+                                          # the same details where LangChain's QdrantVectorStore reads them
+                                          "metadata": {"id": c["id"], "source": c["source"],
+                                                       "heading": c["heading"], "kind": c["kind"]}})
               for c, vector in zip(chunks, vectors)]
     client = _client(path)
     with _qdrant_errors():

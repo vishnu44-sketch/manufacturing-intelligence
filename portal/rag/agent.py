@@ -42,6 +42,7 @@ import sqlglot
 from django.utils import timezone
 from sqlglot import exp
 
+from ..lc.switch import use_langchain
 from ..models import Question
 from . import store, warehouse
 from .sql_guard import GuardError, check_sql, strip_fences
@@ -444,6 +445,20 @@ def ask(question, user, context=None):
     return result
 
 
+def _find_notes(text):
+    """The TOP_K doc pieces closest to the text: through LangChain (USE_LANGCHAIN=on) or the classic store.search()."""
+    if use_langchain():
+        from ..lc import vectorstore
+        return vectorstore.search(text, top_k=TOP_K)
+    return search(text, top_k=TOP_K)
+
+
+def _langchain_request(chain, values, messages=None):
+    """An AI call for the LangChain version: _chat() sends it through portal/lc/ (calls.LcRequest)."""
+    from ..lc.calls import LcRequest
+    return LcRequest(chain, values, messages if messages is not None else [])
+
+
 @contextmanager
 def _timed(result, step):
     """Adds the seconds of the work inside the with-block to the step - also when it raises."""
@@ -481,8 +496,8 @@ def _answer(result, context=()):
     store.last_search.embed_secs = None
     started = time.perf_counter()
     try:
-        hits = search(search_text, top_k=TOP_K)
-    finally:  # the embedding is timed inside store.search(); the rest is Qdrant's search
+        hits = _find_notes(search_text)
+    finally:  # the embedding is timed inside the search; the rest is Qdrant's search
         embed_secs = getattr(store.last_search, "embed_secs", None)
         if embed_secs is not None:
             result.add_secs("embed", embed_secs)
@@ -495,17 +510,21 @@ def _answer(result, context=()):
     with _timed(result, "schema"):
         allowed = warehouse.allowed_tables()
         schema, full_schema_shown = schema_for_prompt(asked, hits)
+    sql_values = dict(
+        schema=schema,
+        count=len(hits),
+        documents="\n\n---\n\n".join(h["text"] for h in hits),
+        today=timezone.localdate().strftime("%d-%b-%Y (%A)"),
+        earlier=earlier_text(context),
+        question=result.text + (f"\n(Written out in full: {result.understood_as})" if result.understood_as else ""),
+    )
     messages = [
         {"role": "system", "content": SQL_SYSTEM_PROMPT},
-        {"role": "user", "content": SQL_REQUEST.format(
-            schema=schema,
-            count=len(hits),
-            documents="\n\n---\n\n".join(h["text"] for h in hits),
-            today=timezone.localdate().strftime("%d-%b-%Y (%A)"),
-            earlier=earlier_text(context),
-            question=result.text + (f"\n(Written out in full: {result.understood_as})" if result.understood_as else ""),
-        )},
+        {"role": "user", "content": SQL_REQUEST.format(**sql_values)},
     ]
+    # USE_LANGCHAIN=on: the same call through LangChain's SQL chain (the template gets sql_values; the
+    # failed tries that the loop below adds to `messages` become its retries) - portal/lc/calls.py
+    request = _langchain_request("sql", sql_values, messages) if use_langchain() else messages
     problem, last_sql = "", ""
     name_check_used = False  # a query that adds name matches into one number is sent back only once
     profit_switched = False  # a profit % between two periods is sent back once for the revenue growth
@@ -515,14 +534,14 @@ def _answer(result, context=()):
     for attempt in range(1, MAX_TRIES + 1):
         result.tries = attempt
         try:
-            reply = _ask_ai(client, messages, SQL_MAX_TOKENS, "medium", result, step="sql")
+            reply = _ask_ai(client, request, SQL_MAX_TOKENS, "medium", result, step="sql")
         except RequestTooLarge:
             # 22-Oct: a retry with the full schema asked for 8,071 tokens, over the 8,000 a minute: send it without
             if not schema_note or schema_note not in messages[-1]["content"]:
                 raise
             log.info("Retry too large for Groq's tokens per minute - sent again without the full schema")
             messages[-1]["content"] = messages[-1]["content"].replace(schema_note, "")
-            reply = _ask_ai(client, messages, SQL_MAX_TOKENS, "medium", result, step="sql")
+            reply = _ask_ai(client, request, SQL_MAX_TOKENS, "medium", result, step="sql")
         kind, sql = read_sql_reply(reply)
         if kind == "no_sql":  # off-topic, a request to change data, or an attempt to bend the rules
             result.status, result.answer = "refused", REFUSAL_ANSWER
@@ -676,15 +695,26 @@ def explain(client, result):
     """Groq call #2: a short plain-English answer from the question, the SQL and the rows.
     The backup model gets fewer rows (its free tier allows a smaller request)."""
     def messages_for(model):
-        if model == fallback_model_name():
-            return explain_messages(result, FALLBACK_ROWS_FOR_ANSWER, FALLBACK_MAX_ANSWER_CHARS)
-        return explain_messages(result, ROWS_FOR_ANSWER)
+        backup = model == fallback_model_name()
+        max_rows = FALLBACK_ROWS_FOR_ANSWER if backup else ROWS_FOR_ANSWER
+        max_chars = FALLBACK_MAX_ANSWER_CHARS if backup else None
+        if use_langchain():  # the same values, filled in by LangChain's answer template (portal/lc/)
+            return _langchain_request("answer", explain_values(result, max_rows, max_chars))
+        return explain_messages(result, max_rows, max_chars)
     return fy_labels(plain_text(_ask_ai(client, messages_for, ANSWER_MAX_TOKENS, "low", result, step="answer")))
 
 
 def explain_messages(result, max_rows, max_chars=None):
     """The messages of the answer call with at most max_rows rows; with max_chars, rows are
     halved (down to 5) until the request text fits."""
+    return [{"role": "system", "content": EXPLAIN_SYSTEM_PROMPT},
+            {"role": "user", "content": EXPLAIN_REQUEST.format(**explain_values(result, max_rows, max_chars))}]
+
+
+def explain_values(result, max_rows, max_chars=None):
+    """The {fields} of EXPLAIN_REQUEST for this result (question, sql, note, understood, periods, table), with at
+    most max_rows rows; with max_chars, rows are halved (down to 5) until the request text fits. Used by both
+    versions: explain_messages() fills the text itself, the LangChain version through its template."""
     lines = [" | ".join(result.columns)]
     for row in result.rows[:max_rows]:
         lines.append(" | ".join(format_value(v, c)[0] for v, c in zip(row, result.columns)))
@@ -717,15 +747,15 @@ def explain_messages(result, max_rows, max_chars=None):
             note += f"; only the first {shown} are shown here"
         if result.truncated:
             note += "; the query stopped at 500 rows, there are more (so the lowest rows are not here)"
-        request = EXPLAIN_REQUEST.format(
+        values = dict(
             question=result.text, sql=result.sql, note=note,
             understood=f"\n(Understood as: {result.understood_as})" if result.understood_as else "",
             periods=("\nPeriods used by the query:\n" + "\n".join(periods) + "\n") if periods else "",
             table=("\n".join(lines) if shown else "(no rows)") + data_dates
             + ("\n\nNote: " + " ".join(result.notes) if result.notes else ""))
+        request = EXPLAIN_REQUEST.format(**values)
         if max_chars is None or len(EXPLAIN_SYSTEM_PROMPT) + len(request) <= max_chars or shown <= 5:
-            return [{"role": "system", "content": EXPLAIN_SYSTEM_PROMPT},
-                    {"role": "user", "content": request}]
+            return values
         lines = lines[:1 + max(5, shown // 2)]
 
 
@@ -1079,6 +1109,8 @@ def rewrite_follow_up(client, result, context):
                         for n, q in enumerate(context, 1))
     messages = [{"role": "system", "content": REWRITE_SYSTEM_PROMPT},
                 {"role": "user", "content": REWRITE_REQUEST.format(earlier=earlier, question=result.text)}]
+    if use_langchain():  # the same call through LangChain's rewrite chain (portal/lc/)
+        messages = _langchain_request("rewrite", {"earlier": earlier, "question": result.text})
     try:
         reply = _ask_ai(client, messages, REWRITE_MAX_TOKENS, "low", result, step="sql", timed_as="rewrite")
     except AIUnavailable as exc:
@@ -1554,7 +1586,11 @@ def _model_options(model, effort):
 def _chat(client, messages, max_tokens, effort, model=None):
     """One Groq chat call -> (reply text, total tokens Groq reported or None, True when the reply
     stopped at max_tokens). Waits and retries on a per-minute rate limit (429); raises
-    DailyLimitReached on a daily limit, and AIUnavailable with a friendly message when Groq cannot answer."""
+    DailyLimitReached on a daily limit, and AIUnavailable with a friendly message when Groq cannot answer.
+    messages = a LangChain request (USE_LANGCHAIN=on): the call goes through its chain, with the same rules."""
+    if not isinstance(messages, list):
+        from ..lc import calls
+        return calls.chat(messages, max_tokens, effort, model)
     model = model or model_name()
     attempt = 0
     while True:

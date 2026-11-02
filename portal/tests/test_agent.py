@@ -957,10 +957,11 @@ def test_end_to_end_open_sales_orders(real_services, monkeypatch, user):
     check = warehouse.run_select(
         "SELECT COUNT(DISTINCT so_number, YEAR(order_date) - (MONTH(order_date) < 4)), COUNT(*), "
         "ROUND(SUM(total_amount), 2), ROUND(SUM(total_amount + tax_total), 2) "
-        "FROM fact_sales_order_lines WHERE status = 'Open'")
-    assert result.rows == check["rows"]
+        "FROM fact_sales_order_lines WHERE status = 'Open' AND order_date <= CURDATE()")
+    assert [row[:4] for row in result.rows] == check["rows"]          # + as_of_date = today
+    assert result.columns[-1] == "as_of_date" and result.rows[0][-1] == date.today()
     if base_data_only():
-        assert result.rows == [[27, 50, Decimal("16547240.00"), Decimal("18834723.20")]]
+        assert [row[:4] for row in result.rows] == [[27, 50, Decimal("16547240.00"), Decimal("18834723.20")]]
 
 
 def test_end_to_end_net_sales_per_nop_month(real_services, monkeypatch, user):

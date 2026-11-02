@@ -90,14 +90,16 @@ Also asked as: order backlog; pending orders not yet invoiced; value of open ord
 SELECT COUNT(DISTINCT s.so_number, c.financial_year) AS open_orders,
        COUNT(*) AS open_order_lines,
        ROUND(SUM(s.total_amount), 2) AS open_value_before_gst_inr,
-       ROUND(SUM(s.total_amount + s.tax_total), 2) AS open_value_incl_gst_inr
+       ROUND(SUM(s.total_amount + s.tax_total), 2) AS open_value_incl_gst_inr,
+       CURDATE() AS as_of_date
 FROM fact_sales_order_lines s
 JOIN dim_calendar c ON c.date_id = s.order_date_id
-WHERE s.status = 'Open';
+WHERE s.status = 'Open'
+  AND s.order_date <= CURDATE();
 ```
 
-Why: an order = so_number + financial year (SO numbers restart every FY); order value before GST = total_amount.
-Expected: (base data) 27 open orders, 50 lines, 16,547,240.00 INR before GST (18,834,723.20 incl. GST).
+Why: an order = so_number + financial year (SO numbers restart every FY); order value before GST = total_amount; only orders dated up to today (the data also has test orders dated after today) - the answer says "as of" today's date.
+Expected: (base data) 27 open orders, 50 lines, 16,547,240.00 INR before GST (18,834,723.20 incl. GST). (02-Nov-2026, base + batch data) 10 open orders, 14 lines, 5,335,415.00 before GST (6,059,202.20 incl. GST) - without the date filter 2,198 orders, most of them dated after today.
 
 ## Q: Which customers have open sales orders, and for how much?
 
@@ -106,16 +108,18 @@ Also asked as: open orders by customer; customer-wise pending order value.
 ```sql
 SELECT cu.customer_name,
        COUNT(DISTINCT s.so_number, c.financial_year) AS open_orders,
-       ROUND(SUM(s.total_amount), 2) AS open_value_before_gst_inr
+       ROUND(SUM(s.total_amount), 2) AS open_value_before_gst_inr,
+       CURDATE() AS as_of_date
 FROM fact_sales_order_lines s
 JOIN dim_calendar c ON c.date_id = s.order_date_id
 JOIN dim_customers cu ON cu.customer_id = s.customer_id
 WHERE s.status = 'Open'
+  AND s.order_date <= CURDATE()
 GROUP BY cu.customer_id, cu.customer_name
 ORDER BY open_value_before_gst_inr DESC;
 ```
 
-Why: open = status 'Open'; orders counted by so_number + financial year; value before GST.
+Why: open = status 'Open', only orders dated up to today; orders counted by so_number + financial year; value before GST.
 Expected: (base data) 16 customers (total 16,547,240.00); top 3 Zenith Precision Components LLP 2 orders 2,934,000.00; Everest Engineering Works Ltd 3 orders 2,502,125.00; Apex Machine Tools Private Limited 5 orders 2,276,140.00; smallest Neptune Fluid Power Limited 1 order 5,000.00.
 
 ## Q: Which credit notes (sales returns and rate differences) were issued in FY 2026-27?

@@ -88,7 +88,7 @@ Every rule names the exact tables and columns to use. Amounts are INR unless a r
 ## Sales order status - open, closed and cancelled orders
 
 - `fact_sales_order_lines.status`: 'Open' = ordered, not yet (fully) invoiced; 'Closed' = completed; 'Canceled' = cancelled (spelt with one L).
-- Open orders / order backlog / pending orders: `WHERE s.status = 'Open'`; value = `SUM(s.total_amount)` before GST (add `tax_total` for incl. GST).
+- Open orders / order backlog / pending orders: `WHERE s.status = 'Open' AND s.order_date <= CURDATE()`; value = `SUM(s.total_amount)` before GST (add `tax_total` for incl. GST). Only orders dated up to TODAY: the data also has test orders dated after today, which are not real orders yet. Return `CURDATE() AS as_of_date` and say "as of today" with the date (e.g. "as of 02-Nov-2026").
 - Order intake / orders booked: leave out cancelled lines with `s.status <> 'Canceled'`.
 - The status is the same on every line of one order.
 - Overdue open lines: `status = 'Open' AND delivery_date < CURDATE()`.
