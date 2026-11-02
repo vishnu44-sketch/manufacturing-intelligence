@@ -1,0 +1,23 @@
+# secrets - never commit
+.env
+
+# local only
+venv/
+.fastembed_cache/
+db.sqlite3
+__pycache__/
+*.pyc
+
+# generated test batches (big files) - make them with loader/make_messy_batch.py
+inputdata_batches/
+
+# not in git: documents for people (local only) and the client data files
+ai-document/
+inputdata/
+# local only: notes, setup template and test settings
+PLAN.md
+README.md
+.env.example
+
+# golden-set runs: the answers stay local, only eval_results/scores.csv goes into git
+eval_results/*.json

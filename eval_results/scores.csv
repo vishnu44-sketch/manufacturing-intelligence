@@ -1,0 +1,3 @@
+when,set,model,asked,of,pass,partial,fail,tokens,commit,not_pass,file
+2026-10-28 12:29,quick,openai/gpt-oss-120b,15,15,12,0,3,105262,e467c92+changes,Q42:FAIL Q46:FAIL Q58:FAIL,quick_main_2026-10-28_1215.json
+2026-10-28 12:33,quick,openai/gpt-oss-120b,15,15,14,0,1,108477,e467c92+changes,Q46:FAIL,quick_main_2026-10-28_1215.json

@@ -1,0 +1,60 @@
+{% extends "portal/base.html" %}
+{% block title %}History · NOP Intelligence{% endblock %}
+{% block page_title %}History{% endblock %}
+{% block content %}
+
+{% include "portal/_usage_box.html" %}
+
+<div class="mut">Your own questions, newest first.</div>
+
+{% if questions %}
+<div class="twrap scroll">
+  <table class="t">
+    <tr><th>Asked on</th><th>Question</th><th>Answer</th><th class="num">Rows</th><th class="num">Seconds</th><th class="num">Tokens</th><th>Status</th><th></th></tr>
+    {% for q in questions %}
+    <tr>
+      <td style="white-space:nowrap;">{{ q.created_at|date:"d M Y h:i A" }}</td>
+      <td style="color:#212529;font-weight:500;">{{ q.text }}{% if q.understood_as %}<div class="mut">Understood as: {{ q.understood_as }}</div>{% endif %}{% if q.replaced_by_id %}<div class="mut">edited - replaced by a newer version</div>{% endif %}</td>
+      <td>{{ q.answer|truncatechars:140|default:"-" }}</td>
+      <td class="num">{{ q.rows_count|default_if_none:"-" }}</td>
+      <td class="num">{% if q.secs is not None %}{{ q.secs|floatformat:1 }}{% else %}-{% endif %}</td>
+      <td class="num">{{ q.total_tokens_text }}</td>
+      <td>
+        {% if q.status == "ok" %}<span class="chip ok">ANSWERED</span>
+        {% elif q.status == "nodata" %}<span class="chip info">NO DATA</span>
+        {% elif q.status == "refused" %}<span class="chip skip">REFUSED</span>
+        {% else %}<span class="chip fail">FAILED</span>{% endif %}
+        {% if q.model and q.model != main_model %}<div class="mut" title="{{ q.model }}">backup model</div>{% endif %}
+      </td>
+      <td>
+        <div class="actions">
+          <form method="post" action="{% url 'ask' %}">{% csrf_token %}
+            <input type="hidden" name="question" value="{{ q.understood_as|default:q.text }}">
+            <button type="submit" class="btn secondary small">Ask again</button>
+          </form>
+          {% if q.status == "ok" and q.sql %}
+          <a class="btn secondary small" href="{% url 'ask_excel' q.pk %}">Excel</a>
+          {% endif %}
+        </div>
+      </td>
+    </tr>
+    {% endfor %}
+  </table>
+</div>
+
+{% if page_obj.has_other_pages %}
+<div class="pager">
+  {% if page_obj.has_previous %}<a class="btn secondary small" href="?page={{ page_obj.previous_page_number }}">&larr; Newer</a>{% endif %}
+  <span class="mut">Page {{ page_obj.number }} of {{ page_obj.paginator.num_pages }} · {{ page_obj.paginator.count }} questions</span>
+  {% if page_obj.has_next %}<a class="btn secondary small" href="?page={{ page_obj.next_page_number }}">Older &rarr;</a>{% endif %}
+</div>
+{% endif %}
+{% else %}
+<div class="card">
+  <div class="h2">No questions yet</div>
+  <div class="mut" style="margin-bottom:14px;">You have not asked anything yet. Your questions will show up here.</div>
+  <a class="btn primary" href="{% url 'ask' %}">Go to Ask AI</a>
+</div>
+{% endif %}
+
+{% endblock %}

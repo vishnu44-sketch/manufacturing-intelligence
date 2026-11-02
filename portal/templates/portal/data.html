@@ -1,0 +1,46 @@
+{% extends "portal/base.html" %}
+{% block title %}Data · NOP Intelligence{% endblock %}
+{% block page_title %}Data{% endblock %}
+{% block content %}
+
+<div class="card">
+  <div class="h2">Records in each table</div>
+  <div class="mut">The tables of the NOP data (MySQL {{ database|default:"ai_gold" }}) that the AI reads, counted now with the
+    read-only user. After a data load the new counts show here at once. This page only reads - it never asks the AI.</div>
+  {% if tables %}
+  <div class="doc-counts">
+    <span class="ex on">{{ total }} records in {{ table_count }} tables</span>
+    {% if invoices_from %}<span class="ex">Invoices: {{ invoices_from|date:"d M Y" }} to {{ invoices_to|date:"d M Y" }}</span>{% endif %}
+    {% if last_load %}<span class="ex">Last data load: {{ last_load|date:"d M Y h:i A" }}</span>{% endif %}
+  </div>
+  {% endif %}
+</div>
+
+{% if mysql_error %}
+<div class="errbox">The NOP data (MySQL) cannot be read right now: {{ mysql_error }}</div>
+{% else %}
+<div class="twrap scroll">
+  <table class="t">
+    <tr><th>Table</th><th>What it holds</th><th>Type</th><th class="num">Records</th></tr>
+    {% for t in tables %}
+    <tr>
+      <td><code>{{ t.name }}</code></td>
+      <td>{{ t.note|default:"-" }}</td>
+      <td><span class="chip {% if t.kind == 'Main data' %}ok{% elif t.kind == 'Lookup' %}info{% else %}skip{% endif %}">{{ t.kind|upper }}</span></td>
+      <td class="num">{{ t.rows_text }}</td>
+    </tr>
+    {% empty %}
+    <tr><td colspan="4" class="mut">No tables found.</td></tr>
+    {% endfor %}
+    {% if tables %}
+    <tr>
+      <td colspan="3" style="font-weight:600;color:#212529;">Total</td>
+      <td class="num" style="font-weight:600;color:#212529;">{{ total }}</td>
+    </tr>
+    {% endif %}
+  </table>
+</div>
+<div class="mut">Most lookup tables also hold one "Unknown" row (id -1), which is counted here (for lines whose customer, product ... was not found).</div>
+{% endif %}
+
+{% endblock %}

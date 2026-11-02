@@ -1,0 +1,39 @@
+# Ask NOP MCP server + its search index (Qdrant).
+#   docker compose up -d --build        then: docker compose logs -f mi-mcp   (shows the PUBLIC MCP LINK)
+# Secrets come from .env at run time (never copied into the image).
+# Production: set CLOUDFLARE_TUNNEL_TOKEN (the company's fixed tunnel) and DOCKER_MYSQL_HOST (the MySQL server).
+name: manufacturing-intelligence
+
+services:
+  qdrant:
+    image: qdrant/qdrant:v1.19.2
+    restart: unless-stopped
+    environment:
+      QDRANT__SERVICE__API_KEY: ${QDRANT_API_KEY:?set QDRANT_API_KEY in .env}
+    volumes:
+      - qdrant_data:/qdrant/storage
+
+  mi-mcp:
+    build: .
+    image: manufacturing-intelligence-mcp:latest
+    restart: unless-stopped
+    depends_on:
+      - qdrant
+    env_file: .env
+    environment:
+      QDRANT_URL: http://qdrant:6333
+      MYSQL_HOST: ${DOCKER_MYSQL_HOST:-host.docker.internal}
+      PUBLIC_LINK: ${PUBLIC_LINK:-quick}
+      CLOUDFLARE_TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:-}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "127.0.0.1:${MI_MCP_PORT:-8096}:8000"   # this PC only (8000 is often taken); the public link goes through the tunnel
+    volumes:
+      - app_data:/app/data                     # History (SQLite)
+      - model_cache:/app/.fastembed_cache      # the search model (~210 MB, downloaded once)
+
+volumes:
+  qdrant_data:
+  app_data:
+  model_cache:

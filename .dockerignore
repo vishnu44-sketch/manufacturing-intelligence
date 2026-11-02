@@ -1,0 +1,18 @@
+# never into the image: secrets, local data, caches
+.env
+.env.*
+.git
+venv
+.fastembed_cache
+db.sqlite3
+__pycache__
+*.pyc
+.pytest_cache
+.claude
+ai-document
+inputdata
+inputdata_batches
+loader
+PLAN.md
+README.md
+eval_results

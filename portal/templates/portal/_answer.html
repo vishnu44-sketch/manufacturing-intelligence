@@ -1,0 +1,93 @@
+{% comment %}
+One saved answer. On the single-answer page (/ask/<id>/) everything is shown (bubble=True: the question is already
+shown as a bubble above, so it is not repeated in the card); in a chat on the Ask page (chat=True)
+the question is the bubble above, SQL and sources are folded, and only the newest answer has its rows table
+(rows_loaded) - older ones link to their own page. r = an AskResult built from the saved question.
+notice = the one-time token notice, only right after this question was asked (it fades away).
+{% endcomment %}
+<div class="card answer-card">
+  <div class="answer-head">
+    {% if r.status == "ok" %}<span class="chip ok">ANSWERED</span>
+    {% elif r.status == "nodata" %}<span class="chip info">DATA NOT AVAILABLE</span>
+    {% elif r.status == "refused" %}<span class="chip skip">NOT A NOP DATA QUESTION</span>
+    {% else %}<span class="chip fail">NOT ANSWERED</span>{% endif %}
+    <span class="mut">
+      {% if r.status == "ok" %}{% if rows_loaded %}{% if not rows_error %}{{ r.row_count }} row{{ r.row_count|pluralize }} · {% endif %}{% elif saved_rows is not None %}{{ saved_rows }} row{{ saved_rows|pluralize }} · {% endif %}{% endif %}{{ r.secs|floatformat:1 }} s{% if r.tries > 1 %} · {{ r.tries }} tries{% endif %}
+    </span>
+    {% if r.status == "ok" %}
+    <span class="answer-actions">
+      {% if chat and not rows_loaded %}<a class="btn secondary small" href="{% url 'ask_result' r.question.pk %}">Show rows</a>{% endif %}
+      <a class="btn secondary small" href="{% url 'ask_excel' r.question.pk %}">Download Excel</a>
+    </span>
+    {% endif %}
+  </div>
+  {% if not chat and not bubble %}<div class="asked">{{ r.text }}</div>{% endif %}
+  {% if r.understood_as %}<div class="understood mut">Understood as: {{ r.understood_as }}</div>{% endif %}
+  <div class="answer">{{ r.answer|linebreaksbr }}</div>
+  {% if r.answered_by_backup %}
+  <div class="mut backup-note">Answered by the backup model ({{ r.model }}) - the main model's daily limit was reached.</div>
+  {% endif %}
+  {% if notice %}<div class="token-notice" data-fade-after="20000" role="status">{{ notice }}</div>{% endif %}
+  {% with steps=r.time_steps %}{% if steps %}
+  <details class="chat-more time-steps"><summary>Time taken: {{ r.secs|floatformat:1 }} s</summary>
+    <table class="steps">
+      {% for s in steps %}
+      <tr><td>{{ s.label }}{% if s.note %} <span class="mut">({{ s.note }})</span>{% endif %}</td>
+          <td class="num">{% if s.secs < 0.1 %}{{ s.secs|floatformat:2 }}{% else %}{{ s.secs|floatformat:1 }}{% endif %} s</td></tr>
+      {% endfor %}
+    </table>
+  </details>
+  {% endif %}{% endwith %}
+  {% if chat %}
+    {% if r.status == "ok" and r.sql %}
+    <details class="chat-more"><summary>Show SQL</summary><pre class="sql">{{ r.sql }}</pre></details>
+    {% endif %}
+    {% if r.sources %}
+    <details class="chat-more"><summary>Sources used ({{ r.sources|length }})</summary>
+      <div class="sources">
+        {% for s in r.sources %}
+        <div class="src"><span class="chip {% if s.kind == 'example' %}ok{% elif s.kind == 'rule' %}skip{% else %}info{% endif %}">{{ s.kind|upper }}</span> {{ s.heading }}</div>
+        {% endfor %}
+      </div>
+    </details>
+    {% endif %}
+  {% endif %}
+</div>
+
+{% if r.status == "ok" and rows_loaded %}
+  {% if rows_error %}
+  <div class="errbox">{{ rows_error }}</div>
+  {% elif r.rows %}
+  <div class="twrap scroll">
+    <table class="t">
+      <tr>{% for h in r.headers %}<th{% if h.num %} class="num"{% endif %}>{{ h.name }}</th>{% endfor %}</tr>
+      {% for row in r.table %}
+      <tr>{% for cell in row %}<td{% if cell.num %} class="num"{% endif %}>{{ cell.text }}</td>{% endfor %}</tr>
+      {% endfor %}
+    </table>
+  </div>
+  {% if r.truncated %}<div class="mut">Only the first 500 rows are shown (and in the Excel file).</div>{% endif %}
+  {% else %}
+  <div class="card"><div class="mut">The query ran but returned no rows.</div></div>
+  {% endif %}
+{% endif %}
+
+{% if not chat %}
+  {% if r.status == "ok" %}
+  <details class="card sqlbox">
+    <summary>Show SQL</summary>
+    <pre class="sql">{{ r.sql }}</pre>
+  </details>
+  {% endif %}
+
+  {% if r.sources %}
+  <div class="card">
+    <div class="h2">Sources used</div>
+    <div class="sources">
+      {% for s in r.sources %}
+      <div class="src"><span class="chip {% if s.kind == 'example' %}ok{% elif s.kind == 'rule' %}skip{% else %}info{% endif %}">{{ s.kind|upper }}</span> {{ s.heading }}</div>
+      {% endfor %}
+    </div>
+  </div>
+  {% endif %}
+{% endif %}
