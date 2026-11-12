@@ -64,11 +64,12 @@ The compose file runs MySQL 8.4 itself (service `mysql`), so the PC needs only D
 - The data files are in the Docker volume `mysql_data`. They stay when the containers stop, when the PC
   restarts, after `docker compose down` and after an update of the app. They are deleted only by
   `docker compose down -v` or by removing the volume by hand.
-- On the FIRST start (empty volume) `docker/mysql-init/01-databases-and-users.sh` makes the data schema
-  (`AI_GOLD_DATABASE`), the app's schema (`APP_DB_NAME`) with its user (`APP_DB_USER`, all rights there only)
-  and the read-only AI user (`AI_DB_USER`, SELECT on the data schema only). Names and passwords come from
-  `.env`. A password changed in `.env` later is NOT changed in MySQL by itself (the script runs once).
-- `mi-web` and `mi-mcp` wait until MySQL answers, then start. MySQL is reachable from the containers as
+- On every start the small service `mysql-setup` runs `docker/mysql-setup/databases-and-users.sh`: it makes
+  the data schema (`AI_GOLD_DATABASE`), the app's schema (`APP_DB_NAME`) with its user (`APP_DB_USER`, all
+  rights there only) and the read-only AI user (`AI_DB_USER`, SELECT on the data schema only), when they are
+  missing. Names and passwords come from `.env`; it drops nothing, and a password changed in `.env` reaches
+  MySQL at the next `docker compose up -d`. (`DOCKER_MYSQL_ROOT_PASSWORD` itself is fixed at the first start.)
+- `mi-web` and `mi-mcp` start only after MySQL answers and that setup ended well. MySQL is reachable from the containers as
   `mysql:3306` and from this PC as `127.0.0.1:3307` (`MI_MYSQL_PORT`) - never from other machines.
 
 ### First start on a new PC (e.g. the office computer)

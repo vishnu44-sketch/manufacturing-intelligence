@@ -10,20 +10,13 @@
 name: manufacturing-intelligence
 
 services:
-  # MySQL 8.4 for the data (ai_gold) and the app's own schema (chats, history, users). The schemas and the two
-  # users are made on the first start (docker/mysql-init); the data files live in the mysql_data volume, so they
-  # stay over restarts, updates and "docker compose down" (only "down -v" deletes them).
+  # MySQL 8.4 for the data (ai_gold) and the app's own schema (chats, history, users). The data files live in the
+  # mysql_data volume, so they stay over restarts, updates and "docker compose down" (only "down -v" deletes them).
   mysql:
     image: mysql:8.4.6
     restart: unless-stopped
     environment:
       MYSQL_ROOT_PASSWORD: ${DOCKER_MYSQL_ROOT_PASSWORD:?set DOCKER_MYSQL_ROOT_PASSWORD in .env}
-      AI_GOLD_DATABASE: ${AI_GOLD_DATABASE:-ai_gold}
-      APP_DB_NAME: ${APP_DB_NAME:-}
-      APP_DB_USER: ${APP_DB_USER:-}
-      APP_DB_PASSWORD: ${APP_DB_PASSWORD:-}
-      AI_DB_USER: ${AI_DB_USER:-}
-      AI_DB_PASSWORD: ${AI_DB_PASSWORD:-}
       TZ: ${TZ:-Asia/Kolkata}                    # CURRENT_DATE in the SQL = the office's day
     command: ["--character-set-server=utf8mb4", "--collation-server=utf8mb4_unicode_ci"]
     healthcheck:   # over TCP: healthy only when the real server is up (the first-start setup has no network)
@@ -36,8 +29,27 @@ services:
       - "127.0.0.1:${MI_MYSQL_PORT:-3307}:3306"   # this PC only, for a MySQL tool (3306 may be taken by a local MySQL)
     volumes:
       - mysql_data:/var/lib/mysql
-      - ./docker/mysql-init:/docker-entrypoint-initdb.d:ro
       - ./backups:/backups                       # the backup command in DEPLOY.md writes here
+
+  # makes the schemas and the two users (docker/mysql-setup) - on every start, safe to repeat, drops nothing.
+  # The website, the MCP server and the loader start only after it ended well.
+  mysql-setup:
+    image: mysql:8.4.6
+    restart: "no"
+    depends_on:
+      mysql:
+        condition: service_healthy
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DOCKER_MYSQL_ROOT_PASSWORD:?set DOCKER_MYSQL_ROOT_PASSWORD in .env}
+      AI_GOLD_DATABASE: ${AI_GOLD_DATABASE:-ai_gold}
+      APP_DB_NAME: ${APP_DB_NAME:-}
+      APP_DB_USER: ${APP_DB_USER:-}
+      APP_DB_PASSWORD: ${APP_DB_PASSWORD:-}
+      AI_DB_USER: ${AI_DB_USER:-}
+      AI_DB_PASSWORD: ${AI_DB_PASSWORD:-}
+    entrypoint: ["sh", "/setup/databases-and-users.sh"]
+    volumes:
+      - ./docker/mysql-setup:/setup:ro
 
   # one-off: fills ai_gold from inputdata/ (not in git - copy the folder next to this file first)
   #   docker compose --profile load run --rm loader
@@ -46,8 +58,8 @@ services:
     build: .
     image: manufacturing-intelligence:latest
     depends_on:
-      mysql:
-        condition: service_healthy
+      mysql-setup:
+        condition: service_completed_successfully
     env_file: .env
     environment:
       MYSQL_HOST: mysql
@@ -74,8 +86,8 @@ services:
     depends_on:
       qdrant:
         condition: service_started
-      mysql:
-        condition: service_healthy
+      mysql-setup:
+        condition: service_completed_successfully
     env_file: .env
     environment:
       QDRANT_URL: http://qdrant:6333
@@ -99,8 +111,8 @@ services:
     depends_on:
       qdrant:
         condition: service_started
-      mysql:
-        condition: service_healthy
+      mysql-setup:
+        condition: service_completed_successfully
     env_file: .env
     environment:
       QDRANT_URL: http://qdrant:6333

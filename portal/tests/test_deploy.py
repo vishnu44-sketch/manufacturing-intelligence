@@ -105,19 +105,25 @@ def test_compose_runs_mysql_with_a_volume_and_the_app_waits_for_it():
     compose = (REPO / "docker-compose.yml").read_text(encoding="utf-8")
     assert "  mysql:\n    image: mysql:8.4" in compose
     assert "- mysql_data:/var/lib/mysql" in compose and "\nvolumes:\n  mysql_data:" in compose
-    assert "MYSQL_ROOT_PASSWORD: ${DOCKER_MYSQL_ROOT_PASSWORD:?" in compose          # from .env, never in the file
+    assert compose.count("MYSQL_ROOT_PASSWORD: ${DOCKER_MYSQL_ROOT_PASSWORD:?") == 2  # from .env, never in the file
     assert compose.count("MYSQL_HOST: ${DOCKER_MYSQL_HOST:-mysql}") == 2            # the website and the MCP server
-    assert compose.count("      mysql:\n        condition: service_healthy") == 3   # both, and the loader
     assert '"127.0.0.1:${MI_MYSQL_PORT:-3307}:3306"' in compose                     # this PC only
     assert 'profiles: ["load"]' in compose and '"loader/load_gold.py"' in compose   # the one-off data load
+    # the schemas and users: a setup service on every start (12-Nov: a first-start-only script failed once and
+    # MySQL then ran for good without them); the website, the MCP server and the loader wait for it
+    assert '  mysql-setup:\n    image: mysql:8.4' in compose and "docker-entrypoint-initdb.d" not in compose
+    assert compose.count("      mysql-setup:\n        condition: service_completed_successfully") == 3
+    assert compose.count("      mysql:\n        condition: service_healthy") == 1
 
 
-def test_the_mysql_first_start_script_gives_only_the_needed_rights():
-    script = (REPO / "docker" / "mysql-init" / "01-databases-and-users.sh").read_bytes()
+def test_the_mysql_setup_script_gives_only_the_needed_rights_and_may_run_again():
+    script = (REPO / "docker" / "mysql-setup" / "databases-and-users.sh").read_bytes()
     assert b"\r\n" not in script                                                    # runs in Linux: LF only
     text = script.decode()
     assert "GRANT SELECT ON \\`$GOLD\\`.* TO '$AI_DB_USER'@'%'" in text              # the AI user: read-only
     assert "GRANT ALL PRIVILEGES ON \\`$APP_DB_NAME\\`.* TO '$APP_DB_USER'@'%'" in text  # the app user: its schema only
     assert text.count("GRANT ") == 2 and "*.*" not in text                          # nothing server-wide
+    assert text.count("IF NOT EXISTS") == 4 and "DROP " not in text                 # safe on every start
     assert '-p"$MYSQL_ROOT_PASSWORD' not in text                                    # no password on a command line
+    assert "s/[\\]/&&/g" in text                                                    # the sed that failed on 12-Nov
     assert "*.sh text eol=lf" in (REPO / ".gitattributes").read_text(encoding="utf-8")
