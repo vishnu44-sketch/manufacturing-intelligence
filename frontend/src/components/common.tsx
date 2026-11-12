@@ -19,7 +19,7 @@ export function NoAccess() {
       <div className="mut" style={{ margin: '6px 0 16px' }}>
         Only administrators can open it. If you need it, ask an administrator.
       </div>
-      <Link className="btn primary" to="/ask">Go to Ask AI</Link>
+      <Link className="btn primary" to="/ask">Go to the Assistant</Link>
     </div>
   )
 }
@@ -29,7 +29,7 @@ export function NotFound() {
     <div className="card">
       <div className="h2">This page does not exist</div>
       <div className="mut" style={{ margin: '6px 0 16px' }}>The address may be old or mistyped.</div>
-      <Link className="btn primary" to="/ask">Go to Ask AI</Link>
+      <Link className="btn primary" to="/ask">Go to the Assistant</Link>
     </div>
   )
 }

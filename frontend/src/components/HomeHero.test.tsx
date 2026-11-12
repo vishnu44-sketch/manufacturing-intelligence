@@ -49,9 +49,9 @@ describe('HomeHero', () => {
     expect(clock).toHaveTextContent('Friday, 06 November 2026 · 10:58 AM IST')
   })
 
-  it('has no Ask AI / Knowledge graph buttons: its only links are the example questions', () => {
+  it('has no Assistant / Knowledge graph buttons: its only links are the example questions', () => {
     const banner = hero()
-    expect(within(banner).queryByRole('link', { name: 'Ask AI' })).not.toBeInTheDocument()
+    expect(within(banner).queryByRole('link', { name: 'Assistant' })).not.toBeInTheDocument()
     expect(within(banner).queryByRole('link', { name: 'Knowledge graph' })).not.toBeInTheDocument()
     expect(within(banner).getAllByRole('link').map((link) => link.textContent)).toEqual(EXAMPLES)
   })

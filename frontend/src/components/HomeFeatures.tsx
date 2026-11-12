@@ -1,8 +1,8 @@
-// Home: the two big feature cards right under the welcome banner - Ask AI (the blue brand) and the Knowledge graph
+// Home: the two big feature cards right under the welcome banner - Assistant (the blue brand) and the Knowledge graph
 // (teal, so the two differ). Both work in light and dark (tokens and light / dark pairs; HomeFeatures.css has the
 // pictures' own dark colours). Each card says what the page does in one or two lines, shows three small points with icons and
 // has one big button that opens the page (the card itself is not a link). On the right a small moving picture:
-// a chat bubble "typing" and then a tiny bar chart growing (Ask AI), dots joined by lines that draw themselves
+// a chat bubble "typing" and then a tiny bar chart growing (Assistant), dots joined by lines that draw themselves
 // and gently pulse (the graph). The pictures are only decoration (aria-hidden), their motion is in
 // HomeFeatures.css and stops when the person asked for less motion.
 // Each card measures its own width (a container query): the picture shows only where the card is wide enough,
@@ -29,7 +29,7 @@ interface Feature {
   look: { glow: string; icon: string; point: string; button: string }
 }
 
-/** Ask AI: a chat bubble with three dots typing, then a small bar chart growing under it. */
+/** Assistant: a chat bubble with three dots typing, then a small bar chart growing under it. */
 function AskPicture() {
   return (
     <div className="hf-ask" aria-hidden="true">
@@ -62,11 +62,11 @@ function GraphPicture() {
 const FEATURES: Feature[] = [
   {
     key: 'ask',
-    title: 'Ask AI',
+    title: 'Assistant',
     text: 'Ask the company data in plain English. You get the answer in words, a chart and an Excel file - and every number comes from the database.',
     points: [[MessageSquare, 'Plain English'], [BarChart3, 'Charts'], [FileSpreadsheet, 'Excel']],
     to: '/ask',
-    button: 'Open Ask AI',
+    button: 'Open the Assistant',
     icon: MessageSquare,
     picture: <AskPicture />,
     look: {
@@ -131,7 +131,7 @@ function FeatureCard({ feature }: { feature: Feature }) {
 
 export default function HomeFeatures() {
   return (
-    <section aria-label="Ask AI and the Knowledge graph" className="@container min-w-0">
+    <section aria-label="The Assistant and the Knowledge graph" className="@container min-w-0">
       <div className="grid gap-4 @min-[900px]:grid-cols-2">
         {FEATURES.map((feature) => <FeatureCard key={feature.key} feature={feature} />)}
       </div>

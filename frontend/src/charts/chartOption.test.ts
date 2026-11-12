@@ -116,6 +116,27 @@ describe('the line', () => {
     expect(line.data[0]).toBe(13356235) // the data stays plain numbers
   })
 
+  it('many points (12-Nov, 31 days): straight lines with a small dot on each day; few points stay smooth', () => {
+    const days = (count: number) => table([['date', false], ['net_sales_inr', true]],
+      Array.from({ length: count }, (_, i) => [new Date(Date.UTC(2025, 11, 21 + i)).toISOString().slice(0, 10), i % 3 ? '0.00' : '2613765.00']))
+    const [few] = optionOf(days(16)).series
+    expect(few.smooth).toBeTruthy()                          // up to 16 points: as before
+    expect(few.symbolSize).toBeGreaterThanOrEqual(7)
+
+    const [month] = optionOf(days(31)).series
+    expect(month.smooth).toBe(false)                         // a peak is one day, not a hill over three
+    expect(month.showSymbol).toBe(true)
+    expect(month.symbol).toBe('circle')
+    expect(month.symbolSize).toBeLessThanOrEqual(5)
+    expect(month.itemStyle.borderWidth).toBe(1)
+
+    expect(optionOf(days(60)).series[0].showSymbol).toBe(true)            // the most points a line has
+    const [phone] = optionOf(days(60), null, true).series
+    expect(phone.smooth).toBe(false)
+    expect(phone.showSymbol).toBe(false)                     // on a phone, more than a month of days: the line alone
+    expect(optionOf(days(31), null, true).series[0].showSymbol).toBe(true)
+  })
+
   it('several lines: lighter fades; the last values for up to 3 lines (1 on a phone)', () => {
     const t = table([['month', false], ['net_sales_inr', true], ['gross_sales_inr', true]],
       [['Jan 2026', '10.00', '12.00'], ['Feb 2026', '11.00', '13.00']])

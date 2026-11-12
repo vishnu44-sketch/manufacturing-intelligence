@@ -1,6 +1,6 @@
 // The frame of every page: a top bar across the window (the "MI" mark and the product name on the left; on the
 // right "New chat", "History", the dark-mode button and the user's round badge, which opens a small menu with
-// the name, the role and "Sign out"), and under it the light menu on the left, in groups: Home (Home, Ask AI),
+// the name, the role and "Sign out"), and under it the light menu on the left, in groups: Home (Home, Assistant),
 // Intelligence (Knowledge graph), Tools (History, Memory) and - for staff only - Administration (Users,
 // Documents, Data, Audit). The page it is on is a filled pill. The browser tab shows "<page> · Manufacturing Intelligence".
 // Above the page is a row with its title (a page can go without it: header={false}, as Home does).
@@ -52,7 +52,7 @@ interface Group { name: string; staffOnly?: boolean; entries: Entry[] }
 const MENU: Group[] = [
   { name: 'Home', entries: [
     { to: '/', item: 'home', name: 'Home', icon: House },
-    { to: '/ask', item: 'ask', name: 'Ask AI', icon: MessageSquareText },
+    { to: '/ask', item: 'ask', name: 'Assistant', icon: MessageSquareText },
   ] },
   { name: 'Intelligence', entries: [
     { to: '/graph', item: 'graph', name: 'Knowledge graph', icon: Network },

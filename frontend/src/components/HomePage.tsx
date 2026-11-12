@@ -229,7 +229,7 @@ function Recent({ data, examples }: { data: HomeData; examples: string[] }) {
           <IconCircle icon={Sparkles} tone="brand" />
           <div>
             <div className="text-[14px] font-semibold text-heading">No questions yet - try one of these</div>
-            <div className={NOTE}>The Ask page opens with the question filled in; nothing is asked until you press Ask.</div>
+            <div className={NOTE}>The Assistant opens with the question filled in; nothing is asked until you press Ask.</div>
           </div>
         </div>
         {examples.length > 0 && (
@@ -462,7 +462,7 @@ export default function HomePage({ me }: { me: Me }) {
       {/* 1. welcome, with the quick start */}
       <HomeHero name={name} calendar={data?.calendar} loading={loading} examples={examples} />
 
-      {/* the two big feature cards: Ask AI and the Knowledge graph (no data needed, so always shown) */}
+      {/* the two big feature cards: the Assistant and the Knowledge graph (no data needed, so always shown) */}
       <HomeFeatures />
 
       {error && <PartError>{error}</PartError>}

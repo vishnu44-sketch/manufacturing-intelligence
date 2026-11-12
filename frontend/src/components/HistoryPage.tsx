@@ -163,7 +163,7 @@ function Questions({ page }: { page: number }) {
         <div className="card">
           <div className="h2">No questions yet</div>
           <div className="mut" style={{ marginBottom: 14 }}>You have not asked anything yet. Your questions will show up here.</div>
-          <Link className="btn primary" to="/ask">Go to Ask AI</Link>
+          <Link className="btn primary" to="/ask">Go to the Assistant</Link>
         </div>
       )}
     </>

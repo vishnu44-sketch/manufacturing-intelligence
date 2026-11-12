@@ -281,6 +281,9 @@ export type Built = { option: EChartsCoreOption; height: number; onClick?: (para
 
 /** The option and the height of the chart for this pick. narrow = a phone; width = the box's width in px
  *  (0 = not known yet); animate = the line draws itself, bars grow, a donut opens (off for reduced motion). */
+const MANY_POINTS = 16 // a line with more points than this is drawn straight, with small dots (a FY of months stays smooth)
+const MAX_DOTS_NARROW = 31 // on a phone: a line with more points than this has no dots (a line has at most 60 points)
+
 export function buildOption(pick: ChartPick, colours: Colours, narrow: boolean, width = 0, animate = wantsMotion()): Built {
   const n = pick.data.length
   const s = pick.ys.length
@@ -353,6 +356,11 @@ export function buildOption(pick: ChartPick, colours: Colours, narrow: boolean, 
       const fadeTop = stackedArea ? 0.7 : pick.kind === 'area' ? 0.35 : s > 1 ? 0.12 : 0.25
       const fadeBottom = stackedArea ? 0.35 : 0
       const endLabels = !stackedArea && s <= (narrow ? 1 : 3)
+      // 12-Nov: 31 days, 10 of them with no sales, drawn smooth looked like sales rising and falling over 2-3
+      // days. Many points (more than 16): straight lines and a small dot on each point, so a peak is one day.
+      // On a phone more than 31 points get no dots: they would only make a thick band there.
+      const many = n > MANY_POINTS
+      const dots = !narrow || n <= MAX_DOTS_NARROW
       const option = {
         ...base, tooltip: axisTip,
         grid: { ...grid, right: endLabels ? (narrow ? 52 : 64) : grid.right },
@@ -362,9 +370,9 @@ export function buildOption(pick: ChartPick, colours: Colours, narrow: boolean, 
         series: pick.ys.map((_, i) => {
           const colour = colourOf(i)
           return {
-            type: 'line', name: seriesName(i), data: pick.data.map((p) => p.values[i]), smooth: 0.35,
-            symbol: n <= 24 ? 'circle' : 'none', symbolSize: narrow ? 6 : 8, showSymbol: n <= 24,
-            itemStyle: { color: colour, borderColor: colours.surface, borderWidth: 2 },
+            type: 'line', name: seriesName(i), data: pick.data.map((p) => p.values[i]), smooth: many ? false : 0.35,
+            symbol: dots ? 'circle' : 'none', symbolSize: many ? (narrow ? 4 : 5) : (narrow ? 6 : 8), showSymbol: dots,
+            itemStyle: { color: colour, borderColor: colours.surface, borderWidth: many ? 1 : 2 },
             lineStyle: { width: s > 1 ? 2 : 2.5, color: colour, shadowBlur: 8, shadowColor: fade(colour, 0.35), shadowOffsetY: 3 },
             areaStyle: { color: gradient(true, [[0, fade(colour, fadeTop)], [1, fade(colour, fadeBottom)]]) },
             emphasis: { focus: 'series', lineStyle: { width: s > 1 ? 2.5 : 3 } },
