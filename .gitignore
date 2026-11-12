@@ -21,3 +21,12 @@ README.md
 
 # golden-set runs: the answers stay local, only eval_results/scores.csv goes into git
 eval_results/*.json
+
+# React app (frontend/): its packages, and the build that npm run build writes for Django (/app/)
+frontend/node_modules/
+portal/static/portal/app/
+# (README.md above is local only; the React app's short command list goes into git)
+!frontend/README.md
+
+# collectstatic output (python manage.py collectstatic) - made on each machine / in the Docker image
+staticfiles/

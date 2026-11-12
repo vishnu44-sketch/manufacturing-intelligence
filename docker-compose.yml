@@ -1,6 +1,7 @@
-# Ask NOP MCP server + its search index (Qdrant).
+# Manufacturing Intelligence: the website, the MCP server and their search index (Qdrant). One image for both.
 #   docker compose up -d --build        then: docker compose logs -f mi-mcp   (shows the PUBLIC MCP LINK)
-# Secrets come from .env at run time (never copied into the image).
+#   the website: http://127.0.0.1:8094 (MI_WEB_PORT)          the MCP server: http://127.0.0.1:8096/mcp (MI_MCP_PORT)
+# Secrets come from .env at run time (never copied into the image). See DEPLOY.md.
 # Production: set CLOUDFLARE_TUNNEL_TOKEN (the company's fixed tunnel) and DOCKER_MYSQL_HOST (the MySQL server).
 name: manufacturing-intelligence
 
@@ -15,7 +16,7 @@ services:
 
   mi-mcp:
     build: .
-    image: manufacturing-intelligence-mcp:latest
+    image: manufacturing-intelligence:latest
     restart: unless-stopped
     depends_on:
       - qdrant
@@ -30,8 +31,35 @@ services:
     ports:
       - "127.0.0.1:${MI_MCP_PORT:-8096}:8000"   # this PC only (8000 is often taken); the public link goes through the tunnel
     volumes:
-      - app_data:/app/data                     # History (SQLite)
+      - app_data:/app/data                     # History (SQLite, when APP_DB_NAME is empty)
       - model_cache:/app/.fastembed_cache      # the search model (~210 MB, downloaded once)
+
+  # the website (Django + the React build) with gunicorn; static files by WhiteNoise, no tunnel
+  mi-web:
+    build: .
+    image: manufacturing-intelligence:latest
+    restart: unless-stopped
+    depends_on:
+      - qdrant
+    env_file: .env
+    environment:
+      QDRANT_URL: http://qdrant:6333
+      MYSQL_HOST: ${DOCKER_MYSQL_HOST:-host.docker.internal}
+      DJANGO_DEBUG: ${DOCKER_DJANGO_DEBUG:-False}   # never the laptop's DEBUG=True in a container
+      PUBLIC_LINK: "off"                          # the quick link is the MCP server's, not the website's
+      CLOUDFLARE_TUNNEL_TOKEN: ""
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    # one worker = one copy of the search model in memory; its threads answer several people at once.
+    # 300 s: one question can take a few AI calls (and Groq's rate-limit waits)
+    command: ["gunicorn", "nopsite.wsgi:application", "--bind", "0.0.0.0:8000",
+              "--workers", "${MI_WEB_WORKERS:-1}", "--threads", "${MI_WEB_THREADS:-8}",
+              "--timeout", "300", "--access-logfile", "-"]
+    ports:
+      - "127.0.0.1:${MI_WEB_PORT:-8094}:8000"   # this PC only; put an https proxy / tunnel in front for others
+    volumes:
+      - app_data:/app/data
+      - model_cache:/app/.fastembed_cache
 
 volumes:
   qdrant_data:

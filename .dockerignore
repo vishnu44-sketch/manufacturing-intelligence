@@ -16,3 +16,7 @@ loader
 PLAN.md
 README.md
 eval_results
+# the React app: its packages and a local build (the image builds it again in its Node stage)
+frontend/node_modules
+portal/static/portal/app
+staticfiles
