@@ -17,7 +17,7 @@ const CHIPS: Record<Status, [string, string]> = {
   nodata: ['info', 'NO DATA'],
   refused: ['skip', 'REFUSED'],
   error: ['fail', 'FAILED'],
-  memory: ['ok', 'SAVED TO MEMORY'],
+  memory: ['ok', 'MEMORY UPDATED'],
 }
 
 /** The AI usage of this app: the daily period, Groq's rolling 24 h count and this week. */

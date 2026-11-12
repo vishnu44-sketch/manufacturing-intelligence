@@ -48,7 +48,7 @@ describe('MemoryPage', () => {
         tries += 1
         if (tries === 1) return { status: 400, body: { detail: 'I already remember this: "Always show amounts in lakhs".' } }
         saved = true
-        return { body: { memory: EXPORT, message: 'Got it - I will remember: "I only work with export sales".' } }
+        return { body: { memory: EXPORT, message: 'Memory updated - I will remember: "I only work with export sales".' } }
       },
     })
 
@@ -61,7 +61,7 @@ describe('MemoryPage', () => {
 
     fireEvent.change(box, { target: { value: 'I only work with export sales' } })
     fireEvent.click(screen.getByRole('button', { name: 'Add' }))
-    expect(await screen.findByText(/Got it - I will remember/)).toHaveClass('okbox')
+    expect(await screen.findByText(/Memory updated - I will remember/)).toHaveClass('okbox')
     expect(await screen.findByText('I only work with export sales')).toBeInTheDocument()
     expect(box).toHaveValue('')
     expect(callsTo(fetch, '/api/memories')).toEqual([{ text: 'always show amounts in lakhs' },

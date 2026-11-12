@@ -35,7 +35,7 @@ const DOCS: Card = {
 
 const MEMORY: Card = {
   ...OK, id: 9, text: 'Remember that I only work with export sales', status: 'memory',
-  answer: 'Got it - I will remember: "I only work with export sales". You can see or delete it on the Memory page.',
+  answer: 'Memory updated - I will remember: "I only work with export sales". You can see or delete it on the Memory page.',
   sql: '', has_rows: false, rows_url: '', excel_url: '', row_count: null, sources: [], time_steps: [], tries: 0, secs: 0.02,
 }
 
@@ -132,7 +132,7 @@ describe('AnswerCard', () => {
 
     renderAt('/c/3', <AnswerCard card={MEMORY} autoRows />)
 
-    expect(screen.getByText('SAVED TO MEMORY')).toHaveClass('chip', 'ok')
+    expect(screen.getByText('MEMORY UPDATED')).toHaveClass('chip', 'ok')
     expect(screen.getByText(MEMORY.answer)).toBeInTheDocument()
     expect(screen.getByRole('link', { name: 'Open the Memory page' })).toHaveAttribute('href', '/memory')
     expect(screen.queryByText('Show SQL')).not.toBeInTheDocument()

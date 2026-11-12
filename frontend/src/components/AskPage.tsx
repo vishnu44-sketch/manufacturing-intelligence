@@ -15,7 +15,7 @@
 // as toasts; deleting a chat asks in a dialog first. Colours are Tailwind token classes only (no fixed
 // colours), so the page follows the light and the dark theme.
 import { type KeyboardEvent, type ReactNode, useCallback, useEffect, useRef, useState } from 'react'
-import { ArrowUp, Check, Ellipsis, Info, Pencil } from 'lucide-react'
+import { ArrowUp, Check, Copy, Ellipsis, Info, Pencil } from 'lucide-react'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import { AuthError, StreamUnavailable, api, problemText } from '../api'
@@ -123,9 +123,62 @@ function grow(el: HTMLTextAreaElement | null, extra = 0) {
 function Bubble({ text }: { text: string }) {
   return (
     <div className={cn('bubble max-w-[min(720px,88%)] rounded-2xl rounded-br-sm bg-primary px-4 py-2.5 text-sm leading-normal',
-      'whitespace-pre-wrap text-primary-foreground shadow-sm [overflow-wrap:anywhere] max-[700px]:max-w-full')}>
+      'whitespace-pre-wrap text-primary-foreground shadow-sm [overflow-wrap:anywhere] max-[700px]:max-w-full',
+      // 12-Nov: text marked with the mouse was blue on the blue bubble - not to be seen. Marked text here is
+      // the other way round: the bubble's text colour as the background, the bubble's colour as the text.
+      'selection:bg-primary-foreground selection:text-primary')}>
       {text}
     </div>
+  )
+}
+
+/** Puts the text on the clipboard -> true when it worked. The clipboard API needs https or localhost: on a
+ *  plain http address in the office the old way (a hidden text box + the browser's copy command) is used. */
+export async function copyText(text: string): Promise<boolean> {
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text)
+      return true
+    }
+  } catch {
+    // not allowed here: the old way below
+  }
+  try {
+    const box = document.createElement('textarea')
+    box.value = text
+    box.setAttribute('readonly', '')
+    box.style.cssText = 'position:fixed;top:0;left:0;opacity:0'
+    document.body.appendChild(box)
+    box.select()
+    const done = document.execCommand('copy')
+    box.remove()
+    return done
+  } catch {
+    return false
+  }
+}
+
+const HOVER_BUTTON = cn('opacity-0 transition-opacity group-hover/q:opacity-100 hover:bg-card hover:text-primary',
+  'focus-visible:opacity-100 [@media(hover:none)]:opacity-100')
+
+/** The copy button of a question: one click copies its whole text; a tick and "Copied" for 2 seconds say it worked. */
+function CopyButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false)
+  useEffect(() => {
+    if (!copied) return
+    const timer = window.setTimeout(() => setCopied(false), 2000)
+    return () => window.clearTimeout(timer)
+  }, [copied])
+  const copy = async () => {
+    if (await copyText(text)) setCopied(true)
+    else toast.error('The question could not be copied in this browser.')
+  }
+  return (
+    <Button type="button" variant="ghost" size={copied ? 'sm' : 'icon-sm'} onClick={copy}
+            title={copied ? 'Copied' : 'Copy this question'} aria-label={copied ? 'Copied' : 'Copy this question'}
+            className={cn(HOVER_BUTTON, copied && 'gap-1 px-2 text-[11.5px] text-success opacity-100 hover:text-success')}>
+      {copied ? <><Check aria-hidden="true" className="size-3.5" />Copied</> : <Copy aria-hidden="true" className="size-3.5" />}
+    </Button>
   )
 }
 
@@ -179,11 +232,11 @@ function QuestionBubble({ card, me, editable, onEdit }:
     <>
       <div className="group/q flex flex-col items-end">
         {!editing && (
-          <div className="flex w-full items-center justify-end gap-2">
+          <div className="flex w-full items-center justify-end gap-1">
+            <CopyButton text={card.text} />
             {editable && (
               <Button type="button" variant="ghost" size="icon-sm" title="Edit this question" aria-label="Edit this question"
-                      className={cn('opacity-0 transition-opacity group-hover/q:opacity-100 hover:bg-card hover:text-primary',
-                        'focus-visible:opacity-100 [@media(hover:none)]:opacity-100')}
+                      className={cn(HOVER_BUTTON, 'mr-1')}
                       onClick={() => setEditing(true)}>
                 <Pencil aria-hidden="true" className="size-3.5" />
               </Button>

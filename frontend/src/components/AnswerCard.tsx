@@ -27,7 +27,7 @@ const CHIPS: Record<Status, [string, string]> = {
   nodata: ['info', 'DATA NOT AVAILABLE'],
   refused: ['skip', 'NOT A COMPANY DATA QUESTION'],
   error: ['fail', 'NOT ANSWERED'],
-  memory: ['ok', 'SAVED TO MEMORY'], // "Remember that ..." - no SQL, rows or Excel
+  memory: ['ok', 'MEMORY UPDATED'], // "Remember that ..." - no SQL, rows or Excel
 }
 
 function sourceChip(kind: string): string {
