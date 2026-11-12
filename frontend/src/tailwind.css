@@ -1,0 +1,99 @@
+/* Tailwind CSS v4 and the shadcn/ui colours (light and dark) - used by the restyled pages.
+
+   NO Preflight (Tailwind's CSS reset) is loaded: only Tailwind's theme variables and its utility classes.
+   styles/app.css and extra.css are not in a cascade layer, so they always win over these layered
+   utilities: every other page looks exactly as before. Utilities are made only from the files named with
+   @source below (source(none) switches off the scan of the whole project), so a class name an old page
+   happens to use (e.g. "block") never turns into a Tailwind class there.
+
+   The restyled blocks (the Ask page root, each top-level block of the Knowledge graph page) have the class "ui-scope": the small reset in @layer base below applies only inside
+   it (and inside the delete dialog, which opens outside the page). */
+@layer theme, base, components, utilities;
+@import "tailwindcss/theme.css" layer(theme);
+@import "tailwindcss/utilities.css" layer(utilities) source(none);
+@import "tw-animate-css";
+
+@source "./components/ui";
+@source "./components/Shell.tsx";
+@source "./components/AskPage.tsx";
+@source "./components/AskStart.tsx";
+@source "./components/ChatList.tsx";
+@source "./components/AnswerCard.tsx";
+@source "./charts/AnswerChart.tsx";
+@source "./charts/AiChart.tsx";
+@source "./components/GraphPage.tsx";
+@source "./charts/GraphChart.tsx";
+@source "./charts/Graph3D.tsx";
+@source "./components/HomePage.tsx";
+@source "./components/HomeHero.tsx";
+@source "./components/HomeFeatures.tsx";
+@source "./components/HomeKpiCards.tsx";
+
+/* The shadcn/ui colour names, set to the brand (the --brand, --ink ... variables of styles/app.css :root).
+   "inline": the utilities use these values directly, no new global CSS variables are made (shadcn's own
+   names like --muted would clash with app.css). Every name points to an app.css variable, and each of
+   those has a dark value under :root[data-theme="dark"], so the utilities follow the dark mode on their
+   own. primary = the brand blue, destructive = the real red (errors, deleting).
+   Chart colours stay in charts/chartOption.ts. */
+@theme inline {
+  --font-sans: 'Poppins', 'Segoe UI', sans-serif;
+
+  --color-background: var(--bg);
+  --color-foreground: var(--ink);
+  --color-body: var(--text-2);
+  --color-card: var(--surface);
+  --color-card-foreground: var(--ink);
+  --color-popover: var(--surface);
+  --color-popover-foreground: var(--ink);
+  --color-primary: var(--brand);
+  --color-primary-hover: var(--brand2);
+  --color-primary-foreground: var(--on-brand);
+  --color-primary-soft: var(--brand-bg);
+  --color-secondary: var(--tint);
+  --color-secondary-foreground: var(--head);
+  --color-muted: var(--surface-2);
+  --color-muted-foreground: var(--muted);
+  --color-accent: var(--tint);
+  --color-accent-foreground: var(--ink);
+  --color-destructive: var(--danger);
+  --color-destructive-foreground: var(--on-danger);
+  --color-danger-soft: var(--danger-bg);
+  --color-border: var(--line);
+  --color-input: var(--line-strong);
+  --color-ring: var(--brand);
+  --color-heading: var(--head);
+  --color-faint: var(--faint);
+  --color-success: var(--green);
+  --color-success-soft: var(--green-bg);
+  --color-warning: var(--amber);
+  --color-warning-soft: var(--amber-bg);
+  --color-info: var(--blue);
+  --color-info-soft: var(--blue-bg);
+  --color-overlay: var(--overlay);
+  --color-shadow: var(--shadow-c);
+
+  /* the left menu: a light surface in light mode, a navy one in dark mode */
+  --color-sidebar: var(--sidebar-bg);
+  --color-sidebar-foreground: var(--sidebar-fg);
+  --color-sidebar-muted: var(--sidebar-muted);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary: var(--brand);
+  --color-sidebar-primary-foreground: var(--on-brand);
+}
+
+/* "dark:" utilities work when <html> has data-theme="dark" (Shell.tsx sets it; the colours are in app.css) */
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+
+/* A tiny reset, only inside the Ask page (Tailwind's Preflight would reset every page): borders start at 0
+   in the brand line colour (shadcn's "border" class then only sets the width), buttons and fields use the
+   page font and no browser background, lists have no bullets. :where() keeps it weak, and app.css (not
+   in a layer) still wins wherever it styles something. */
+@layer base {
+  .ui-scope, .ui-scope :where(*, ::before, ::after) { border: 0 solid var(--line); }
+  .ui-scope :where(button, input, select, textarea) { font: inherit; letter-spacing: inherit; color: inherit; }
+  .ui-scope :where(button) { background-color: transparent; padding: 0; margin: 0; cursor: pointer; }
+  .ui-scope :where(button:disabled) { cursor: default; }
+  .ui-scope :where(ol, ul) { list-style: none; margin: 0; padding: 0; }
+  .ui-scope :where(h2, p) { margin: 0; }
+  .ui-scope :where(table) { border-collapse: collapse; }
+}

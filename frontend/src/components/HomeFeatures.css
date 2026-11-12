@@ -1,0 +1,89 @@
+/* Home: the moving pictures of the two feature cards (HomeFeatures.tsx). Plain CSS, not in a cascade layer;
+   every class starts with "hf-" so nothing else on the site is touched. All the motion stops when the person
+   asked their computer for less motion (app.css also stops every animation then).
+
+   Colours: the Ask AI picture uses the brand variables of app.css (--brand, --brand-bg: blue, with their own
+   dark values there), the graph picture its own teal. The other colours that must change in dark mode are the
+   --hf-* variables below, set again under <html data-theme="dark">. */
+.hf-ask, .hf-graph {
+  --hf-surface: var(--surface, #fff);          /* the bubble and the small dots: the card's own colour */
+  --hf-brand: var(--brand, #0B5FB3);
+  --hf-brand2: #4C9AFF;                        /* the light top of the bars */
+  --hf-brand-bg: var(--brand-bg, #E8F1FB);
+  --hf-edge: rgba(11, 95, 179, .2);            /* the bubble's border */
+  --hf-shadow: rgba(11, 95, 179, .5);
+  --hf-teal: #0F766E;
+}
+:root[data-theme="dark"] .hf-ask, :root[data-theme="dark"] .hf-graph {
+  --hf-surface: var(--tint, #222B3D);          /* a little lighter than the dark card, so the bubble shows */
+  --hf-brand2: #9CC8FF;
+  --hf-edge: rgba(76, 154, 255, .3);
+  --hf-shadow: rgba(0, 0, 0, .6);
+  --hf-teal: #2DD4BF;
+}
+
+/* ------------------------------------------------------------ Ask AI: a chat bubble typing, then a bar chart */
+.hf-ask { position: relative; width: 132px; height: 112px; }
+
+/* the chat bubble, top left, with its little tail */
+.hf-bubble { position: absolute; top: 4px; left: 6px; display: flex; gap: 5px; align-items: center;
+  padding: 11px 14px; border-radius: 14px 14px 14px 4px; background: var(--hf-surface);
+  border: 1px solid var(--hf-edge); box-shadow: 0 10px 20px -14px var(--hf-shadow); }
+.hf-bubble span { width: 7px; height: 7px; border-radius: 50%; background: var(--hf-brand);
+  animation: hf-typing 1.4s ease-in-out infinite; }
+.hf-bubble span:nth-child(2) { animation-delay: .18s; }
+.hf-bubble span:nth-child(3) { animation-delay: .36s; }
+
+/* the bar chart, bottom right, on a soft blue card */
+.hf-bars { position: absolute; right: 2px; bottom: 2px; width: 86px; height: 58px; display: flex;
+  align-items: flex-end; gap: 7px; padding: 9px 11px; border-radius: 12px; background: var(--hf-brand-bg);
+  box-sizing: border-box; }
+.hf-bars span { flex: 1; border-radius: 3px 3px 1px 1px; background: linear-gradient(180deg, var(--hf-brand2), var(--hf-brand));
+  transform-origin: bottom; transform: scaleY(.08); animation: hf-grow 6s ease-in-out infinite; }
+.hf-bars span:nth-child(1) { height: 45%; }
+.hf-bars span:nth-child(2) { height: 75%; animation-delay: .15s; }
+.hf-bars span:nth-child(3) { height: 58%; animation-delay: .3s; }
+.hf-bars span:nth-child(4) { height: 100%; animation-delay: .45s; }
+
+/* the dots go up and down one after the other, like someone typing */
+@keyframes hf-typing {
+  0%, 60%, 100% { transform: translateY(0); opacity: .45; }
+  30% { transform: translateY(-4px); opacity: 1; }
+}
+/* the bars stay low while the bubble "types", grow, stay a while, then sink back */
+@keyframes hf-grow {
+  0%, 28% { transform: scaleY(.08); }
+  45%, 85% { transform: scaleY(1); }
+  100% { transform: scaleY(.08); }
+}
+
+/* ------------------------------------------------------------ Knowledge graph: dots and lines */
+.hf-graph { width: 132px; height: auto; overflow: visible; }
+
+/* each line has pathLength 1: a dash of length 1 moved by 1 hides it, moved to 0 shows it whole */
+.hf-line { stroke: var(--hf-teal); stroke-opacity: .55; stroke-width: 1.6; stroke-linecap: round;
+  stroke-dasharray: 1; stroke-dashoffset: 1; animation: hf-draw 7s ease-in-out infinite; }
+.hf-dot { fill: var(--hf-surface); stroke: var(--hf-teal); stroke-width: 2; transform-box: fill-box; transform-origin: center;
+  animation: hf-pulse 3.2s ease-in-out infinite; }
+.hf-dot-main { fill: var(--hf-teal); stroke: var(--hf-surface); stroke-width: 2.5; filter: drop-shadow(0 4px 6px rgba(15, 118, 110, .35)); }
+
+/* a line draws itself, stays, then fades away before the next round */
+@keyframes hf-draw {
+  0% { stroke-dashoffset: 1; opacity: 1; }
+  30%, 80% { stroke-dashoffset: 0; opacity: 1; }
+  95% { stroke-dashoffset: 0; opacity: 0; }
+  100% { stroke-dashoffset: 1; opacity: 0; }
+}
+/* a dot grows a little and back */
+@keyframes hf-pulse {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.18); }
+}
+
+/* less motion: no animation, the pictures stand still in their finished state */
+@media (prefers-reduced-motion: reduce) {
+  .hf-bubble span, .hf-bars span, .hf-line, .hf-dot { animation: none !important; }
+  .hf-bubble span { opacity: .8; }
+  .hf-bars span { transform: none; }
+  .hf-line { stroke-dashoffset: 0; }
+}

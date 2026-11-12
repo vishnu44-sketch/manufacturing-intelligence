@@ -1,0 +1,82 @@
+/* The Home welcome banner (HomeHero.tsx): its soft shapes and its calm movement.
+
+   The shapes are drawn always (still); they move only when the banner has the class "mi-hero-motion" (set when
+   the person did not ask for less motion) and the browser says motion is fine - so with "reduce motion" on,
+   nothing here moves and the text is simply there. All shapes sit behind the text and are faint, so the white
+   text keeps its contrast. */
+
+/* the slow light: a wide soft band of white, only shown while it moves */
+.mi-hero-sheen {
+  position: absolute; inset: 0; pointer-events: none; opacity: 0;
+  background: linear-gradient(105deg, transparent 32%, rgba(255, 255, 255, .06) 44%, rgba(255, 255, 255, .11) 50%,
+    rgba(255, 255, 255, .06) 56%, transparent 68%);
+  background-size: 260% 100%; background-position: 100% 0;
+}
+
+.mi-hero-orb { position: absolute; pointer-events: none; border-radius: 9999px; }
+/* the blue / cyan glow in the top right corner */
+.mi-hero-orb-glow {
+  top: -7rem; right: -5rem; width: 20rem; height: 20rem;
+  background: radial-gradient(closest-side, rgba(56, 189, 248, .34), transparent);
+}
+/* a soft light circle low on the left */
+.mi-hero-orb-soft {
+  bottom: -6rem; left: 18%; width: 15rem; height: 15rem;
+  background: radial-gradient(closest-side, rgba(255, 255, 255, .09), transparent);
+}
+/* a thin ring on the right, under the clock */
+.mi-hero-orb-ring {
+  top: 38%; right: 22%; width: 7.5rem; height: 7.5rem;
+  border: 1px solid rgba(255, 255, 255, .10);
+  background: radial-gradient(closest-side, rgba(255, 255, 255, .04), transparent);
+}
+
+/* the hand: inline-block, so it can turn */
+.mi-hero-wave { display: inline-block; transform-origin: 70% 75%; }
+
+@media (prefers-reduced-motion: no-preference) {
+  .mi-hero-motion .mi-hero-sheen {
+    opacity: 1;
+    animation: mi-hero-sheen 16s ease-in-out infinite alternate;
+  }
+  .mi-hero-motion .mi-hero-orb-glow { animation: mi-hero-drift-a 18s ease-in-out infinite alternate; }
+  .mi-hero-motion .mi-hero-orb-soft { animation: mi-hero-drift-b 20s ease-in-out infinite alternate; }
+  .mi-hero-motion .mi-hero-orb-ring { animation: mi-hero-drift-c 15s ease-in-out infinite alternate; }
+
+  /* the first show: each part fades in and rises a little, 60 ms after the one before */
+  .mi-hero-motion .mi-hero-in {
+    animation: mi-hero-in .55s cubic-bezier(.2, .7, .2, 1) both;
+    animation-delay: calc(var(--i, 0) * 60ms);
+  }
+  /* the hand waves once, after the greeting is in */
+  .mi-hero-motion .mi-hero-wave { animation: mi-hero-wave 1.6s ease-in-out .45s 1 both; }
+}
+
+@keyframes mi-hero-sheen {
+  from { background-position: 100% 0; }
+  to { background-position: 0% 0; }
+}
+@keyframes mi-hero-drift-a {
+  from { transform: translate(0, 0) scale(1); }
+  to { transform: translate(-46px, 26px) scale(1.08); }
+}
+@keyframes mi-hero-drift-b {
+  from { transform: translate(0, 0); }
+  to { transform: translate(64px, -22px); }
+}
+@keyframes mi-hero-drift-c {
+  from { transform: translate(0, 0) rotate(0deg); }
+  to { transform: translate(-30px, -18px) rotate(20deg); }
+}
+@keyframes mi-hero-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes mi-hero-wave {
+  0%, 100% { transform: rotate(0deg); }
+  15% { transform: rotate(14deg); }
+  30% { transform: rotate(-8deg); }
+  45% { transform: rotate(14deg); }
+  60% { transform: rotate(-4deg); }
+  75% { transform: rotate(10deg); }
+}

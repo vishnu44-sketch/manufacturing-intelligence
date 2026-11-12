@@ -1,0 +1,95 @@
+/* The few things the React app needs on top of styles/app.css (the look of the old Django pages,
+   imported first): buttons that look like links, the loading screen, the Users form and small notes. */
+button.ex { font: inherit; font-size: 12px; cursor: pointer; }
+button.chat-link { background: none; border: none; font: inherit; font-size: 13px; text-align: left; cursor: pointer; }
+.answer-card .answer { overflow-wrap: anywhere; }
+.rows-wait { padding: 4px 2px; }
+.app-loading { min-height: 100vh; display: flex; align-items: center; justify-content: center;
+  gap: 10px; color: var(--muted); }
+.app-loading .dots, .rows-wait .dots { display: inline-flex; gap: 4px; }
+.app-loading .dots i, .rows-wait .dots i { width: 7px; height: 7px; border-radius: 50%; background: var(--brand);
+  animation: blink 1.2s infinite ease-in-out both; }
+.app-loading .dots i:nth-child(2), .rows-wait .dots i:nth-child(2) { animation-delay: .15s; }
+.app-loading .dots i:nth-child(3), .rows-wait .dots i:nth-child(3) { animation-delay: .3s; }
+
+/* the Excel link's message when the file cannot be made right now */
+.excel-error { display: inline-block; padding: 6px 10px; margin: 0; font-size: 12px; }
+/* a History question opens its saved answer */
+a.history-q { color: inherit; text-decoration: none; }
+a.history-q:hover { color: var(--brand); text-decoration: underline; }
+
+/* Users: the add / change / password form */
+.person-form { display: flex; flex-direction: column; gap: 12px; }
+.person-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 16px; }
+.person-field input { width: 100%; box-sizing: border-box; }
+.field-error { color: var(--danger); font-size: 12px; margin-top: 4px; }
+.person-roles { display: flex; flex-wrap: wrap; gap: 8px 22px; font-size: 13px; }
+.person-roles label { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+.person-buttons { display: flex; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
+.person-avatar { width: 32px; height: 32px; border-radius: 50%; background: linear-gradient(135deg, var(--brand), var(--brand2));
+  color: var(--on-brand); display: inline-flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; flex: none; }
+@media (max-width: 700px) {
+  .person-grid { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* Audit log: the filters on one row, a line opens its details on a click */
+.audit-form input[type=text] { flex: 1 1 160px; }
+.audit-form input[type=date] { flex: 0 1 160px; width: auto; }
+.audit-form select { flex: 0 1 220px; width: auto; }
+.audit-table tr.audit-line { cursor: pointer; }
+.audit-table tr.audit-line:hover td, .audit-table tr.audit-line.open td { background: var(--surface-2); }
+.audit-table tr.audit-line:focus-visible { outline: 2px solid var(--brand); outline-offset: -2px; }
+.audit-summary { overflow-wrap: anywhere; min-width: 180px; }
+.audit-details { display: flex; flex-direction: column; gap: 8px; }
+.audit-questions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 12.5px; }
+.audit-questions .ex { border: 1px solid var(--line); border-radius: 20px; padding: 2px 10px; font-size: 12px;
+  color: var(--text-2); background: var(--surface-2); text-decoration: none; }
+.audit-questions .ex:hover { border-color: var(--brand); color: var(--brand); }
+
+/* the Ask page while the answer streams: the steps so far (the last one runs), then the answer as it is written */
+.thinking.live-steps { flex-direction: column; align-items: flex-start; gap: 6px; }
+.live-steps ol { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 5px; }
+.live-steps li { display: flex; align-items: center; gap: 8px; }
+.live-steps li.done { color: var(--faint); }
+.live-steps li.now { color: var(--head); }
+.live-steps .tick { color: var(--green); font-weight: 700; width: 29px; text-align: center; }
+.live-steps .slow { font-size: 12px; }
+.live-answer .caret { display: inline-block; width: 7px; height: 1em; margin-left: 2px; vertical-align: -2px;
+  background: var(--brand); animation: blink 1.2s infinite ease-in-out both; }
+
+/* the "Show chart" button above the rows table (when the rows fit a chart) */
+.chart-show { margin: 6px 0 8px; }
+/* "Make this chart with AI" above the chart / the table (a chart the app cannot draw itself) */
+.ai-chart-ask { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 10px; margin: 6px 0 8px; }
+.ai-chart-ask .errbox { flex-basis: 100%; }
+
+/* ---------- the small left menu (Shell.tsx: « / ») - icons only, the name on hover; not on a phone ---------- */
+.sidebar { transition: width .18s ease, padding .18s ease; }
+.logo-box { position: relative; }
+.menu-toggle { position: absolute; top: 12px; right: 2px; width: 28px; height: 28px; display: inline-flex;
+  align-items: center; justify-content: center; background: none; border: 1px solid color-mix(in srgb, var(--on-dark) 18%, transparent);
+  border-radius: 8px; color: color-mix(in srgb, var(--on-dark) 80%, transparent); font-size: 15px; line-height: 1; cursor: pointer; }
+.menu-toggle:hover { color: var(--on-dark); border-color: color-mix(in srgb, var(--on-dark) 45%, transparent); }
+@media (min-width: 761px) {
+  .shell.slim .sidebar { width: 72px; padding: 20px 10px 16px; }
+  .shell.slim .logo-box { padding: 6px 0 14px; display: flex; flex-direction: column; align-items: center; }
+  .shell.slim .logo-box .sub { display: none; }
+  .shell.slim .menu-toggle { position: static; margin-top: 10px; }
+  .shell.slim .nav a { justify-content: center; padding: 10px 0; gap: 0; }
+  .shell.slim .nav a:hover { transform: none; }
+  .shell.slim .nav-text { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0);
+    white-space: nowrap; }
+  .shell.slim .userchip { flex-direction: column; gap: 8px; padding-left: 0; padding-right: 0; }
+  .shell.slim .userchip > div:not(.avatar) { display: none; }
+  .shell.slim .userchip form { margin-left: 0; }
+}
+@media (max-width: 760px) {
+  .menu-toggle { display: none; }
+}
+
+/* ---------- the small chat list on the Ask page (ChatList.tsx: the panel button) - a slim rail, so the
+   answers get the room; not on a phone (there the list is a drawer) ---------- */
+.ask-layout { transition: grid-template-columns .18s ease; }
+@media (min-width: 901px) {
+  .ask-layout.chats-slim { grid-template-columns: 56px minmax(0, 1fr); }
+}

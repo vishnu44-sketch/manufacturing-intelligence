@@ -1,0 +1,72 @@
+/* The small machine drawing on the right of the Home welcome banner (HeroFactory.tsx): where it sits, when it hides
+   and its calm movement.
+
+   It sits on the right, under the clock and above the "Try a question" strip, beside the greeting (never over it).
+   Its size follows the room between the clock and the strip (the drawing keeps its shape, on the right). The banner
+   is a container (class "@container" in HomeHero.tsx): where it is narrower than 980 px the drawing would come
+   close to the line under the greeting (and soon after, the clock moves under the text, or above the greeting on a
+   phone), so it is hidden there.
+
+   It moves only inside "mi-hero-motion" (set when the person did not ask for less motion) and when the browser says
+   motion is fine; otherwise it is drawn still. Everything is slow and steady: no flashing. */
+.mi-factory {
+  position: absolute; top: 80px; right: 26px; bottom: 8px; width: 300px;
+  pointer-events: none;
+}
+.mi-factory svg { display: block; width: 100%; height: 100%; overflow: visible; }
+
+/* the turning parts (gears, impeller) and the needle turn round their own centre: the point (0, 0) where they
+   are drawn */
+.mi-factory [data-part="gear"], .mi-factory [data-part="impeller"], .mi-factory-needle {
+  transform-box: view-box; transform-origin: 0 0;
+}
+/* the needle stands a little right of the middle when still */
+.mi-factory-needle { transform: rotate(8deg); }
+
+@container (max-width: 979px) {
+  .mi-factory { display: none; }
+}
+/* where the drawing shows, it takes the place of the banner's thin drifting ring (HomeHero.css), which would
+   otherwise pass right behind the gears */
+@container (min-width: 980px) {
+  .mi-hero-orb-ring { display: none; }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  /* a gear or the impeller: one turn in its own time (--mi-turn), clockwise or the other way (--mi-dir) */
+  .mi-hero-motion .mi-factory-turn {
+    animation: mi-factory-turn var(--mi-turn, 10s) linear infinite;
+    animation-direction: var(--mi-dir, normal);
+  }
+  /* the liquid in the pipes: the dashes move along the pipe, in -> pump -> out */
+  .mi-hero-motion .mi-factory-flow { animation: mi-factory-flow 2.4s linear infinite; }
+  /* a bubble carried along the outlet, fading in and out */
+  .mi-hero-motion .mi-factory-bubble { animation: mi-factory-bubble 4.5s linear infinite; }
+  /* the gauge needle sways gently between -25 and +35 degrees */
+  .mi-hero-motion .mi-factory-sway { animation: mi-factory-sway 4s ease-in-out infinite alternate; }
+  /* the status light breathes softly */
+  .mi-hero-motion .mi-factory-light { animation: mi-factory-light 3s ease-in-out infinite alternate; }
+}
+
+@keyframes mi-factory-turn {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+@keyframes mi-factory-flow {
+  from { stroke-dashoffset: 0; }
+  to { stroke-dashoffset: -24; }
+}
+@keyframes mi-factory-bubble {
+  0% { transform: translateX(0); opacity: 0; }
+  15% { opacity: 1; }
+  80% { opacity: 1; }
+  100% { transform: translateX(40px); opacity: 0; }
+}
+@keyframes mi-factory-sway {
+  from { transform: rotate(-25deg); }
+  to { transform: rotate(35deg); }
+}
+@keyframes mi-factory-light {
+  from { opacity: .35; }
+  to { opacity: .9; }
+}

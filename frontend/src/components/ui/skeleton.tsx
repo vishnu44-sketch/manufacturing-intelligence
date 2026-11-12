@@ -1,0 +1,9 @@
+// shadcn/ui Skeleton: a soft grey bar that pulses while something loads.
+import type { ComponentProps } from 'react'
+import { cn } from '@/lib/utils'
+
+function Skeleton({ className, ...props }: ComponentProps<'div'>) {
+  return <div data-slot="skeleton" className={cn('animate-pulse rounded-md bg-secondary', className)} {...props} />
+}
+
+export { Skeleton }

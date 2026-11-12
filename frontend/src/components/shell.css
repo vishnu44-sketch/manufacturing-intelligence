@@ -1,0 +1,58 @@
+/* The frame of every page (Shell.tsx): where the top bar, the left menu and the page sit, the small menu,
+   and the phone drawer. Colours, spacing and fonts are Tailwind classes in Shell.tsx (the colour names of
+   src/tailwind.css, light and dark); this file has no colours of its own but the drawer's shadow. */
+.mi-shell { --mi-shell-top: 56px; display: flex; flex-direction: column; min-height: 100vh; }
+
+/* the top bar stays at the top of the window */
+.mi-shell-top { position: sticky; top: 0; z-index: 20; flex: none; height: var(--mi-shell-top); }
+
+.mi-shell-body { display: flex; flex: 1; min-width: 0; }
+
+/* the left menu stays in place under the top bar while the page scrolls */
+.mi-shell-menu { flex: none; width: 244px; display: flex; flex-direction: column;
+  position: sticky; top: var(--mi-shell-top); height: calc(100vh - var(--mi-shell-top));
+  overflow-y: auto; scrollbar-width: thin; transition: width .18s ease; }
+
+.mi-shell-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.mi-shell-title { padding: 20px 28px 0; }
+
+/* links of the frame take the colour of their place (not the site's link colour), also under the mouse */
+.mi-shell-link, .mi-shell-link:hover { color: inherit; text-decoration: none; }
+
+@media (min-width: 768px) {
+  .mi-shell-burger, .mi-shell-backdrop { display: none; }
+
+  /* the small menu: icons only (the name on hover, and still read out), no group headings, a line between the groups */
+  .mi-shell-slim .mi-shell-menu { width: 68px; }
+  .mi-shell-slim .mi-shell-group-name { display: none; }
+  .mi-shell-slim .mi-shell-group + .mi-shell-group { border-top-width: 1px; padding-top: 12px; }
+  .mi-shell-slim .mi-shell-menu .mi-shell-link { justify-content: center; width: 40px; padding: 0; margin: 0 auto; gap: 0; }
+  .mi-shell-slim .mi-shell-text { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0);
+    white-space: nowrap; }
+  .mi-shell-slim .mi-shell-slim-toggle { margin-left: auto; margin-right: auto; }
+}
+
+/* Desktop: the Ask page fills the window under the top bar and the page itself does not scroll
+   (the chat list and the conversation scroll on their own - see styles/app.css, body.page-ask). */
+@media (min-width: 901px) {
+  body.page-ask .mi-shell-main { height: calc(100vh - var(--mi-shell-top)); overflow: hidden; }
+}
+
+/* Phone: the menu is a drawer that slides in from the left under the top bar (the ☰ button opens it);
+   the menu is always the full one there, so the « button is not shown. */
+@media (max-width: 767.98px) {
+  .mi-shell-menu { position: fixed; top: var(--mi-shell-top); left: 0; bottom: 0; height: auto; z-index: 19;
+    width: min(280px, 84vw); transform: translateX(-105%); visibility: hidden;
+    transition: transform .22s ease, visibility .22s ease; }
+  .mi-shell-drawer-open .mi-shell-menu { transform: none; visibility: visible;
+    box-shadow: 16px 0 36px -18px rgb(0 0 0 / .45); }
+  .mi-shell-backdrop { position: fixed; inset: var(--mi-shell-top) 0 0 0; z-index: 18; background: rgb(0 0 0 / .45); }
+  .mi-shell-slim-toggle { display: none; }
+  .mi-shell-title { padding: 14px 12px 0; }
+}
+
+/* Narrow phone: the top bar keeps the logo mark and its buttons as icons (their names are still read out) */
+@media (max-width: 639.98px) {
+  .mi-shell-brand, .mi-shell-label { position: absolute; width: 1px; height: 1px; overflow: hidden;
+    clip: rect(0 0 0 0); white-space: nowrap; }
+}

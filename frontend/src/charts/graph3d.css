@@ -1,0 +1,8 @@
+/* The 3D Knowledge graph (Graph3D.tsx): the library's hover tooltip looks like the 2D one (a box in the card's
+   colour - white, dark on the dark theme - with the chart-tip rows of chart.css) instead of its own dark one.
+   Loaded with the 3D code only. */
+.graph3d .float-tooltip-kap { padding: 8px 10px; border: 1px solid var(--line, #E3E6EB); border-radius: 10px;
+  background: var(--surface, #fff); color: var(--ink, #212529); font: 12px Poppins, 'Segoe UI', sans-serif;
+  max-width: 280px; white-space: normal; box-shadow: 0 8px 22px -12px rgba(17,16,16,.35); }
+:root[data-theme="dark"] .graph3d .float-tooltip-kap { box-shadow: 0 8px 22px -12px rgba(0,0,0,.7); }
+.graph3d canvas { display: block; }

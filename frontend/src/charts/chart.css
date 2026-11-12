@@ -1,0 +1,31 @@
+/* The answer chart (AnswerChart.tsx, AiChart.tsx): a box like the rows table, a small toolbar on top. */
+.answer-chart { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px 10px;
+  min-width: 0; }
+.chart-bar { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; margin-bottom: 8px; }
+.chart-title { font-weight: 600; font-size: 13.5px; color: var(--head); min-width: 0; overflow-wrap: anywhere; }
+.chart-actions { margin-left: auto; display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+.chart-box { width: 100%; min-width: 0; }
+.echart { min-width: 0; }
+.chart-note { margin-top: 6px; }
+.chart-fallback { margin: 0 0 6px; }
+/* "Show it" in the note about a hidden group: a button that reads like a link */
+.chart-link { background: none; border: none; padding: 0; font: inherit; font-weight: 600; color: var(--brand);
+  text-decoration: underline; cursor: pointer; }
+.chart-link:hover { color: var(--brand2); }
+.chart-link:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; border-radius: 2px; }
+
+/* the tooltip (ECharts draws its box): the values exactly as the table shows them */
+.chart-tip-label { font-weight: 600; margin-bottom: 4px; overflow-wrap: anywhere; }
+.chart-tip-row { display: flex; align-items: center; gap: 6px; white-space: nowrap; }
+.chart-tip-name { color: var(--muted); overflow: hidden; text-overflow: ellipsis; }
+.chart-tip-row b { margin-left: auto; padding-left: 10px; font-variant-numeric: tabular-nums; }
+.chart-key { width: 10px; height: 10px; border-radius: 2px; flex: none; }
+
+/* the AI chart (its button is in extra.css: it shows before this file loads) */
+.ai-chart { margin-bottom: 8px; }
+.ai-chart .chip { margin-left: 6px; vertical-align: middle; }
+
+@media (max-width: 700px) {
+  .answer-chart { padding: 10px 8px 8px; }
+  .chart-actions { margin-left: 0; }
+}
