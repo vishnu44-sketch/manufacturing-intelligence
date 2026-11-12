@@ -1,8 +1,11 @@
 """Long-term user memory (like ChatGPT's "Memory"): facts a user asked the app to remember, used in ALL his
 later chats. Not the chat memory (lc/memory.py), which is only the last questions of one chat.
 
-Saving - only when the user says so, by rules (no AI call, no tokens). A message is a memory instruction
-only when it STARTS with one of these (any case; "please" in front is fine):
+Saving - only when the user says so. Two ways (12-Nov):
+1. the AI (like ChatGPT's memory): a memory request in ANY words ("update your memory ...", "note that ...") goes to the
+   SQL call like every message; the AI replies "REMEMBER: <the fact>" or "FORGET: <a memory>" and lc/graph.write_sql
+   saves / removes it with remember() / forget() below - the tokens of that one call, no extra call;
+2. the free shortcut, by rules (no AI call, no tokens): a message is saved at once when it STARTS with one of these (any case; "please" in front is fine):
     remember (that / to) ... / keep in mind ...   "Remember that I only work with export sales"
     from now on ...                                "From now on show amounts in lakhs"
     always <verb> ... / never <verb> ...           "Always round to whole rupees", "Never show credit notes"
@@ -28,7 +31,17 @@ from .models import UserMemory
 MAX_MEMORIES = 20   # per user; then the user deletes some first
 MIN_CHARS = 3
 
-SAVED = 'Got it - I will remember: "{text}". You can see or delete it on the Memory page.'
+SAVED = 'Memory updated - I will remember: "{text}". You can see or delete it on the Memory page.'
+FORGOTTEN = 'Memory updated - I forgot: "{text}".'
+NOT_FOUND = "I could not find a memory like that. You can see and delete your memories on the Memory page."
+NOT_ALLOWED = "I cannot remember that - it asks me to work against my rules, to change data or to give untrue numbers."
+# a "memory" that tries to bend the rules is never saved (the SQL guard and the read-only login stay in any case)
+_AGAINST_RULES = re.compile(
+    r"\b(?:ignore|bypass|skip|disable|override|forget|reveal|show|change|break)\b[^.]{0,40}\b(?:rules?|instructions?|"
+    r"prompts?|guard|safety|restrictions?)\b"
+    r"|\bjailbreak|\bact\s+as\b|\bpretend\b"
+    r"|\b(?:insert|update|delete|drop|alter|truncate|grant)\b[^.]{0,30}\b(?:data|tables?|rows?|records?|databases?|users?)\b"
+    r"|\b(?:fake|untrue|false|made[- ]up|wrong)\s+(?:numbers?|figures?|data|sales|amounts?)\b", re.I)
 ALREADY = 'I already remember this: "{text}". You can see or delete it on the Memory page.'
 FULL = (f"Your memory is full ({MAX_MEMORIES} of {MAX_MEMORIES}). Please delete some memories on the Memory "
         "page first, then try again.")
@@ -104,6 +117,8 @@ def remember(user, text, question=None):
     text = clean(text)
     if len(text) < MIN_CHARS:
         return "refused", TOO_SHORT, None
+    if _AGAINST_RULES.search(text):
+        return "refused", NOT_ALLOWED, None
     if len(text) > UserMemory.MAX_CHARS:
         return "refused", TOO_LONG, None
     known = user.memories.all()
@@ -113,3 +128,24 @@ def remember(user, text, question=None):
         return "refused", FULL, None
     memory = UserMemory.objects.create(user=user, text=text, question=question)
     return "saved", SAVED.format(text=text), memory
+
+
+def forget(user, text):
+    """Remove the user's memory closest to the text (the AI's FORGET reply, lc/graph.write_sql).
+    -> (outcome, message for the user): 'forgotten', or 'refused' when no memory is like it."""
+    import difflib
+
+    wanted = " ".join((text or "").lower().split()).strip(" .\"'")
+    known = list(user.memories.all())
+    if not wanted or not known:
+        return "refused", NOT_FOUND
+    by_text = {" ".join(memory.text.lower().split()).strip(" ."): memory for memory in known}
+    match = next((memory for plain, memory in by_text.items() if wanted in plain or plain in wanted), None)
+    if match is None:
+        close = difflib.get_close_matches(wanted, list(by_text), n=1, cutoff=0.6)
+        match = by_text[close[0]] if close else None
+    if match is None:
+        return "refused", NOT_FOUND
+    kept = match.text
+    match.delete()
+    return "forgotten", FORGOTTEN.format(text=kept)

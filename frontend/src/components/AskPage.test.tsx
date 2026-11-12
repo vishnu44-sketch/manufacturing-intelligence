@@ -123,6 +123,40 @@ describe('AskPage chat actions', () => {
     expect(screen.getByRole('button', { name: 'Restore it' })).toBeInTheDocument()
   })
 
+  it('copies a question with one click and says "Copied"; marked text in the bubble can be seen (12-Nov)', async () => {
+    fakeFetch(replies())
+    const written: string[] = []
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: async (text: string) => { written.push(text) } } })
+
+    renderAt('/c/1', <AskPage me={ASHA} />)
+    const bubble = await screen.findByText('And for Sep?', { selector: '.bubble' })
+    expect(bubble).toHaveClass('selection:bg-primary-foreground', 'selection:text-primary')   // not blue on blue
+    const item = bubble.closest('.chat-item') as HTMLElement
+    fireEvent.click(within(item).getByRole('button', { name: 'Copy this question' }))
+
+    expect(await within(item).findByRole('button', { name: 'Copied' })).toHaveTextContent('Copied')
+    expect(written).toEqual(['And for Sep?'])
+    await waitFor(() => expect(within(item).getByRole('button', { name: 'Copy this question' })).toBeInTheDocument(), { timeout: 3000 })
+  })
+
+  it('copies the old way where the clipboard API is not there (plain http in the office)', async () => {
+    fakeFetch(replies())
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: undefined })
+    const copied: string[] = []
+    document.execCommand = ((command: string) => {
+      copied.push(`${command}:${(document.activeElement as HTMLTextAreaElement | null)?.value ?? document.querySelector<HTMLTextAreaElement>('body > textarea')?.value}`)
+      return true
+    }) as typeof document.execCommand
+
+    renderAt('/c/1', <AskPage me={ASHA} />)
+    const item = (await screen.findByText('Net sales in Aug?', { selector: '.bubble' })).closest('.chat-item') as HTMLElement
+    fireEvent.click(within(item).getByRole('button', { name: 'Copy this question' }))
+
+    expect(await within(item).findByRole('button', { name: 'Copied' })).toBeInTheDocument()
+    expect(copied).toEqual(['copy:Net sales in Aug?'])
+    expect(document.querySelector('body > textarea')).toBeNull()                 // the hidden box is gone again
+  })
+
   it('edits an old question: the new answer takes its place', async () => {
     const edited = card(13, 'Net sales in July?', { edited: true, token_notice: 'This question used 4,344 tokens' })
     const fetch = fakeFetch(replies({

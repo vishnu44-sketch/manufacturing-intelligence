@@ -112,7 +112,7 @@ def test_a_memory_question_is_saved_with_no_ai_call_no_sql_and_no_tokens(monkeyp
     result = agent.ask("Remember that I only work with export sales", user)
 
     assert result.status == "memory"
-    assert result.answer == ('Got it - I will remember: "I only work with export sales". '
+    assert result.answer == ('Memory updated - I will remember: "I only work with export sales". '
                              'You can see or delete it on the Memory page.')
     assert fake.calls == [] and mysql.calls == [] and searched == []
     assert result.total_tokens is None and result.sql == "" and result.tries == 0 and result.model == ""
@@ -373,7 +373,7 @@ def test_asking_a_memory_instruction_gives_a_memory_card_without_sql_rows_or_exc
 
     card = r.json()["card"]
     assert r.status_code == 200 and card["status"] == "memory"
-    assert card["answer"].startswith('Got it - I will remember: "I only work with export sales"')
+    assert card["answer"].startswith('Memory updated - I will remember: "I only work with export sales"')
     assert (card["sql"], card["has_rows"], card["rows_url"], card["excel_url"], card["token_notice"]) == (
         "", False, "", "", "")
     assert r.json()["chat"]["title"] == "Remember that I only work with export sales"
