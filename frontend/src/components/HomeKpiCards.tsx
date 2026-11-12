@@ -52,8 +52,8 @@ interface Look {
   caption: string         // the label
   value: string           // the big number
   sub: string             // the full amount under it
-  note: string            // the note and the "Ask AI about this" line
-  link: string            // the "Ask AI about this" line when the card is pointed at
+  note: string            // the note and the "Ask the Assistant about this" line
+  link: string            // the "Ask the Assistant about this" line when the card is pointed at
   ink: string             // the colour of the small picture
   chip: string            // the facts chips
   change?: string         // the change badge (the blue main card: white on glass)
@@ -468,7 +468,7 @@ export function KpiCard({ kpi }: { kpi: KpiData }) {
       <div className={cn('mt-auto text-xs leading-relaxed', look.note)}>{kpi.note}</div>
       {ask && (
         <div className={cn('flex items-center gap-1 pt-0.5 text-[12px] font-medium transition-colors', look.note, look.link)}>
-          Ask AI about this<ArrowRight aria-hidden="true" className="size-3.5 transition-transform group-hover:translate-x-0.5" />
+          Ask the Assistant about this<ArrowRight aria-hidden="true" className="size-3.5 transition-transform group-hover:translate-x-0.5" />
           <span className="sr-only">: {ask}</span>
         </div>
       )}
@@ -481,7 +481,7 @@ export function KpiCard({ kpi }: { kpi: KpiData }) {
   if (!ask) return <div className={shape} data-kpi={kpi.key} data-look={lookName}>{body}</div>
   // the whole card opens the Ask page with its question in the box
   return (
-    <Link to={`/new?q=${encodeURIComponent(ask)}`} data-kpi={kpi.key} data-look={lookName} title={`Ask AI: ${ask}`}
+    <Link to={`/new?q=${encodeURIComponent(ask)}`} data-kpi={kpi.key} data-look={lookName} title={`Ask the Assistant: ${ask}`}
       className={cn(shape, 'group outline-none transition-[transform,box-shadow,border-color] duration-200',
         'hover:-translate-y-0.5 hover:shadow-[0_18px_34px_-22px_rgba(17,16,16,.45)] focus-visible:ring-3 focus-visible:ring-ring/40',
         look.text, look.hover)}>

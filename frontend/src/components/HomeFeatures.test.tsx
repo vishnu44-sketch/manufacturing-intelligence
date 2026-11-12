@@ -1,4 +1,4 @@
-// Home's two feature cards: Ask AI and the Knowledge graph - their titles, texts and points, the buttons (links)
+// Home's two feature cards: The Assistant and the Knowledge graph - their titles, texts and points, the buttons (links)
 // that open /ask and /graph without a page load, the card itself not being a link, and the moving pictures
 // hidden from screen readers.
 import { fireEvent, screen, within } from '@testing-library/react'
@@ -15,14 +15,14 @@ function card(title: string): HTMLElement {
 describe('HomeFeatures', () => {
   it('shows the two cards with their text and points', () => {
     renderAt('/', <HomeFeatures />)
-    const section = screen.getByRole('region', { name: 'Ask AI and the Knowledge graph' })
-    expect(within(section).getAllByRole('heading').map((h) => h.textContent)).toEqual(['Ask AI', 'Knowledge graph'])
+    const section = screen.getByRole('region', { name: 'The Assistant and the Knowledge graph' })
+    expect(within(section).getAllByRole('heading').map((h) => h.textContent)).toEqual(['Assistant', 'Knowledge graph'])
 
-    const ask = card('Ask AI')
+    const ask = card('Assistant')
     expect(ask).toHaveAttribute('data-feature', 'ask')
     expect(ask).toHaveTextContent('Ask the company data in plain English.')
     expect(ask).toHaveTextContent('every number comes from the database')
-    expect(within(within(ask).getByRole('list', { name: 'Ask AI: what you get' })).getAllByRole('listitem')
+    expect(within(within(ask).getByRole('list', { name: 'Assistant: what you get' })).getAllByRole('listitem')
       .map((li) => li.textContent)).toEqual(['Plain English', 'Charts', 'Excel'])
 
     const graph = card('Knowledge graph')
@@ -35,16 +35,16 @@ describe('HomeFeatures', () => {
 
   it('has one button per card, and only the button is a link', () => {
     renderAt('/', <HomeFeatures />)
-    expect(within(card('Ask AI')).getAllByRole('link')).toHaveLength(1)
+    expect(within(card('Assistant')).getAllByRole('link')).toHaveLength(1)
     expect(within(card('Knowledge graph')).getAllByRole('link')).toHaveLength(1)
-    expect(card('Ask AI').tagName).not.toBe('A')
-    expect(screen.getByRole('link', { name: 'Open Ask AI' })).toHaveAttribute('href', '/ask')
+    expect(card('Assistant').tagName).not.toBe('A')
+    expect(screen.getByRole('link', { name: 'Open the Assistant' })).toHaveAttribute('href', '/ask')
     expect(screen.getByRole('link', { name: 'Open Knowledge graph' })).toHaveAttribute('href', '/graph')
   })
 
-  it('"Open Ask AI" opens the Ask page without a page load', () => {
+  it('"Open the Assistant" opens the Ask page without a page load', () => {
     renderAt('/', <HomeFeatures />)
-    fireEvent.click(screen.getByRole('link', { name: 'Open Ask AI' }))
+    fireEvent.click(screen.getByRole('link', { name: 'Open the Assistant' }))
     expect(window.location.pathname).toBe('/ask')
   })
 
@@ -54,9 +54,9 @@ describe('HomeFeatures', () => {
     expect(window.location.pathname).toBe('/graph')
   })
 
-  it('Ask AI is in the blue brand and the Knowledge graph in teal, so the two differ', () => {
+  it('Assistant is in the blue brand and the Knowledge graph in teal, so the two differ', () => {
     renderAt('/', <HomeFeatures />)
-    const ask = screen.getByRole('link', { name: 'Open Ask AI' })
+    const ask = screen.getByRole('link', { name: 'Open the Assistant' })
     const graph = screen.getByRole('link', { name: 'Open Knowledge graph' })
     expect(ask).toHaveClass('bg-primary', 'text-primary-foreground!')
     expect(graph).toHaveClass('bg-teal-700', 'dark:bg-teal-600')

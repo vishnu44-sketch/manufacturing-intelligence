@@ -2,7 +2,7 @@
    every class starts with "hf-" so nothing else on the site is touched. All the motion stops when the person
    asked their computer for less motion (app.css also stops every animation then).
 
-   Colours: the Ask AI picture uses the brand variables of app.css (--brand, --brand-bg: blue, with their own
+   Colours: the Assistant picture uses the brand variables of app.css (--brand, --brand-bg: blue, with their own
    dark values there), the graph picture its own teal. The other colours that must change in dark mode are the
    --hf-* variables below, set again under <html data-theme="dark">. */
 .hf-ask, .hf-graph {
@@ -22,7 +22,7 @@
   --hf-teal: #2DD4BF;
 }
 
-/* ------------------------------------------------------------ Ask AI: a chat bubble typing, then a bar chart */
+/* ------------------------------------------------------------ Assistant: a chat bubble typing, then a bar chart */
 .hf-ask { position: relative; width: 132px; height: 112px; }
 
 /* the chat bubble, top left, with its little tail */

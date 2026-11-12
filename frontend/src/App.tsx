@@ -1,5 +1,5 @@
 // The website: the Login page until the API knows the user, then each page in the shell (dark menu on
-// the left, top bar) by its address - Home (at /, the first page), Ask AI, History, Memory, Knowledge graph, and for staff Users, Documents,
+// the left, top bar) by its address - Home (at /, the first page), Assistant, History, Memory, Knowledge graph, and for staff Users, Documents,
 // Data and Audit (anyone else gets "no access"). Any 401 from the API brings the Login page back; signing out goes to /login.
 import { useCallback, useEffect, useState } from 'react'
 import { ApiError, api, setUnauthorizedHandler } from './api'
@@ -36,7 +36,7 @@ function pageOf(route: Route, me: Me): [string, MenuItem] {
     case 'data': return ['Data', 'data']
     case 'audit': return ['Audit log', 'audit']
     case 'notfound': return ['Not found', '']
-    default: return ['Ask AI', 'ask']
+    default: return ['Assistant', 'ask']
   }
 }
 

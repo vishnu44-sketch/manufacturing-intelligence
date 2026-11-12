@@ -100,7 +100,7 @@ export const AT_MAX = `Showing ${MAX_HITS} - type more to narrow`
 
 /** The search box with its suggestions (arrow keys + Enter, or a click). No AI call while typing: a type word
  * ("customers") lists the top ones by net sales, a small spelling mistake gives "Did you mean" hits, and only when
- * nothing is found does "Ask AI instead" offer the chat - it fills the question box, it does not send it.
+ * nothing is found does "Ask the Assistant instead" offer the chat - it fills the question box, it does not send it.
  * The note says how many there are in all ("Top 10 of 4,982 customers ..."); "Show more" at the bottom of the
  * list (a click, or the arrow keys + Enter) adds 10 more of the same search, up to 50. */
 function GraphSearch({ onPick }: { onPick: (node: GraphNode) => void }) {
@@ -111,7 +111,7 @@ function GraphSearch({ onPick }: { onPick: (node: GraphNode) => void }) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [note, setNote] = useState('') // the reply's own line: 'Top 10 of 4,982 customers by net sales ...'
-  const [missing, setMissing] = useState('') // the text nothing was found for (it offers "Ask AI instead")
+  const [missing, setMissing] = useState('') // the text nothing was found for (it offers "Ask the Assistant instead")
   const [total, setTotal] = useState<number | null>(null) // how many in all (null: close spellings, no pages)
   const [moreBusy, setMoreBusy] = useState(false)
   const [searched, setSearched] = useState('') // the text the hits shown are for
@@ -267,7 +267,7 @@ function GraphSearch({ onPick }: { onPick: (node: GraphNode) => void }) {
           <Link to={`/new?q=${encodeURIComponent(missing)}`}
             className={cn(buttonVariants({ variant: 'link', size: 'xs' }),
               'h-4 px-0 text-[11.5px] font-semibold text-primary! hover:text-primary!')}>
-            Ask AI instead
+            Ask the Assistant instead
             <ArrowRight aria-hidden="true" className="size-3" />
           </Link>
         )}

@@ -209,7 +209,7 @@ describe('HomeKpiCards', () => {
       expect(el.tagName).toBe('A')
       expect(el).toHaveAttribute('href', `/new?q=${encodeURIComponent(kpi.ask!)}`)
       expect(el).toHaveClass('h-full', 'flex', 'flex-col', 'hover:-translate-y-0.5', 'focus-visible:ring-3')
-      expect(el).toHaveAccessibleName(new RegExp(`Ask AI about this\\s?: ${kpi.ask!.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`))
+      expect(el).toHaveAccessibleName(new RegExp(`Ask the Assistant about this\\s?: ${kpi.ask!.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`))
     }
     fireEvent.click(card('stock'))
     expect(window.location.pathname + window.location.search).toBe('/new?q=Stock%20value%20by%20item%20group%20on%20the%20latest%20stock%20report')

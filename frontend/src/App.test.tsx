@@ -40,7 +40,7 @@ describe('App', () => {
     expect(await screen.findByText('You do not have access to this page')).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: 'No access' })).toBeInTheDocument()
     expect(screen.getByRole('link', { name: 'Home' })).toHaveAttribute('href', '/')
-    expect(screen.getByRole('link', { name: 'Ask AI' })).toHaveAttribute('href', '/ask')
+    expect(screen.getByRole('link', { name: 'Assistant' })).toHaveAttribute('href', '/ask')
     expect(menu().getByRole('link', { name: 'History' })).toBeInTheDocument()
     expect(screen.getByRole('link', { name: 'Memory' })).toHaveAttribute('href', '/memory')   // for every user
     for (const name of [/Users/, /Documents/, /Data/, /Audit/]) {
@@ -115,7 +115,7 @@ describe('App', () => {
 
     open('/ask')
     await askPage()
-    expect(screen.getByRole('link', { name: 'Ask AI' })).toHaveAttribute('aria-current', 'page')
+    expect(screen.getByRole('link', { name: 'Assistant' })).toHaveAttribute('aria-current', 'page')
 
     fireEvent.click(menu().getByRole('link', { name: /History/ }))
 
@@ -155,18 +155,18 @@ describe('App', () => {
     const links = menu().getAllByRole('link')
     expect(links[0]).toHaveAccessibleName('Home')
     expect(links[0]).toHaveAttribute('aria-current', 'page')
-    expect(links[1]).toHaveAccessibleName('Ask AI')
+    expect(links[1]).toHaveAccessibleName('Assistant')
     expect(document.title).toBe('Home · Manufacturing Intelligence')
     expect(callsTo(fetch, '/api/home', 'GET')).toHaveLength(1)
     expect(callsTo(fetch, '/api/chats', 'GET')).toHaveLength(0)   // the Ask page is not opened
 
-    fireEvent.click(links[1])                                      // Ask AI, second in the menu
+    fireEvent.click(links[1])                                      // Assistant, second in the menu
 
     await askPage()
     expect(window.location.pathname).toBe('/ask')
-    expect(document.title).toBe('Ask AI · Manufacturing Intelligence')
-    expect(screen.getByRole('heading', { level: 1, name: 'Ask AI' })).toBeInTheDocument()   // the other pages keep it
-    expect(document.querySelector('.mi-shell-title')).toHaveTextContent('Ask AI')
+    expect(document.title).toBe('Assistant · Manufacturing Intelligence')
+    expect(screen.getByRole('heading', { level: 1, name: 'Assistant' })).toBeInTheDocument()   // the other pages keep it
+    expect(document.querySelector('.mi-shell-title')).toHaveTextContent('Assistant')
   })
 
   it('the top bar opens a new chat and the History page', async () => {

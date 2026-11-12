@@ -474,7 +474,7 @@ describe('GraphPage full screen and hide details (04-Nov)', () => {
   })
 })
 
-describe('GraphPage smarter search (05-Nov): type words, close spellings, Ask AI instead - no AI while typing', () => {
+describe('GraphPage smarter search (05-Nov): type words, close spellings, Ask the Assistant instead - no AI while typing', () => {
   const box = () => screen.getByRole('combobox', { name: 'Search' })
 
   it('shows the hint while the box is empty', async () => {
@@ -503,7 +503,7 @@ describe('GraphPage smarter search (05-Nov): type words, close spellings, Ask AI
     ])
     expect(screen.getByText('Top 2 customers by net sales (all data up to today)')).toBeInTheDocument()
     expect(screen.queryByText('Did you mean')).not.toBeInTheDocument()
-    expect(screen.queryByRole('link', { name: /Ask AI instead/ })).not.toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: /Ask the Assistant instead/ })).not.toBeInTheDocument()
     fireEvent.click(options[0])
     await waitFor(() => expect(lastChart()?.types()).toEqual(['graph']))
     expect(nodeIds()[0]).toBe('customer:3680')
@@ -521,30 +521,30 @@ describe('GraphPage smarter search (05-Nov): type words, close spellings, Ask AI
     expect(within(fuzzy).getByText('Did you mean')).toBeInTheDocument()
     expect(within(screen.getByRole('option', { name: /Aurora Fluid Power/ })).queryByText('Did you mean')).not.toBeInTheDocument()
     expect(screen.getByText('No exact match for "aurra" - did you mean one of these?')).toBeInTheDocument()
-    expect(screen.queryByRole('link', { name: /Ask AI instead/ })).not.toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: /Ask the Assistant instead/ })).not.toBeInTheDocument()
   })
 
-  it('only when nothing is found: "Ask AI instead" links to /new?q=<the text>', async () => {
+  it('only when nothing is found: "Ask the Assistant instead" links to /new?q=<the text>', async () => {
     fakeFetch(replies({
       '/api/graph/search?q=blue+widgets+%26+more': { body: { q: 'blue widgets & more', results: [] } },
     }))
     renderAt('/graph', <GraphPage />)
-    expect(screen.queryByRole('link', { name: /Ask AI instead/ })).not.toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: /Ask the Assistant instead/ })).not.toBeInTheDocument()
     fireEvent.change(box(), { target: { value: 'blue widgets & more' } })
     expect(await screen.findByText('Nothing found for "blue widgets & more".')).toBeInTheDocument()
-    const ask = screen.getByRole('link', { name: /Ask AI instead/ })
+    const ask = screen.getByRole('link', { name: /Ask the Assistant instead/ })
     expect(ask).toHaveAttribute('href', '/new?q=blue%20widgets%20%26%20more')
     fireEvent.change(box(), { target: { value: '' } })                              // cleared: the link goes
-    expect(screen.queryByRole('link', { name: /Ask AI instead/ })).not.toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: /Ask the Assistant instead/ })).not.toBeInTheDocument()
     expect(screen.getByText(SEARCH_HINT)).toBeInTheDocument()
   })
 
-  it('"Ask AI instead" only fills the question box - nothing is sent until Ask is pressed', async () => {
+  it('"Ask the Assistant instead" only fills the question box - nothing is sent until Ask is pressed', async () => {
     const fetch = fakeFetch({ '/api/me': { body: ASHA }, '/api/graph/search?q=blue+widgets': { body: { q: 'blue widgets', results: [] } } })
     window.history.pushState(null, '', '/graph')
     render(<App />)
     fireEvent.change(await screen.findByRole('combobox', { name: 'Search' }, { timeout: 4000 }), { target: { value: 'blue widgets' } })
-    fireEvent.click(await screen.findByRole('link', { name: /Ask AI instead/ }))
+    fireEvent.click(await screen.findByRole('link', { name: /Ask the Assistant instead/ }))
     expect(await screen.findByLabelText('Your question', {}, { timeout: 4000 })).toHaveValue('blue widgets')
     expect(window.location.pathname + window.location.search).toBe('/new?q=blue%20widgets')
     expect(fetch.mock.calls.filter(([, init]) => (init?.method ?? 'GET') !== 'GET')).toEqual([])  // no question sent

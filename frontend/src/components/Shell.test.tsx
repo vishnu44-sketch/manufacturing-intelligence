@@ -44,7 +44,7 @@ describe('Shell: the small menu (04-Nov)', () => {
 })
 
 describe('Shell: the menu (05-Nov)', () => {
-  it('has Home first (at /) and Ask AI at /ask, also in the small menu', () => {
+  it('has Home first (at /) and Assistant at /ask, also in the small menu', () => {
     window.localStorage.setItem('mi.menuSlim', '1')
     renderAt('/', <Shell me={ASHA} title="Home" active="home" onSignOut={() => {}}><p>Page</p></Shell>)
     const links = menu().getAllByRole('link')
@@ -53,7 +53,7 @@ describe('Shell: the menu (05-Nov)', () => {
     expect(links[0]).toHaveAttribute('aria-current', 'page')
     expect(links[0]).toHaveAttribute('title', 'Home')                       // the name on hover in the small menu
     expect(links[0].querySelector('svg')).not.toBeNull()
-    expect(menu().getByRole('link', { name: 'Ask AI' })).toHaveAttribute('href', '/ask')
+    expect(menu().getByRole('link', { name: 'Assistant' })).toHaveAttribute('href', '/ask')
     expect(document.title).toBe('Home · Manufacturing Intelligence')
   })
 
@@ -61,7 +61,7 @@ describe('Shell: the menu (05-Nov)', () => {
     const names = (group: string) => within(menu().getByRole('group', { name: group })).getAllByRole('link').map((a) => a.textContent)
     const first = page()
     expect(menu().getAllByRole('group').map((g) => g.querySelector('p')?.textContent)).toEqual(['Home', 'Intelligence', 'Tools'])
-    expect(names('Home')).toEqual(['Home', 'Ask AI'])
+    expect(names('Home')).toEqual(['Home', 'Assistant'])
     expect(names('Intelligence')).toEqual(['Knowledge graph'])
     expect(names('Tools')).toEqual(['History', 'Memory'])
     expect(menu().getAllByRole('link').filter((a) => a.getAttribute('aria-current') === 'page').map((a) => a.textContent)).toEqual(['History'])

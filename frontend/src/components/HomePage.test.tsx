@@ -127,7 +127,7 @@ describe('HomePage', () => {
     expect(within(today).getByText('FY 2026-27')).toHaveAttribute('data-slot', 'badge')
     expect(hero.querySelector('[data-slot="hero-clock"]')).toHaveTextContent(/IST$/)   // today's date and time
 
-    expect(within(hero).queryByRole('link', { name: 'Ask AI' })).not.toBeInTheDocument()   // the feature cards have them
+    expect(within(hero).queryByRole('link', { name: 'Assistant' })).not.toBeInTheDocument()   // the feature cards have them
     expect(within(hero).queryByRole('link', { name: 'Knowledge graph' })).not.toBeInTheDocument()
     expect(within(hero).getByRole('link', { name: 'Top 5 customers?' })).toHaveAttribute('href', '/new?q=Top%205%20customers%3F')
     expect(screen.queryByRole('link', { name: 'A fourth one' })).not.toBeInTheDocument()   // only 3
@@ -174,7 +174,7 @@ describe('HomePage', () => {
     const month = kpi('month_sales')
     expect(month.tagName).toBe('A')
     expect(month).toHaveAttribute('href', '/new?q=What%20were%20the%20net%20sales%20in%20Oct%202026%3F')
-    expect(month).toHaveAccessibleName(/Net sales Oct 2026.*Ask AI about this\s?: What were the net sales in Oct 2026\?/)
+    expect(month).toHaveAccessibleName(/Net sales Oct 2026.*Ask the Assistant about this\s?: What were the net sales in Oct 2026\?/)
     expect(kpi('products').tagName).toBe('DIV')       // no ask
     expect(kpi('open_orders').tagName).toBe('DIV')    // an empty ask
 
@@ -269,15 +269,15 @@ describe('HomePage', () => {
     expect(connections).toHaveClass('@min-[1100px]:grid-cols-5', '@min-[720px]:grid-cols-6')
   })
 
-  it('shows the Ask AI and Knowledge graph feature cards above the key numbers', async () => {
+  it('shows the Assistant and Knowledge graph feature cards above the key numbers', async () => {
     fakeFetch({ '/api/home': { body: HOME } })
 
     renderAt('/', <HomePage me={ME} />)
 
     const numbers = await screen.findByRole('region', { name: 'Key numbers' })
-    const features = screen.getByRole('region', { name: 'Ask AI and the Knowledge graph' })
+    const features = screen.getByRole('region', { name: 'The Assistant and the Knowledge graph' })
     expect(features.compareDocumentPosition(numbers) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
-    expect(within(features).getByRole('link', { name: 'Open Ask AI' })).toHaveAttribute('href', '/ask')
+    expect(within(features).getByRole('link', { name: 'Open the Assistant' })).toHaveAttribute('href', '/ask')
     expect(within(features).getByRole('link', { name: 'Open Knowledge graph' })).toHaveAttribute('href', '/graph')
   })
 
@@ -355,7 +355,7 @@ describe('HomePage', () => {
     const product = kpi('top_product')
     expect(product.querySelector('[data-slot="kpi-name"]')).toHaveAttribute('title', 'Brake drum BD-220 heavy duty, machined')
     expect(valueOf('top_product')).toHaveTextContent('INR 1.2 Cr')
-    expect(within(product).getByText(/Ask AI about this/)).toBeInTheDocument()
+    expect(within(product).getByText(/Ask the Assistant about this/)).toBeInTheDocument()
     expect(product.querySelector('svg.lucide-award')).toBeInTheDocument()
   })
 
@@ -504,7 +504,7 @@ describe('HomePage', () => {
     expect(document.querySelectorAll('[data-slot="sparkline"]')).toHaveLength(0)
     expect(document.querySelectorAll('[data-slot="kpi-facts"], [data-slot="kpi-name"]')).toHaveLength(0)
     expect(grid('kpis')).toHaveAttribute('data-columns', '3')      // 6 cards: 3 a row, no gap
-    expect(screen.queryAllByText(/Ask AI about this/)).toHaveLength(0)
+    expect(screen.queryAllByText(/Ask the Assistant about this/)).toHaveLength(0)
     const recent = screen.getByRole('region', { name: 'Your recent questions' })
     expect(within(recent).getByRole('link', { name: 'History' })).toHaveAttribute('href', '/history')
     expect(screen.getByText('90,403')).toBeInTheDocument()
