@@ -87,9 +87,6 @@ a.history-q:hover { color: var(--brand); text-decoration: underline; }
   .menu-toggle { display: none; }
 }
 
-/* ---------- the small chat list on the Ask page (ChatList.tsx: the panel button) - a slim rail, so the
-   answers get the room; not on a phone (there the list is a drawer) ---------- */
-.ask-layout { transition: grid-template-columns .18s ease; }
-@media (min-width: 901px) {
-  .ask-layout.chats-slim { grid-template-columns: 56px minmax(0, 1fr); }
-}
+/* ---------- the Ask page without a chat list (12-Nov: "New chat" and "History" are in the top bar): the
+   conversation takes the whole width ---------- */
+.ask-layout.chats-none { grid-template-columns: minmax(0, 1fr); }

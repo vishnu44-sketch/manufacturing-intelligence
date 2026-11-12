@@ -17,7 +17,8 @@
 @source "./components/Shell.tsx";
 @source "./components/AskPage.tsx";
 @source "./components/AskStart.tsx";
-@source "./components/ChatList.tsx";
+@source "./components/ChatMenu.tsx";
+@source "./components/HistoryChats.tsx";
 @source "./components/AnswerCard.tsx";
 @source "./charts/AnswerChart.tsx";
 @source "./charts/AiChart.tsx";

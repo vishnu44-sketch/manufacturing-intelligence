@@ -1,9 +1,9 @@
-// The Ask page's chat actions: the "..." menu (Rename / Remove from list / Delete, which asks first),
-// the removed chats with Restore, editing an old question (its new answer takes the old one's place),
-// a saved answer on its own (/q/<id>), the example link (/new?q=) and only the newest answer's rows; the chat
-// list made small (a rail), kept in this browser.
+// The Ask page's chat actions: the "..." menu of the open chat in its head (Rename / Remove from list / Delete,
+// which asks first), a removed chat with "Restore it", editing an old question (its new answer takes the old
+// one's place), a saved answer on its own (/q/<id>), the example link (/new?q=) and only the newest answer's
+// rows. No chat list on this page since 12-Nov: the chats are History's "Chats" tab (HistoryChats.test.tsx).
 import { fireEvent, screen, waitFor, within } from '@testing-library/react'
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it } from 'vitest'
 import { callsTo, fakeFetch } from '../test/fakeFetch'
 import { ASHA, renderAt } from '../test/render'
 import type { Card, ChatSummary } from '../types'
@@ -36,41 +36,43 @@ function replies(extra = {}) {
   }
 }
 
-async function openMenu(title: string) {
-  const row = (await screen.findByRole('link', { name: title })).closest('.chat-row') as HTMLElement
-  fireEvent.click(within(row).getByRole('button', { name: 'Options for this chat' }))
-  return row
+/** Opens the "..." menu of the open chat (in the head of the conversation). */
+async function openMenu() {
+  const head = (await screen.findByText('Net sales by month', { selector: '.conv-title' })).closest('.conv-head') as HTMLElement
+  fireEvent.click(within(head).getByRole('button', { name: 'Options for this chat' }))
+  return head
 }
 
 describe('AskPage chat actions', () => {
-  it('shows the chats by day, the removed ones folded, and loads only the newest rows', async () => {
+  it('has no chat list (12-Nov: "New chat" and "History" are in the top bar) and loads only the newest rows', async () => {
     const fetch = fakeFetch(replies())
 
     renderAt('/c/1', <AskPage me={ASHA} />)
 
     expect(await screen.findByText('Answer to And for Sep?')).toBeInTheDocument()
-    expect(screen.getByText('Today')).toBeInTheDocument()
-    expect(screen.getByText('Yesterday')).toBeInTheDocument()
-    expect(screen.getByText('Removed chats (1)')).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: 'Net sales by month' })).toHaveAttribute('aria-current', 'page')
+    expect(screen.queryByRole('complementary', { name: 'Your chats' })).not.toBeInTheDocument()
+    expect(screen.queryByText('Removed chats (1)')).not.toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: 'Stock value' })).not.toBeInTheDocument()   // another chat: in History
+    expect(screen.queryByRole('button', { name: /^Chats$|Hide the chat list|Show the chat list/ })).not.toBeInTheDocument()
+    expect(document.querySelector('.ask-layout')).toHaveClass('chats-none')
     await waitFor(() => expect(fetch.mock.calls.map(([url]) => url)).toContain('/api/questions/12/rows'))
     expect(fetch.mock.calls.map(([url]) => url)).not.toContain('/api/questions/11/rows')   // older: on "Show rows"
   })
 
-  it('renames a chat from its menu', async () => {
+  it('renames the open chat from the menu in its head', async () => {
     const fetch = fakeFetch(replies({ '/api/chats/1/rename': { body: { chat: { ...SALES, title: 'Sales per month' } } } }))
 
     renderAt('/c/1', <AskPage me={ASHA} />)
-    const row = await openMenu('Net sales by month')
-    expect(within(row).getByText('2 questions · last one 03 Nov, 09:05 AM')).toBeInTheDocument()
-    fireEvent.change(within(row).getByLabelText('New title for this chat'), { target: { value: 'Sales per month' } })
-    fireEvent.click(within(row).getByRole('button', { name: 'Rename' }))
+    const head = await openMenu()
+    expect(within(head).getByText('2 questions · last one 03 Nov, 09:05 AM')).toBeInTheDocument()
+    fireEvent.change(within(head).getByLabelText('New title for this chat'), { target: { value: 'Sales per month' } })
+    fireEvent.click(within(head).getByRole('button', { name: 'Rename' }))
 
     await waitFor(() => expect(callsTo(fetch, '/api/chats/1/rename')).toEqual([{ title: 'Sales per month' }]))
     expect(await screen.findByText('Sales per month', { selector: '.conv-title' })).toBeInTheDocument()
   })
 
-  it('removes the open chat from the list and says where its questions are', async () => {
+  it('removes the open chat and says where its questions are', async () => {
     let removed = false
     const fetch = fakeFetch(replies({
       '/api/chats': () => ({ body: removed ? { chats: [STOCK], removed: [{ ...SALES, archived: true }, OLD] }
@@ -81,51 +83,35 @@ describe('AskPage chat actions', () => {
     }))
 
     renderAt('/c/1', <AskPage me={ASHA} />)
-    const row = await openMenu('Net sales by month')
-    fireEvent.click(within(row).getByRole('button', { name: /Remove from list/ }))
+    const head = await openMenu()
+    fireEvent.click(within(head).getByRole('button', { name: /Remove from list/ }))
 
     expect(await screen.findByText(/was removed from your chats/)).toBeInTheDocument()   // a toast
     expect(callsTo(fetch, '/api/chats/1/remove')).toHaveLength(1)
     await waitFor(() => expect(window.location.pathname).toBe('/c/2'))    // never back into the removed chat
-    expect(await screen.findByText('Removed chats (2)')).toBeInTheDocument()
   })
 
-  it('asks before deleting a chat for good, and deletes only on yes', async () => {
+  it('asks before deleting the open chat for good, and deletes only on yes', async () => {
     const fetch = fakeFetch(replies({
       '/api/chats/1/delete': { body: { deleted: 2, message: '"Net sales by month" was deleted with its 2 questions.' } },
     }))
 
     renderAt('/c/1', <AskPage me={ASHA} />)
-    let row = await openMenu('Net sales by month')
-    fireEvent.click(within(row).getByRole('button', { name: /Delete/ }))
+    let head = await openMenu()
+    fireEvent.click(within(head).getByRole('button', { name: /Delete/ }))
     let dialog = await screen.findByRole('alertdialog')                      // "Are you sure?"
     expect(dialog).toHaveAccessibleName('Delete this chat and its 2 questions permanently? This cannot be undone.')
     fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }))
     await waitFor(() => expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument())
     expect(callsTo(fetch, '/api/chats/1/delete')).toHaveLength(0)            // "no": nothing deleted
 
-    row = await openMenu('Net sales by month')
-    fireEvent.click(within(row).getByRole('button', { name: /Delete/ }))
+    head = await openMenu()
+    fireEvent.click(within(head).getByRole('button', { name: /Delete/ }))
     dialog = await screen.findByRole('alertdialog')
     fireEvent.click(within(dialog).getByRole('button', { name: 'Delete' }))
 
     expect(await screen.findByText('"Net sales by month" was deleted with its 2 questions.')).toBeInTheDocument()
     expect(callsTo(fetch, '/api/chats/1/delete')).toHaveLength(1)
-  })
-
-  it('restores a removed chat and opens it', async () => {
-    const fetch = fakeFetch(replies({
-      '/api/chats/3/restore': { body: { chat: { ...OLD, archived: false } } },
-      '/api/chats/3': { body: { chat: { ...OLD, archived: false }, total: 1, earlier: 0, cards: [card(31, 'Old one', { has_rows: false })] } },
-    }))
-
-    renderAt('/c/1', <AskPage me={ASHA} />)
-    fireEvent.click(await screen.findByText('Removed chats (1)'))
-    fireEvent.click(screen.getByRole('button', { name: 'Restore' }))
-
-    await waitFor(() => expect(window.location.pathname).toBe('/c/3'))
-    expect(callsTo(fetch, '/api/chats/3/restore')).toHaveLength(1)
-    expect(await screen.findByText('Answer to Old one')).toBeInTheDocument()
   })
 
   it('shows a removed chat with "Restore it"', async () => {
@@ -195,75 +181,5 @@ describe('AskPage chat actions', () => {
 
     expect(await screen.findByLabelText('Your question')).toHaveValue('Open sales orders?')
     expect(screen.getByText('What would you like to know?')).toBeInTheDocument()
-  })
-})
-
-describe('AskPage: the small chat list (05-Nov)', () => {
-  it('hides the chat list to a slim rail, and opens it again', async () => {
-    fakeFetch(replies())
-    const { container } = renderAt('/c/1', <AskPage me={ASHA} />)
-    await screen.findByRole('link', { name: 'Net sales by month' })
-
-    fireEvent.click(screen.getByRole('button', { name: 'Hide the chat list' }))
-    expect(container.querySelector('.ask-layout')).toHaveClass('chats-slim')
-    expect(container.querySelector('.chats')).toHaveClass('slim')
-    expect(screen.queryByRole('link', { name: 'Net sales by month' })).not.toBeInTheDocument()   // only the rail
-    expect(screen.queryByText('Today')).not.toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'New chat' })).toBeInTheDocument()
-    expect(screen.getByText('Answer to And for Sep?')).toBeInTheDocument()                        // the answers stay
-    expect(window.localStorage.getItem('mi.chatListSlim')).toBe('1')
-
-    fireEvent.click(screen.getByRole('button', { name: 'Show the chat list' }))
-    expect(container.querySelector('.ask-layout')).not.toHaveClass('chats-slim')
-    expect(screen.getByRole('link', { name: 'Net sales by month' })).toBeInTheDocument()
-    expect(screen.getByText('Today')).toBeInTheDocument()
-    expect(window.localStorage.getItem('mi.chatListSlim')).toBeNull()
-  })
-
-  it('"New chat" works from the rail', async () => {
-    window.localStorage.setItem('mi.chatListSlim', '1')
-    fakeFetch(replies())
-    renderAt('/c/1', <AskPage me={ASHA} />)
-    await screen.findByText('Answer to And for Sep?')
-
-    fireEvent.click(screen.getByRole('button', { name: 'New chat' }))
-    expect(window.location.pathname).toBe('/new')
-    expect(await screen.findByText('What would you like to know?')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Show the chat list' })).toBeInTheDocument()       // still small
-  })
-
-  it('keeps the choice in this browser (a new page load starts small)', async () => {
-    fakeFetch(replies())
-    const first = renderAt('/c/1', <AskPage me={ASHA} />)
-    await screen.findByRole('link', { name: 'Net sales by month' })
-    fireEvent.click(screen.getByRole('button', { name: 'Hide the chat list' }))
-    first.unmount()
-
-    const { container } = renderAt('/c/1', <AskPage me={ASHA} />)
-    await screen.findByText('Answer to And for Sep?')
-    expect(container.querySelector('.ask-layout')).toHaveClass('chats-slim')
-    expect(screen.getByRole('button', { name: 'Show the chat list' })).toHaveAttribute('aria-expanded', 'false')
-    expect(screen.queryByRole('link', { name: 'Net sales by month' })).not.toBeInTheDocument()
-  })
-
-  it('the phone drawer shows the whole list, also when the list was made small', async () => {
-    window.localStorage.setItem('mi.chatListSlim', '1')
-    fakeFetch(replies())
-    renderAt('/c/1', <AskPage me={ASHA} />)
-    await screen.findByText('Answer to And for Sep?')
-
-    fireEvent.click(screen.getByRole('button', { name: 'Chats' }))                                // the phone's "Chats"
-    expect(await screen.findByRole('link', { name: 'Net sales by month' })).toBeInTheDocument()
-  })
-
-  it('opens the list when the browser storage is blocked', async () => {
-    vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => { throw new Error('blocked') })
-    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw new Error('blocked') })
-    fakeFetch(replies())
-    const { container } = renderAt('/c/1', <AskPage me={ASHA} />)
-    await screen.findByRole('link', { name: 'Net sales by month' })
-
-    fireEvent.click(screen.getByRole('button', { name: 'Hide the chat list' }))                   // still works on this page
-    expect(container.querySelector('.ask-layout')).toHaveClass('chats-slim')
   })
 })

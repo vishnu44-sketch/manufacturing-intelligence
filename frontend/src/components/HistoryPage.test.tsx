@@ -40,7 +40,7 @@ describe('HistoryPage', () => {
   it('shows the usage box, my questions and the pager', async () => {
     fakeFetch({ '/api/history': { body: PAGE } })
 
-    renderAt('/history', <HistoryPage page={1} />)
+    renderAt('/history?tab=questions', <HistoryPage page={1} />)
 
     expect(await screen.findByText('AI usage (this app)')).toBeInTheDocument()
     expect(screen.getByText(/Daily period since Thu 08-Oct 10:05 AM - it resets 24 hours/)).toBeInTheDocument()
@@ -67,7 +67,7 @@ describe('HistoryPage', () => {
     fakeFetch({ '/api/history': { body: { ...PAGE, questions: [], pages: 1, count: 0, has_next: false,
                                           usage: { ...USAGE, period_start: '', period_end: '' } } } })
 
-    renderAt('/history', <HistoryPage page={1} />)
+    renderAt('/history?tab=questions', <HistoryPage page={1} />)
 
     expect(await screen.findByText('No questions yet')).toBeInTheDocument()
     expect(screen.getByText('Daily period: starts with your next question.')).toBeInTheDocument()
@@ -87,7 +87,7 @@ describe('HistoryPage', () => {
       '/api/chats': { body: { chats: [], removed: [] } },
       '/api/questions/5/again': { body: { chat, card } },
     })
-    window.history.pushState(null, '', '/history')
+    window.history.pushState(null, '', '/history?tab=questions')
     render(<App />)
 
     fireEvent.click((await screen.findAllByRole('button', { name: 'Ask again' }))[0])
@@ -103,7 +103,7 @@ describe('HistoryPage', () => {
       '/api/questions/5/excel': { status: 503, body: { detail: 'The Excel file could not be made: MySQL is not running' } },
     })
 
-    renderAt('/history', <HistoryPage page={1} />)
+    renderAt('/history?tab=questions', <HistoryPage page={1} />)
     fireEvent.click(await screen.findByRole('link', { name: 'Excel' }))
 
     expect(await screen.findByRole('alert')).toHaveTextContent('The Excel file could not be made: MySQL is not running')
