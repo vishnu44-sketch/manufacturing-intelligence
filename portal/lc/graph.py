@@ -218,6 +218,20 @@ def write_sql(state):
     kind, sql = agent.read_sql_reply(reply)
     update = {"attempt": attempt, "retries": request.retries, "reply": reply, "kind": kind, "sql": sql,
               "problem": "", "schema_not_needed": False}
+    if kind in ("remember", "forget"):
+        # 12-Nov, like ChatGPT's memory: the AI understood a memory request in any words and named the fact;
+        # our own code saves or removes it, with the same limits as "Remember that ..." (user_memory.py)
+        update["sql"] = ""
+        user = state.get("user")
+        if user is None:  # nobody to remember it for (the eval, a tool)
+            result.status, result.answer = "refused", agent.REFUSAL_ANSWER
+        elif kind == "remember":
+            outcome, result.answer, result.memory = user_memory.remember(user, sql)
+            result.status = "error" if outcome == "refused" else "memory"
+        else:
+            outcome, result.answer = user_memory.forget(user, sql)
+            result.status = "error" if outcome == "refused" else "memory"
+        return update
     if kind == "no_sql":  # off-topic, a request to change data, or an attempt to bend the rules
         if (not state["chart_retry_used"] and attempt < agent.MAX_TRIES
                 and agent.chart_request(f"{result.text} {result.understood_as}")):
@@ -488,6 +502,8 @@ def _first_kept(state):
 
 
 def after_write_sql(state):
+    if state["kind"] in ("remember", "forget"):  # a memory request: saved or removed, nothing to run or to add
+        return "refused / nodata"
     if _first_kept(state) and (state["problem"] or state["kind"] in ("no_sql", "no_data")):
         return "keep the first answer"
     if state["problem"]:  # no SQL in the reply, or the profit-growth switch
