@@ -2,10 +2,63 @@
 #   docker compose up -d --build        then: docker compose logs -f mi-mcp   (shows the PUBLIC MCP LINK)
 #   the website: http://127.0.0.1:8094 (MI_WEB_PORT)          the MCP server: http://127.0.0.1:8096/mcp (MI_MCP_PORT)
 # Secrets come from .env at run time (never copied into the image). See DEPLOY.md.
-# Production: set CLOUDFLARE_TUNNEL_TOKEN (the company's fixed tunnel) and DOCKER_MYSQL_HOST (the MySQL server).
+# Production: set CLOUDFLARE_TUNNEL_TOKEN (the company's fixed tunnel).
+# Branch docker-mysql: MySQL runs here too (service "mysql", data kept in the mysql_data volume), so the PC needs
+# only Docker. First start: set DOCKER_MYSQL_ROOT_PASSWORD in .env, then load the data once:
+#   docker compose --profile load run --rm loader
+# Another MySQL server instead: set DOCKER_MYSQL_HOST (and that server's users) - see DEPLOY.md.
 name: manufacturing-intelligence
 
 services:
+  # MySQL 8.4 for the data (ai_gold) and the app's own schema (chats, history, users). The schemas and the two
+  # users are made on the first start (docker/mysql-init); the data files live in the mysql_data volume, so they
+  # stay over restarts, updates and "docker compose down" (only "down -v" deletes them).
+  mysql:
+    image: mysql:8.4.6
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DOCKER_MYSQL_ROOT_PASSWORD:?set DOCKER_MYSQL_ROOT_PASSWORD in .env}
+      AI_GOLD_DATABASE: ${AI_GOLD_DATABASE:-ai_gold}
+      APP_DB_NAME: ${APP_DB_NAME:-}
+      APP_DB_USER: ${APP_DB_USER:-}
+      APP_DB_PASSWORD: ${APP_DB_PASSWORD:-}
+      AI_DB_USER: ${AI_DB_USER:-}
+      AI_DB_PASSWORD: ${AI_DB_PASSWORD:-}
+      TZ: ${TZ:-Asia/Kolkata}                    # CURRENT_DATE in the SQL = the office's day
+    command: ["--character-set-server=utf8mb4", "--collation-server=utf8mb4_unicode_ci"]
+    healthcheck:   # over TCP: healthy only when the real server is up (the first-start setup has no network)
+      test: ["CMD-SHELL", "MYSQL_PWD=\"$$MYSQL_ROOT_PASSWORD\" mysqladmin ping -h 127.0.0.1 -uroot --silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 40
+      start_period: 30s
+    ports:
+      - "127.0.0.1:${MI_MYSQL_PORT:-3307}:3306"   # this PC only, for a MySQL tool (3306 may be taken by a local MySQL)
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./docker/mysql-init:/docker-entrypoint-initdb.d:ro
+      - ./backups:/backups                       # the backup command in DEPLOY.md writes here
+
+  # one-off: fills ai_gold from inputdata/ (not in git - copy the folder next to this file first)
+  #   docker compose --profile load run --rm loader
+  loader:
+    profiles: ["load"]
+    build: .
+    image: manufacturing-intelligence:latest
+    depends_on:
+      mysql:
+        condition: service_healthy
+    env_file: .env
+    environment:
+      MYSQL_HOST: mysql
+      MYSQL_PORT: "3306"
+      MYSQL_USER: root
+      MYSQL_PASSWORD: ${DOCKER_MYSQL_ROOT_PASSWORD:?set DOCKER_MYSQL_ROOT_PASSWORD in .env}
+    entrypoint: ["python", "loader/load_gold.py"]
+    volumes:
+      - ./loader:/app/loader:ro
+      - ./inputdata:/app/inputdata:ro
+
   qdrant:
     image: qdrant/qdrant:v1.19.2
     restart: unless-stopped
@@ -19,11 +72,15 @@ services:
     image: manufacturing-intelligence:latest
     restart: unless-stopped
     depends_on:
-      - qdrant
+      qdrant:
+        condition: service_started
+      mysql:
+        condition: service_healthy
     env_file: .env
     environment:
       QDRANT_URL: http://qdrant:6333
-      MYSQL_HOST: ${DOCKER_MYSQL_HOST:-host.docker.internal}
+      MYSQL_HOST: ${DOCKER_MYSQL_HOST:-mysql}
+      MYSQL_PORT: ${DOCKER_MYSQL_PORT:-3306}
       PUBLIC_LINK: ${PUBLIC_LINK:-quick}
       CLOUDFLARE_TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:-}
     extra_hosts:
@@ -40,11 +97,15 @@ services:
     image: manufacturing-intelligence:latest
     restart: unless-stopped
     depends_on:
-      - qdrant
+      qdrant:
+        condition: service_started
+      mysql:
+        condition: service_healthy
     env_file: .env
     environment:
       QDRANT_URL: http://qdrant:6333
-      MYSQL_HOST: ${DOCKER_MYSQL_HOST:-host.docker.internal}
+      MYSQL_HOST: ${DOCKER_MYSQL_HOST:-mysql}
+      MYSQL_PORT: ${DOCKER_MYSQL_PORT:-3306}
       DJANGO_DEBUG: ${DOCKER_DJANGO_DEBUG:-False}   # never the laptop's DEBUG=True in a container
       PUBLIC_LINK: "off"                          # the quick link is the MCP server's, not the website's
       CLOUDFLARE_TUNNEL_TOKEN: ""
@@ -62,6 +123,7 @@ services:
       - model_cache:/app/.fastembed_cache
 
 volumes:
+  mysql_data:
   qdrant_data:
   app_data:
   model_cache:

@@ -1,6 +1,6 @@
 # Deploying Manufacturing Intelligence
 
-One Docker image runs two services (docker-compose.yml), next to their own Qdrant:
+One Docker image runs two services (docker-compose.yml), next to their own Qdrant and MySQL:
 
 - `mi-web` - the website: Django + the built React app, served by gunicorn. Static files (the React
   build and the admin's) are served by WhiteNoise, so DEBUG can be off. http://127.0.0.1:8094
@@ -30,7 +30,9 @@ For the website in production:
 - `DJANGO_SECURE_COOKIES` - with DEBUG off the sign-in cookies go only over https (browsers still allow
   them on http://localhost and 127.0.0.1). `off` only for a test over plain http from another machine.
 
-Docker only (in .env or the shell): `DOCKER_MYSQL_HOST` (default host.docker.internal = this PC),
+Docker only (in .env or the shell): `DOCKER_MYSQL_ROOT_PASSWORD` (needed: the admin password of the MySQL
+container - a long random value), `DOCKER_MYSQL_HOST` (default `mysql` = the MySQL container; another
+server's name to use that one instead), `MI_MYSQL_PORT` (3307: MySQL on 127.0.0.1 of this PC, for a MySQL tool),
 `MI_WEB_PORT` (8094), `MI_MCP_PORT` (8096), `MI_WEB_WORKERS` (1) and `MI_WEB_THREADS` (8),
 `PUBLIC_LINK` / `CLOUDFLARE_TUNNEL_TOKEN` (the MCP link only), `MI_MIGRATE=off` / `MI_INGEST=off`
 (skip the start-up steps below).
@@ -55,22 +57,49 @@ Others reach the site only through an https proxy or a tunnel pointed at port 80
 publishes it on 127.0.0.1 only). Then set `ALLOWED_HOSTS`, `CSRF_TRUSTED_ORIGINS` and
 `DJANGO_BEHIND_HTTPS_PROXY=on`.
 
-## 3. MySQL from a container
+## 3. MySQL in Docker (branch docker-mysql)
 
-The containers reach MySQL at `DOCKER_MYSQL_HOST`. Two logins are used: the History user
-(`APP_DB_USER`, e.g. 'mi_app'@'localhost') and the read-only AI user (`AI_DB_USER`).
+The compose file runs MySQL 8.4 itself (service `mysql`), so the PC needs only Docker - no MySQL install.
 
-- On this PC (Docker Desktop, tested 03-Nov-2026) both logins worked from a container as they are.
-- On another server (e.g. Linux with Docker), MySQL sees the container's own address (often
-  172.17.x.x / 172.18.x.x), not localhost, so a user made for 'localhost' is refused
-  ("Access denied for user ..."). Then a MySQL admin must:
-  1. let MySQL listen on an address the containers can reach (`bind-address` in my.cnf), and
-  2. make the same users for the Docker addresses, with the same passwords and the same rights only -
-     e.g. 'mi_app'@'172.%' with all rights on the History schema only, and the AI user with SELECT on
-     the AI database only (never more).
-  Or point `DOCKER_MYSQL_HOST` at a MySQL server whose users already allow the Docker host.
-- Without a reachable MySQL the History is SQLite in the app_data volume (leave `APP_DB_NAME`
-  empty), but the data questions still need the AI user.
+- The data files are in the Docker volume `mysql_data`. They stay when the containers stop, when the PC
+  restarts, after `docker compose down` and after an update of the app. They are deleted only by
+  `docker compose down -v` or by removing the volume by hand.
+- On the FIRST start (empty volume) `docker/mysql-init/01-databases-and-users.sh` makes the data schema
+  (`AI_GOLD_DATABASE`), the app's schema (`APP_DB_NAME`) with its user (`APP_DB_USER`, all rights there only)
+  and the read-only AI user (`AI_DB_USER`, SELECT on the data schema only). Names and passwords come from
+  `.env`. A password changed in `.env` later is NOT changed in MySQL by itself (the script runs once).
+- `mi-web` and `mi-mcp` wait until MySQL answers, then start. MySQL is reachable from the containers as
+  `mysql:3306` and from this PC as `127.0.0.1:3307` (`MI_MYSQL_PORT`) - never from other machines.
+
+### First start on a new PC (e.g. the office computer)
+
+1. Install Docker Desktop and Git. `git clone` the repo, `git checkout docker-mysql`.
+2. Copy by hand (they are not in git): `.env` and the folder `inputdata/`. In `.env` add
+   `DOCKER_MYSQL_ROOT_PASSWORD=<a long random value>`; `QDRANT_API_KEY` and `DJANGO_SECRET_KEY` must be set.
+3. `docker compose up -d --build` - builds the image, starts MySQL, Qdrant, the website and the MCP server.
+   The first start takes a few minutes (the search indexes are built once).
+4. Load the data once: `docker compose --profile load run --rm loader` (fills `ai_gold` from `inputdata/`).
+5. Make the first sign-in: `docker compose exec mi-web python manage.py createsuperuser`.
+6. Open http://127.0.0.1:8094.
+
+Later: `docker compose up -d` starts everything again; after a `git pull`, `docker compose up -d --build`.
+
+### Backup and restore (the chats, history and users)
+
+`ai_gold` can always be made again with the loader; the app's schema cannot. Back it up before updates:
+
+    docker compose exec mysql sh -c 'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysqldump -uroot --single-transaction --databases "$APP_DB_NAME" > /backups/app_$(date +%Y%m%d_%H%M).sql'
+
+The file is written into `backups/` next to the compose file (not in git). Restore one:
+
+    docker compose exec mysql sh -c 'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysql -uroot < /backups/<file>.sql'
+
+### Another MySQL server instead
+
+Set `DOCKER_MYSQL_HOST` (and `DOCKER_MYSQL_PORT`) to that server. Its admin must make the same two users for
+the address the containers come from - the app user with all rights on the app schema only, the AI user with
+SELECT on the data schema only (never more). A MySQL installed on this PC: `DOCKER_MYSQL_HOST=host.docker.internal`.
+The `mysql` container still starts; it is simply not used.
 
 ## 4. Static files and DEBUG - good to know
 

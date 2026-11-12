@@ -98,3 +98,26 @@ def test_compose_runs_the_website_next_to_the_mcp_server():
     assert '"127.0.0.1:${MI_WEB_PORT:-8094}:8000"' in compose
     assert '"gunicorn", "nopsite.wsgi:application"' in compose
     assert "DJANGO_DEBUG: ${DOCKER_DJANGO_DEBUG:-False}" in compose
+
+
+def test_compose_runs_mysql_with_a_volume_and_the_app_waits_for_it():
+    """Branch docker-mysql: MySQL is a compose service; its data is kept in a named volume."""
+    compose = (REPO / "docker-compose.yml").read_text(encoding="utf-8")
+    assert "  mysql:\n    image: mysql:8.4" in compose
+    assert "- mysql_data:/var/lib/mysql" in compose and "\nvolumes:\n  mysql_data:" in compose
+    assert "MYSQL_ROOT_PASSWORD: ${DOCKER_MYSQL_ROOT_PASSWORD:?" in compose          # from .env, never in the file
+    assert compose.count("MYSQL_HOST: ${DOCKER_MYSQL_HOST:-mysql}") == 2            # the website and the MCP server
+    assert compose.count("      mysql:\n        condition: service_healthy") == 3   # both, and the loader
+    assert '"127.0.0.1:${MI_MYSQL_PORT:-3307}:3306"' in compose                     # this PC only
+    assert 'profiles: ["load"]' in compose and '"loader/load_gold.py"' in compose   # the one-off data load
+
+
+def test_the_mysql_first_start_script_gives_only_the_needed_rights():
+    script = (REPO / "docker" / "mysql-init" / "01-databases-and-users.sh").read_bytes()
+    assert b"\r\n" not in script                                                    # runs in Linux: LF only
+    text = script.decode()
+    assert "GRANT SELECT ON \\`$GOLD\\`.* TO '$AI_DB_USER'@'%'" in text              # the AI user: read-only
+    assert "GRANT ALL PRIVILEGES ON \\`$APP_DB_NAME\\`.* TO '$APP_DB_USER'@'%'" in text  # the app user: its schema only
+    assert text.count("GRANT ") == 2 and "*.*" not in text                          # nothing server-wide
+    assert '-p"$MYSQL_ROOT_PASSWORD' not in text                                    # no password on a command line
+    assert "*.sh text eol=lf" in (REPO / ".gitattributes").read_text(encoding="utf-8")

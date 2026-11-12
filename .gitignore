@@ -30,3 +30,6 @@ portal/static/portal/app/
 
 # collectstatic output (python manage.py collectstatic) - made on each machine / in the Docker image
 staticfiles/
+
+# database backups made with the command in DEPLOY.md (they hold the chats and users)
+backups/
