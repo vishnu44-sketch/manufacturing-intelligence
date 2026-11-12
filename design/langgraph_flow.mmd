@@ -1,0 +1,59 @@
+---
+config:
+  flowchart:
+    curve: linear
+---
+graph TD;
+	__start__([<p>__start__</p>]):::first
+	load_memories(load_memories)
+	rewrite(rewrite)
+	route(route)
+	answer_from_documents(answer_from_documents)
+	search_notes(search_notes)
+	pick_schema(pick_schema)
+	write_sql(write_sql)
+	check_sql(check_sql)
+	run_sql(run_sql)
+	retry(retry)
+	failed(failed)
+	keep_first_answer(keep_first_answer)
+	check_names(check_names)
+	explain(explain)
+	documents_part(documents_part)
+	__end__([<p>__end__</p>]):::last
+	__start__ --> load_memories;
+	check_names -. &nbsp;name not found&nbsp; .-> __end__;
+	check_names -. &nbsp;name not found (both)&nbsp; .-> documents_part;
+	check_names -.-> explain;
+	check_sql -.-> failed;
+	check_sql -. &nbsp;keep the first answer&nbsp; .-> keep_first_answer;
+	check_sql -.-> retry;
+	check_sql -. &nbsp;run&nbsp; .-> run_sql;
+	failed -. &nbsp;done&nbsp; .-> __end__;
+	failed -. &nbsp;done (both)&nbsp; .-> documents_part;
+	keep_first_answer --> explain;
+	load_memories -. &nbsp;in a chat&nbsp; .-> rewrite;
+	load_memories -. &nbsp;no chat&nbsp; .-> route;
+	pick_schema --> write_sql;
+	retry --> write_sql;
+	rewrite --> route;
+	route -. &nbsp;documents&nbsp; .-> answer_from_documents;
+	route -. &nbsp;data / both&nbsp; .-> search_notes;
+	run_sql -. &nbsp;no rows&nbsp; .-> check_names;
+	run_sql -. &nbsp;rows&nbsp; .-> explain;
+	run_sql -.-> failed;
+	run_sql -. &nbsp;keep the first answer&nbsp; .-> keep_first_answer;
+	run_sql -.-> retry;
+	search_notes --> pick_schema;
+	write_sql -. &nbsp;refused / nodata&nbsp; .-> __end__;
+	write_sql -. &nbsp;check&nbsp; .-> check_sql;
+	write_sql -. &nbsp;refused / nodata (both)&nbsp; .-> documents_part;
+	write_sql -.-> failed;
+	write_sql -. &nbsp;keep the first answer&nbsp; .-> keep_first_answer;
+	write_sql -.-> retry;
+	answer_from_documents --> __end__;
+	documents_part --> __end__;
+	explain --> __end__;
+	classDef default fill:#f2f0ff,line-height:1.2
+	classDef first fill-opacity:0
+	classDef last fill:#bfb6fc
