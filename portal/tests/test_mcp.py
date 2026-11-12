@@ -6,8 +6,10 @@ import pytest
 from starlette.testclient import TestClient
 
 from portal import mcp_server
+from portal.lc import llm, pdfs
 from portal.models import Question
-from portal.rag import agent, warehouse
+from portal.rag import agent, store, warehouse
+from portal.rag.store import VectorStoreUnavailable
 
 KEY = "k" * 40
 HEADERS = {"Authorization": f"Bearer {KEY}", "Accept": "application/json, text/event-stream",
@@ -81,7 +83,7 @@ def test_the_tools_are_listed(client):
     response = client.post("/mcp", json=rpc("tools/list"), headers=HEADERS)
     assert response.status_code == 200
     tools = {tool["name"]: tool for tool in response.json()["result"]["tools"]}
-    assert set(tools) == {"search_notes", "get_schema", "run_sql", "nop_example_questions"}
+    assert set(tools) == {"search_notes", "get_schema", "run_sql", "nop_example_questions", "search_documents"}
     assert tools["search_notes"]["inputSchema"]["required"] == ["question"]
     assert tools["run_sql"]["inputSchema"]["required"] == ["sql"]
 
@@ -145,13 +147,13 @@ def test_with_mcp_auth_off_the_link_alone_is_enough(monkeypatch):
     headers = {k: v for k, v in HEADERS.items() if k != "Authorization"}
     with TestClient(mcp_server.build_app(), base_url="http://127.0.0.1:8090") as open_client:
         response = open_client.post("/mcp", json=rpc("tools/list"), headers=headers)
-    assert response.status_code == 200 and len(response.json()["result"]["tools"]) == 4
+    assert response.status_code == 200 and len(response.json()["result"]["tools"]) == 5
 
 
 @pytest.mark.django_db
 def test_a_real_question_is_saved_in_the_history(monkeypatch):
     """The tool runs the normal Ask NOP flow: the question is saved like one from the Ask page."""
-    monkeypatch.setattr(agent, "_answer", lambda result, context: setattr(result, "status", "refused")
+    monkeypatch.setattr(agent, "_answer", lambda result, context, user=None: setattr(result, "status", "refused")
                         or setattr(result, "answer", agent.REFUSAL_ANSWER))
     answer = mcp_server.ask_nop("delete all credit notes")
     assert answer["status"] == "refused" and answer["rows"] == []
@@ -325,6 +327,15 @@ def test_a_finished_period_is_not_called_unfinished(mysql):
         "NOP sales month Nov 2026"]
 
 
+def test_the_period_check_is_ask_nops_own(monkeypatch, mysql):
+    """03-Nov: one check for both - Ask NOP's SQL step and run_sql - with the MCP server's today()."""
+    asked = []
+    monkeypatch.setattr(agent, "periods_not_over", lambda sql, now=None: asked.append((sql, now)) or ["FY x"])
+    assert mcp_server.periods_not_over("SELECT 1") == ["FY x"]
+    assert asked == [("SELECT 1", datetime.date(2026, 11, 2))]
+    assert mcp_server.PERIOD_NOT_OVER_PROBLEM is agent.PERIOD_NOT_OVER_PROBLEM
+
+
 def test_the_real_data_dates_must_be_told(client, mysql):
     """FY 2025-26 starts on 01-Apr-2025, but the invoice data only on 21-Dec-2025 - their chatbot left it out."""
     sql = ("SELECT il.sale_type, ROUND(SUM(il.net_taxable_value), 2) AS net_sales_inr FROM fact_invoice_lines il "
@@ -358,9 +369,79 @@ def test_mysql_down_gives_a_friendly_message(client, monkeypatch):
 
 def test_the_callers_tools_never_use_our_groq(client, mysql, monkeypatch):
     """The point of 30-Oct: no Groq call (and no Groq token) of Ask NOP for the caller's questions."""
-    def no_groq():
+    def no_groq(*args, **kwargs):
         raise AssertionError("Groq was used")
-    monkeypatch.setattr(agent, "get_groq_client", no_groq)
+    monkeypatch.setattr(llm, "make_llm", no_groq)
     monkeypatch.setattr(mcp_server, "search", lambda question, top_k: [])
     assert not call_tool(client, "search_notes", {"question": "net sales by state"}).get("isError")
     assert not call_tool(client, "run_sql", {"sql": "SELECT state FROM dim_customers"}).get("isError")
+    monkeypatch.setattr(mcp_server, "search_pdfs", lambda question, k: PDF_HITS)
+    assert not call_tool(client, "search_documents", {"question": "warranty on gear pumps"}).get("isError")
+
+
+def test_run_sql_says_a_limited_result_is_not_the_full_list(client, mysql):
+    """03-Nov: the top N rows of a LIMIT N are not all the data - the caller's LLM gets the same note as ours."""
+    sql = ("SELECT cu.state, ROUND(SUM(il.net_taxable_value), 2) AS net_sales_inr FROM fact_invoice_lines il "
+           "JOIN dim_calendar c ON c.date_key = il.invoice_date_key JOIN dim_customers cu ON cu.customer_id = "
+           "il.customer_id WHERE c.nop_sales_month = 'Aug 2026' GROUP BY cu.state ORDER BY net_sales_inr DESC LIMIT 2")
+    answer = call_tool(client, "run_sql", {"sql": sql})["structuredContent"]
+    assert any(note.startswith("Rows: the SQL asked for only the first 2 rows (LIMIT 2)") for note in answer["notes"])
+
+
+# ------------------------------------------------------------------ the company PDFs (03-Nov)
+PDF_HITS = [{"text": "Gear pumps carry a warranty of 18 months from the invoice date.", "source":
+             "warranty_and_returns_policy.pdf", "title": "Warranty and Returns Policy", "page": 1, "score": 0.83},
+            {"text": "Wear parts (seals, gaskets) are not covered.", "source": "warranty_and_returns_policy.pdf",
+             "title": "Warranty and Returns Policy", "page": 2, "score": 0.71}]
+
+
+def test_search_documents_is_listed_with_its_how_to(client):
+    tools = {tool["name"]: tool for tool in client.post("/mcp", json=rpc("tools/list"), headers=HEADERS)
+             .json()["result"]["tools"]}
+    tool = tools["search_documents"]
+    assert tool["inputSchema"]["required"] == ["question"] and "k" in tool["inputSchema"]["properties"]
+    assert "warranty" in tool["description"] and "page" in tool["description"]
+    assert "search_documents" in mcp_server.INSTRUCTIONS                       # their chatbot always sees this
+
+
+def test_search_documents_gives_the_closest_pieces_with_their_page(client, monkeypatch):
+    searched = []
+    monkeypatch.setattr(mcp_server, "search_pdfs", lambda question, k: searched.append((question, k)) or PDF_HITS)
+
+    result = call_tool(client, "search_documents", {"question": "How long is the warranty on gear pumps?", "k": 50})
+
+    assert not result.get("isError")
+    found = result["structuredContent"]
+    assert searched == [("How long is the warranty on gear pumps?", mcp_server.MAX_DOCUMENT_PIECES)]  # at most 8
+    assert found["pieces"][0] == {"title": "Warranty and Returns Policy", "file": "warranty_and_returns_policy.pdf",
+                                  "page": 1, "text": PDF_HITS[0]["text"], "score": 0.83}
+    assert [piece["page"] for piece in found["pieces"]] == [1, 2]
+    assert "Answer ONLY from these pieces" in found["how_to_use"] and "page" in found["how_to_use"]
+    assert "do not have it" in found["how_to_use"]
+
+
+def test_search_documents_asks_4_pieces_by_default(monkeypatch):
+    searched = []
+    monkeypatch.setattr(mcp_server, "search_pdfs", lambda question, k: searched.append(k) or PDF_HITS)
+    mcp_server.search_documents("warranty?")
+    assert searched == [4]
+
+
+@pytest.mark.parametrize("problem, message", [
+    (RuntimeError(pdfs.PDF_STORE_EMPTY), mcp_server.DOCUMENTS_EMPTY),          # ingest_pdfs never ran
+    (VectorStoreUnavailable(store.QDRANT_DOWN), store.QDRANT_DOWN),             # Qdrant is down
+    (None, mcp_server.DOCUMENTS_EMPTY),                                          # the collection holds nothing
+])
+def test_search_documents_problems_are_friendly_errors(client, monkeypatch, problem, message):
+    def fake_search(question, k):
+        if problem:
+            raise problem
+        return []
+    monkeypatch.setattr(mcp_server, "search_pdfs", fake_search)
+    result = call_tool(client, "search_documents", {"question": "warranty on gear pumps"})
+    assert result["isError"] and result["content"][0]["text"].endswith(message)
+
+
+def test_search_documents_needs_a_question(client):
+    result = call_tool(client, "search_documents", {"question": "  "})
+    assert result["isError"] and "Give the user's question." in result["content"][0]["text"]

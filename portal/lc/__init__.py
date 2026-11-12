@@ -1,7 +1,8 @@
-"""The LangChain version of the pipeline, used when .env says USE_LANGCHAIN=on (switch.py).
+"""The LangChain parts of Ask NOP: every AI call, the embeddings, the docs chunks and the notes search.
 
-Built step by step next to portal/rag/ (the classic version, the default), so both can be compared.
-LangChain does the LLM calls, the prompts and the document search; our own code keeps the safety
-parts: the SQL guard (rag/sql_guard.py), the read-only MySQL (rag/warehouse.py), the date rules,
-the retry loop and the MCP server.
+LangChain does the LLM calls (llm.py, prompts.py, chains.py, calls.py), the embeddings (embeddings.py), the
+docs chunks (docs.py), the notes in Qdrant (vectorstore.py) and the PDFs (pdfs.py). Our own code in
+portal/rag/ keeps the safety parts: the SQL guard (sql_guard.py), the read-only MySQL (warehouse.py), the
+date rules, the backup model (agent.py) and the MCP server. The steps of one question - rewrite, route,
+search, write SQL, check, run, retry, explain - are a LangGraph graph (graph.py).
 """

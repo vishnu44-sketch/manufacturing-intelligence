@@ -3,7 +3,6 @@ import csv
 import json
 from datetime import date
 from decimal import Decimal
-from types import SimpleNamespace
 
 import pytest
 from django.core.management import call_command
@@ -11,8 +10,11 @@ from django.core.management.base import CommandError
 
 from portal.evals import grading
 from portal.evals.questions import ITEMS, QUICK
+from portal.lc import calls as lc_calls
+from portal.lc.calls import LcRequest
 from portal.management.commands import run_eval
 from portal.rag import agent, sql_guard, warehouse
+from portal.tests.test_agent import use_fake_ai
 
 IDS = [item["id"] for item in ITEMS]
 
@@ -101,12 +103,13 @@ def results_dir(tmp_path, monkeypatch):
 def test_a_run_asks_grades_and_adds_a_score_line(results_dir, truth, monkeypatch, staff):
     asked = []
 
-    def fake_ask(question, user, context=None):
+    def fake_ask(question, user, context=None, use_memories=True):
         asked.append((question, len(context or [])))
+        assert use_memories is False                          # the user's saved memories never reach the eval
         status = "refused" if question.startswith("delete") else "ok"
         return agent.AskResult(text=question, status=status, answer="so far, before gst", model="openai/gpt-oss-120b")
     monkeypatch.setattr(agent, "ask", fake_ask)
-    chat_before = agent._chat
+    chat_before = lc_calls.chat
 
     call_command("run_eval", "quick", "--cap", "1000000", "--out", str(results_dir / "q.json"))
 
@@ -117,7 +120,7 @@ def test_a_run_asks_grades_and_adds_a_score_line(results_dir, truth, monkeypatch
     assert len(rows) == 1 and rows[0]["set"] == "quick" and rows[0]["asked"] == rows[0]["of"] == "15"
     assert rows[0]["commit"] == "abc1234" and rows[0]["file"] == "q.json"
     assert int(rows[0]["pass"]) + int(rows[0]["partial"]) + int(rows[0]["fail"]) == 15
-    assert agent._chat is chat_before                       # the agent is put back after the run
+    assert lc_calls.chat is chat_before                     # the AI call is put back after the run
 
     call_command("run_eval", "quick", "--cap", "1000000", "--out", str(results_dir / "q.json"))
     assert len(asked) == 15                                   # all answered already: nothing asked again
@@ -126,14 +129,11 @@ def test_a_run_asks_grades_and_adds_a_score_line(results_dir, truth, monkeypatch
 
 @pytest.mark.django_db
 def test_a_run_stops_before_the_token_cap(results_dir, truth, monkeypatch, staff):
-    def fake_client():   # a new client each time, like groq.Groq(); every call 'costs' 7,000 tokens
-        response = SimpleNamespace(usage=SimpleNamespace(total_tokens=7_000),
-                                   choices=[SimpleNamespace(finish_reason="stop")])
-        return SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=lambda **kwargs: response)))
-    monkeypatch.setattr(agent, "get_groq_client", fake_client)
+    use_fake_ai(monkeypatch, [("Top customers in Sep 2026?", 7_000)] * 5)   # every call 'costs' 7,000 tokens
 
-    def ask_one_call(question, user, context=None):
-        agent.get_groq_client().chat.completions.create(model="m")
+    # one AI call through LangChain, like the agent makes
+    def ask_one_call(question, user, context=None, use_memories=True):
+        lc_calls.chat(LcRequest("rewrite", {"earlier": "1. Q (latest)", "question": question}), 100, "low")
         return agent.AskResult(text=question, status="ok")
     monkeypatch.setattr(agent, "ask", ask_one_call)
 
@@ -141,15 +141,70 @@ def test_a_run_stops_before_the_token_cap(results_dir, truth, monkeypatch, staff
     saved = json.loads((results_dir / "f.json").read_text(encoding="utf-8"))
     # Q38 (7,000) + Q39, a follow-up (about 11,000) = 18,000; Q40 would pass 20,000
     assert list(saved) == ["Q38", "Q39"] and saved["Q38"]["tokens"] == 7_000
+    assert saved["Q38"]["calls"] == [{"model": agent.model_name(), "total": 7_000, "finish": "stop"}]
     rows = list(csv.DictReader((results_dir / "scores.csv").open(encoding="utf-8")))
     assert rows[0]["asked"] == "2" and rows[0]["of"] == str(len(ITEMS)) and rows[0]["tokens"] == "14000"
+
+
+@pytest.mark.django_db
+def test_a_run_never_spends_the_other_models_tokens(results_dir, truth, monkeypatch, staff):
+    """A main-model run: a call for the backup model is refused at once (as if its daily limit were used up),
+    never reaches the AI and is not recorded; the main model's call is recorded with its tokens."""
+    monkeypatch.setenv("GROQ_FALLBACK_MODEL", "qwen/qwen3.8-27b")
+    fake = use_fake_ai(monkeypatch, [("Top customers in Sep 2026?", 7_000)])
+    refused = []
+
+    def ask_both(question, user, context=None, use_memories=True):
+        request = LcRequest("rewrite", {"earlier": "1. Q (latest)", "question": question})
+        try:
+            lc_calls.chat(request, 100, "low", "qwen/qwen3.8-27b")
+        except agent.DailyLimitReached:
+            refused.append(question)
+        lc_calls.chat(request, 100, "low")
+        return agent.AskResult(text=question, status="ok")
+    monkeypatch.setattr(agent, "ask", ask_both)
+
+    call_command("run_eval", "quick", "--ids", "Q38", "--cap", "1000000", "--out", str(results_dir / "m.json"))
+    saved = json.loads((results_dir / "m.json").read_text(encoding="utf-8"))
+    assert len(refused) == 1 and fake.models == [agent.model_name()]
+    assert saved["Q38"]["calls"] == [{"model": agent.model_name(), "total": 7_000, "finish": "stop"}]
+
+
+@pytest.mark.django_db
+def test_memory_store_searches_the_docs_in_a_store_in_memory(results_dir, truth, monkeypatch, staff):
+    """--memory-store (Qdrant not running): the docs/ notes are built in memory (fake vectors here) and the
+    agent's search reads them; afterwards the agent's own search is back."""
+    from langchain_core.embeddings import Embeddings
+    from portal.lc import vectorstore
+
+    class LetterEmbeddings(Embeddings):   # a fake model: how often a few letters appear
+        def embed_documents(self, texts):
+            return [self.embed_query(text) for text in texts]
+
+        def embed_query(self, text):
+            return [float(text.lower().count(letter)) + 0.1 for letter in "aeiou"]
+
+    monkeypatch.setattr(vectorstore, "get_embeddings", lambda: LetterEmbeddings())
+    search_before, found = agent.search, []
+
+    def ask_search(question, user, context=None, use_memories=True):
+        found.extend(agent.search(question, top_k=3))
+        return agent.AskResult(text=question, status="ok")
+    monkeypatch.setattr(agent, "ask", ask_search)
+
+    call_command("run_eval", "quick", "--ids", "Q38", "--cap", "1000000", "--memory-store",
+                 "--out", str(results_dir / "s.json"))
+    vectorstore.clear()
+    assert len(found) == 3 and {hit["source"] for hit in found} <= {"business_rules.md", "data_dictionary.md",
+                                                                      "sql_examples.md"}
+    assert agent.search is search_before
 
 
 @pytest.mark.django_db
 def test_nothing_of_a_run_stays_in_history(results_dir, truth, monkeypatch, staff):
     from portal.models import Question
 
-    def ask_and_save(question, user, context=None):
+    def ask_and_save(question, user, context=None, use_memories=True):
         Question.objects.create(user=user, text=question)
         return agent.AskResult(text=question, status="ok")
     monkeypatch.setattr(agent, "ask", ask_and_save)

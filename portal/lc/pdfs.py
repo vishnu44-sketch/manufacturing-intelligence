@@ -2,14 +2,17 @@
 
 The PDFs in pdfs/ (company documents: catalogue, warranty, sales terms, maintenance guide) go into a
 separate collection (QDRANT_PDF_COLLECTION in .env, default mi_pdfs) - never the SQL notes' mi_docs and
-never the main project's nop_docs. This step only stores and searches them; answering from them comes later.
+never the main project's nop_docs. Step H: agent.py sends document questions here and answers them from
+the closest chunks (the page is the source).
 
-load_pdfs()           every PDF as LangChain Documents, one per page (source, page from 1, title)
+load_pdfs()           every PDF as LangChain Documents, one per page (source, page from 1, title), without
+                      the running headers and footers that repeat on every page (drop_running_lines)
 split_pages(pages)    the pages cut into chunks of at most 800 characters, each with a stable id
 rebuild()             load + split + embed + store everything again (used by manage.py ingest_pdfs)
 search_pdfs(q, k)     the k chunks closest to the question: list of {text, source, title, page, score}
 """
 import os
+import re
 from pathlib import Path
 
 from ..rag import store
@@ -20,6 +23,7 @@ PDF_DIR = Path(__file__).resolve().parents[2] / "pdfs"
 COLLECTION = os.getenv("QDRANT_PDF_COLLECTION", "").strip() or "mi_pdfs"
 CHUNK_SIZE = 800     # characters per chunk: about one section of a page
 CHUNK_OVERLAP = 100  # the end of one chunk starts the next, so a sentence cut in two is still found
+EDGE_LINES = 4       # running headers / footers are looked for in the first and last 4 lines of a page
 
 PDF_STORE_EMPTY = "The PDF store is empty - run: python manage.py ingest_pdfs"
 
@@ -60,13 +64,39 @@ def load_pdfs(folder=PDF_DIR):
 
     pages = []
     for file in files:
-        for page in PyPDFLoader(str(file)).load():
+        for page in drop_running_lines(PyPDFLoader(str(file)).load()):
             title = (page.metadata.get("title") or "").strip()
             if title.lower() in ("", "untitled", "(unspecified)"):  # what PDF makers write when there is none
                 title = _readable_title(file)
             # PyPDFLoader counts pages from 0; people (and the answer's "see page 2") count from 1
             page.metadata = {"source": file.name, "page": page.metadata.get("page", 0) + 1, "title": title}
             pages.append(page)
+    return pages
+
+
+def _line_key(line):
+    """A line as compared between pages: spaces and case ignored, every number as '#' ('Page 2' = 'Page 1')."""
+    return re.sub(r"\d+", "#", " ".join(line.split())).lower()
+
+
+def drop_running_lines(pages):
+    """The pages of ONE PDF without their running headers and footers: the lines found near the top or the
+    bottom (EDGE_LINES) of every page. Otherwise every page's first chunk starts with the same company line
+    and page number, and those words pull the search towards the wrong page. Needs 2 pages or more; a line
+    of only numbers (e.g. a table's last value) never counts as a running line."""
+    def edges(lines):
+        return set(range(min(EDGE_LINES, len(lines)))) | set(range(max(0, len(lines) - EDGE_LINES), len(lines)))
+
+    if len(pages) < 2:
+        return pages
+    texts = [[line for line in page.page_content.splitlines() if line.strip()] for page in pages]
+    running = set.intersection(*({_line_key(lines[i]) for i in edges(lines)} for lines in texts))
+    running = {key for key in running if re.search(r"[a-z]", key)}
+    if running:
+        for page, lines in zip(pages, texts):
+            near_edge = edges(lines)
+            page.page_content = "\n".join(line for i, line in enumerate(lines)
+                                          if not (i in near_edge and _line_key(line) in running))
     return pages
 
 
@@ -99,7 +129,7 @@ def _vectorstore(client, name, path):
 
 def rebuild(folder=PDF_DIR, path=None):
     """Drop the PDF collection, create it again (cosine) and store every chunk with its vector.
-    path = a test store, as in store.rebuild(). Returns {pdfs, pages, chunks}: the counts stored."""
+    path = a test store, as in vectorstore.rebuild(). Returns {pdfs, pages, chunks}: the counts stored."""
     from qdrant_client import models
 
     name = collection_name()

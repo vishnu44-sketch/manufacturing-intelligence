@@ -1,13 +1,14 @@
-"""Page checks for Ask NOP, the result page, the Excel download and History.
+"""Asking, saved answers, the Excel download and History - through the JSON API (/api/...).
 
 agent.ask() is replaced by a fake (no AI), and MySQL by a fake run_select (no database).
-Asking works Post/Redirect/Get: POST /ask/ answers and saves the question in a NEW chat, then
-sends the browser to that chat at /ask/c/<chat>/#q-<id>, which only SHOWS saved answers - a refresh
-never asks the AI again. /ask/<id>/ shows one saved answer on its own. The chats: test_chat.py.
+POST /api/ask answers and saves the question (a new chat when chat_id is null); showing a chat or a
+saved answer (/api/chats/<id>, /api/questions/<id>) never asks the AI again, and only the rows call
+(/api/questions/<id>/rows) runs the saved SQL again. The chats: test_chat.py.
 Run with:  python -m pytest -q portal/tests/test_views_ask.py
 """
 import datetime
 import io
+import json
 from decimal import Decimal
 
 import pytest
@@ -15,6 +16,7 @@ from django.urls import reverse
 from django.utils import timezone
 from openpyxl import load_workbook
 
+from portal import services
 from portal.models import Conversation, Question
 from portal.rag import agent, warehouse
 from portal.rag.sql_guard import check_sql
@@ -86,86 +88,97 @@ def saved_question(user, **fields):
     return Question.objects.create(user=user, **values)
 
 
-# ---------- asking: Post/Redirect/Get ----------
+def api_get(client, name, *args, data=None):
+    """GET an API address by its URL name."""
+    return client.get(reverse(name, args=args), data or {})
 
-def test_ask_saves_the_question_and_redirects_to_it_in_the_chat(client, user, fake_ask, mysql):
+
+def api_post(client, name, data=None, *args):
+    """POST JSON to an API address by its URL name."""
+    return client.post(reverse(name, args=args), data=json.dumps(data or {}), content_type="application/json")
+
+
+def ask(client, question, chat_id=None):
+    return api_post(client, "api_ask", {"question": question, "chat_id": chat_id})
+
+
+def history(client, page=None):
+    return api_get(client, "api_history", data={"page": page} if page else None).json()
+
+
+# ---------- asking ----------
+
+def test_ask_saves_the_question_in_a_new_chat_titled_by_it(client, user, fake_ask, mysql):
     client.force_login(user)
 
-    r = client.post(reverse("ask"), {"question": QUESTION})
+    r = ask(client, QUESTION)
 
     saved = Question.objects.get()
     chat = Conversation.objects.get()                            # a new chat, titled by the question
-    assert r.status_code == 302
-    assert r.url == f"{reverse('ask_chat', args=[chat.pk])}#q-{saved.pk}"
+    assert r.status_code == 200
+    assert r.json()["chat"]["id"] == chat.pk and r.json()["card"]["id"] == saved.pk
     assert saved.conversation == chat and chat.title == QUESTION
     assert fake_ask == [QUESTION]
 
 
-def test_after_asking_the_chat_shows_answer_table_sql_and_sources(client, user, fake_ask, mysql):
+def test_after_asking_the_chat_has_the_answer_rows_sql_and_sources(client, user, fake_ask, mysql):
     client.force_login(user)
+    chat_id = ask(client, QUESTION).json()["chat"]["id"]
 
-    r = client.post(reverse("ask"), {"question": QUESTION}, follow=True)
+    card = api_get(client, "api_chat", chat_id).json()["cards"][-1]
+    rows = client.get(card["rows_url"]).json()
 
-    assert r.status_code == 200
-    page = r.content.decode()
     saved = Question.objects.get()
-    assert f'id="q-{saved.pk}"' in page                          # the redirect target is in the page
-    assert "ANSWERED" in page
-    assert ANSWER in page                                        # the answer
-    assert "Aurora Fluid Power Limited" in page and "1,730,000.00" in page  # the rows table
-    assert "Show SQL" in page and "FROM fact_invoice_lines" in page         # the SQL (folded)
-    assert "Sources used (2)" in page and "NOP sales month" in page         # the sources (folded)
-    assert "2 rows" in page
-    assert reverse("ask_excel", args=[saved.pk]) in page          # Download Excel
-    assert "></textarea>" in page                                 # the question box is empty again
-    assert 'href="/ask/" class="active"' in page                  # "Ask NOP" stays lit in the menu
+    assert card["id"] == saved.pk and card["status"] == "ok"
+    assert card["answer"] == ANSWER
+    assert "FROM fact_invoice_lines" in card["sql"]                          # the SQL
+    assert [s["heading"] for s in card["sources"]] == [s["heading"] for s in SOURCES]   # the 2 sources
+    assert rows["rows"][0][0]["text"] == "Aurora Fluid Power Limited" and rows["rows"][0][1]["text"] == "1,730,000.00"
+    assert rows["row_count"] == 2 and card["row_count"] == 2
+    assert card["excel_url"] == reverse("api_excel", args=[saved.pk])       # Download Excel
 
 
-def test_result_page_shows_answer_table_sql_and_sources(client, user, mysql):
+def test_a_saved_answer_has_its_answer_rows_sql_and_sources(client, user, mysql):
     saved = saved_question(user)
     client.force_login(user)
 
-    r = client.get(reverse("ask_result", args=[saved.pk]))
+    body = api_get(client, "api_question", saved.pk).json()
+    rows = api_get(client, "api_rows", saved.pk).json()
 
-    assert r.status_code == 200
-    page = r.content.decode()
-    assert "ANSWERED" in page
-    assert ANSWER in page                                        # the answer
-    assert "Aurora Fluid Power Limited" in page and "1,730,000.00" in page  # the rows table
-    assert "Show SQL" in page and "FROM fact_invoice_lines" in page         # the SQL
-    assert "Sources used" in page and "NOP sales month" in page             # the sources
-    assert "2 rows" in page
-    assert reverse("ask_excel", args=[saved.pk]) in page          # Download Excel
-    assert f">{QUESTION}</textarea>" in page                     # question box filled in again
-    assert 'href="/ask/" class="active"' in page                  # "Ask NOP" stays lit in the menu
+    card = body["card"]
+    assert card["status"] == "ok" and card["answer"] == ANSWER and card["text"] == QUESTION
+    assert "FROM fact_invoice_lines" in card["sql"] and card["sources"][1]["heading"] == "NOP sales month"
+    assert "1,730,000.00" in json.dumps(rows) and rows["row_count"] == 2
+    assert card["excel_url"] == reverse("api_excel", args=[saved.pk])
+    assert body["chat"] is None                                              # this one is in no chat
 
 
-def test_result_page_says_when_the_backup_model_answered(client, user, mysql, monkeypatch):
+def test_a_saved_answer_says_when_the_backup_model_answered(client, user, mysql, monkeypatch):
     monkeypatch.setenv("GROQ_MODEL", "openai/gpt-oss-120b")
     by_backup = saved_question(user, model="qwen/qwen3.8-27b")
     by_main = saved_question(user, model="openai/gpt-oss-120b")
     client.force_login(user)
 
-    backup_page = client.get(reverse("ask_result", args=[by_backup.pk])).content.decode()
-    main_page = client.get(reverse("ask_result", args=[by_main.pk])).content.decode()
-    history = client.get(reverse("history")).content.decode()
+    backup = api_get(client, "api_question", by_backup.pk).json()["card"]
+    main = api_get(client, "api_question", by_main.pk).json()["card"]
+    rows = history(client)["questions"]
 
-    note = "Answered by the backup model (qwen/qwen3.8-27b) - the main model's daily limit was reached."
-    assert note in backup_page
-    assert "Answered by the backup model" not in main_page
-    assert history.count("backup model</div>") == 1
+    assert backup["backup_model"] == "qwen/qwen3.8-27b"
+    assert main["backup_model"] == ""
+    assert [r["backup"] for r in rows].count(True) == 1
 
 
-def test_refreshing_the_chat_does_not_ask_the_ai_again(client, user, fake_ask, mysql):
-    """The chat re-runs the newest saved SQL (guard + read-only MySQL) but never calls the AI."""
+def test_showing_a_chat_again_does_not_ask_the_ai_again(client, user, fake_ask, mysql):
+    """Showing a chat never calls the AI; only the rows call re-runs the saved SQL (guard + read-only MySQL)."""
     client.force_login(user)
-    chat_url = client.post(reverse("ask"), {"question": QUESTION}).url
+    body = ask(client, QUESTION).json()
 
-    client.get(chat_url)
-    client.get(chat_url)  # the browser refresh
+    for _ in range(2):                                           # the browser refresh
+        api_get(client, "api_chat", body["chat"]["id"])
+        client.get(body["card"]["rows_url"])
 
     assert fake_ask == [QUESTION]   # the AI was asked once
-    assert len(mysql) == 2          # the rows were loaded once per page view
+    assert len(mysql) == 2          # the rows were loaded once per view
     assert mysql[0].rstrip().endswith("LIMIT 5")
 
 
@@ -176,29 +189,29 @@ def test_refreshing_the_chat_does_not_ask_the_ai_again(client, user, fake_ask, m
 def test_empty_or_too_long_question_is_not_sent_to_the_ai(client, user, fake_ask, question, message):
     client.force_login(user)
 
-    r = client.post(reverse("ask"), {"question": question})
+    r = ask(client, question)
 
-    assert r.status_code == 200
-    assert message in r.content.decode()
+    assert r.status_code == 400
+    assert r.json()["detail"] == message
     assert fake_ask == []
     assert not Question.objects.exists() and not Conversation.objects.exists()
 
 
-def test_refused_question_shows_no_sql_and_runs_nothing(client, user, mysql):
+def test_refused_question_has_no_sql_and_runs_nothing(client, user, mysql):
     saved = saved_question(user, text="What is the capital of France?", status="refused",
                            sql="", answer=agent.REFUSAL_ANSWER, rows_count=None, sources=[])
     client.force_login(user)
 
-    r = client.get(reverse("ask_result", args=[saved.pk]))
+    card = api_get(client, "api_question", saved.pk).json()["card"]
 
-    page = r.content.decode()
-    assert "NOT A NOP DATA QUESTION" in page
-    assert agent.REFUSAL_ANSWER in page
-    assert "Show SQL" not in page and "Download Excel" not in page
+    assert card["status"] == "refused"                           # NOT A NOP DATA QUESTION
+    assert card["answer"] == agent.REFUSAL_ANSWER
+    assert card["sql"] == "" and card["excel_url"] == "" and card["has_rows"] is False
+    assert api_get(client, "api_rows", saved.pk).status_code == 404
     assert mysql == []
 
 
-def test_result_page_still_shows_the_answer_when_the_rows_cannot_be_loaded(client, user, monkeypatch):
+def test_a_saved_answer_still_shows_when_the_rows_cannot_be_loaded(client, user, monkeypatch):
     def mysql_refuses(sql):
         raise warehouse.QueryError("(1146) Table 'ai_gold.dim_customers' doesn't exist")
     monkeypatch.setattr(warehouse, "allowed_tables", lambda: TABLES)
@@ -206,43 +219,40 @@ def test_result_page_still_shows_the_answer_when_the_rows_cannot_be_loaded(clien
     saved = saved_question(user)
     client.force_login(user)
 
-    r = client.get(reverse("ask_result", args=[saved.pk]))
+    card = api_get(client, "api_question", saved.pk).json()["card"]
+    rows = api_get(client, "api_rows", saved.pk).json()
 
-    page = r.content.decode()
-    assert r.status_code == 200
-    assert ANSWER in page
-    assert "The rows could not be loaded again" in page
-    assert "returned no rows" not in page
+    assert card["answer"] == ANSWER
+    assert rows["rows_error"].startswith("The rows could not be loaded again")
+    assert rows["rows"] == []
 
 
 # ---------- who may see what ----------
 
-def test_ask_pages_need_a_login(client, user, fake_ask):
+def test_asking_and_saved_answers_need_a_sign_in(client, user, fake_ask):
     saved = saved_question(user)
-    for url in [reverse("ask"), reverse("ask_result", args=[saved.pk]),
-                reverse("ask_excel", args=[saved.pk])]:
-        r = client.get(url)
-        assert r.status_code == 302 and r.url.startswith(reverse("login")), url
-    r = client.post(reverse("ask"), {"question": QUESTION})
-    assert r.status_code == 302 and r.url.startswith(reverse("login"))
+    for name in ("api_question", "api_rows", "api_excel"):
+        r = api_get(client, name, saved.pk)
+        assert r.status_code == 401 and r.json()["detail"] == "Please sign in.", name
+    assert ask(client, QUESTION).status_code == 401
     assert fake_ask == []  # a stranger never reaches the AI
 
 
-def test_another_user_cannot_open_my_result_or_excel(client, user, other, mysql):
+def test_another_user_cannot_open_my_answer_or_excel(client, user, other, mysql):
     saved = saved_question(user)
     client.force_login(other)
 
-    assert client.get(reverse("ask_result", args=[saved.pk])).status_code == 404
-    assert client.get(reverse("ask_excel", args=[saved.pk])).status_code == 404
+    assert api_get(client, "api_question", saved.pk).status_code == 404
+    assert api_get(client, "api_excel", saved.pk).status_code == 404
     assert mysql == []  # nothing was run for them
 
 
-def test_staff_can_open_anyones_result_and_excel(client, user, staff, mysql):
+def test_staff_can_open_anyones_answer_and_excel(client, user, staff, mysql):
     saved = saved_question(user)
     client.force_login(staff)
 
-    assert client.get(reverse("ask_result", args=[saved.pk])).status_code == 200
-    assert client.get(reverse("ask_excel", args=[saved.pk])).status_code == 200
+    assert api_get(client, "api_question", saved.pk).status_code == 200
+    assert api_get(client, "api_excel", saved.pk).status_code == 200
 
 
 # ---------- Excel download ----------
@@ -251,7 +261,7 @@ def test_owner_downloads_an_excel_file_with_result_and_question_sheets(client, u
     saved = saved_question(user)
     client.force_login(user)
 
-    r = client.get(reverse("ask_excel", args=[saved.pk]))
+    r = api_get(client, "api_excel", saved.pk)
 
     assert r.status_code == 200
     assert r["Content-Type"] == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
@@ -273,7 +283,23 @@ def test_no_excel_for_a_question_without_rows(client, user, mysql):
     saved = saved_question(user, status="refused", sql="", answer=agent.REFUSAL_ANSWER)
     client.force_login(user)
 
-    assert client.get(reverse("ask_excel", args=[saved.pk])).status_code == 404
+    r = api_get(client, "api_excel", saved.pk)
+
+    assert r.status_code == 404 and r["Content-Type"] == "application/json"
+
+
+def test_excel_when_mysql_cannot_run_the_sql_says_why(client, user, monkeypatch):
+    def down(sql):
+        raise warehouse.WarehouseUnavailable("MySQL is not running")
+    monkeypatch.setattr(warehouse, "allowed_tables", lambda: TABLES)
+    monkeypatch.setattr(warehouse, "run_select", down)
+    saved = saved_question(user)
+    client.force_login(user)
+
+    r = api_get(client, "api_excel", saved.pk)
+
+    assert r.status_code == 503
+    assert r.json()["detail"] == "The Excel file could not be made: MySQL is not running"
 
 
 # ---------- History ----------
@@ -286,16 +312,39 @@ def test_history_shows_only_my_questions_25_per_page(client, user, other):
     saved_question(other, text="Ravi's private question")
     client.force_login(user)
 
-    page1 = client.get(reverse("history")).content.decode()
-    page2 = client.get(reverse("history") + "?page=2").content.decode()
+    page1, page2 = history(client), history(client, 2)
 
-    assert page1.count("Ask again") == 25
-    assert page2.count("Ask again") == 5
-    assert "My question 30" in page1 and "My question 06" in page1   # newest first
-    assert "My question 05" in page2 and "My question 01" in page2
-    assert "My question 05" not in page1
-    assert "Page 2 of 2" in page2 and "30 questions" in page2
-    assert "Ravi" not in page1 + page2                             # never someone else's
+    texts1 = [q["text"] for q in page1["questions"]]
+    texts2 = [q["text"] for q in page2["questions"]]
+    assert len(texts1) == 25 and len(texts2) == 5
+    assert texts1[0] == "My question 30" and texts1[-1] == "My question 06"   # newest first
+    assert texts2 == [f"My question {n:02d}" for n in range(5, 0, -1)]
+    assert (page2["page"], page2["pages"], page2["count"]) == (2, 2, 30)
+    assert page1["has_next"] and not page1["has_previous"] and page2["has_previous"] and not page2["has_next"]
+    assert "Ravi" not in json.dumps(page1) + json.dumps(page2)               # never someone else's
+
+
+def test_staff_also_see_only_their_own_questions_in_history(client, user, staff):
+    saved_question(user, text="Asha's question")
+    saved_question(staff, text="The boss's question")
+    client.force_login(staff)
+
+    assert [q["text"] for q in history(client)["questions"]] == ["The boss's question"]
+
+
+def test_a_history_line_has_the_columns_of_the_page(client, user):
+    saved = saved_question(user, secs=12.345, understood_as="Top 5 customers in Aug 2026",
+                           answer="A" * 200, total_tokens=4_517)
+    client.force_login(user)
+
+    line = history(client)["questions"][0]
+
+    assert line["id"] == saved.pk and line["created_text"]
+    assert line["answer"] == "A" * 139 + "…"                                  # cut at 140 characters
+    assert line["rows_count"] == 2 and line["secs_text"] == "12.3" and line["tokens_text"] == "4,517"
+    assert line["status"] == "ok" and line["edited"] is False
+    assert line["understood_as"] == "Top 5 customers in Aug 2026"
+    assert "sql" not in line and "error" not in line
 
 
 # ---------- Groq tokens ----------
@@ -303,57 +352,52 @@ def test_history_shows_only_my_questions_25_per_page(client, user, other):
 MAIN, BACKUP = "openai/gpt-oss-120b", "qwen/qwen3.8-27b"
 
 
-def test_result_page_has_no_permanent_token_line(client, user, mysql):
+def test_a_saved_answer_has_no_permanent_token_line(client, user, mysql):
     """The tokens show once, right after asking (test_chat.py), and in History - not on re-opened answers."""
     saved = saved_question(user, model=MAIN, sql_tokens=3717, answer_tokens=800, total_tokens=4517)
     client.force_login(user)
 
-    page = client.get(reverse("ask_result", args=[saved.pk])).content.decode()
+    r = api_get(client, "api_question", saved.pk)
 
-    assert ANSWER in page
-    assert "Tokens used" not in page and "This question used" not in page
-    assert "4,517" not in page
+    assert r.json()["card"]["token_notice"] == ""
+    assert "4,517" not in r.content.decode()
 
 
 def test_old_question_without_tokens_shows_no_token_line(client, user, mysql):
     saved = saved_question(user, model=MAIN)  # saved before tokens were counted
     client.force_login(user)
 
-    r = client.get(reverse("ask_result", args=[saved.pk]))
-    history = client.get(reverse("history")).content.decode()
+    card = api_get(client, "api_question", saved.pk).json()["card"]
 
-    assert r.status_code == 200 and ANSWER in r.content.decode()
-    assert "Tokens used" not in r.content.decode()
-    assert '<td class="num">-</td>' in history
+    assert card["answer"] == ANSWER and card["token_notice"] == ""
+    assert history(client)["questions"][0]["tokens_text"] == "-"
 
 
-def test_result_page_shows_the_time_of_each_step(client, user, mysql):
+def test_a_saved_answer_has_the_time_of_each_step(client, user, mysql):
     saved = saved_question(user, secs=58.4, tries=2, step_secs={
         "embed": 0.05, "search": 0.02, "sql_ai": 6.5, "mysql": 0.8, "answer_ai": 3.1, "wait": 45.0, "other": 2.93})
     old = saved_question(user)                                       # saved before the steps were timed
     client.force_login(user)
 
-    page = client.get(reverse("ask_result", args=[saved.pk])).content.decode()
-    old_page = client.get(reverse("ask_result", args=[old.pk])).content.decode()
+    card = api_get(client, "api_question", saved.pk).json()["card"]
+    old_card = api_get(client, "api_question", old.pk).json()["card"]
 
-    assert "Time taken: 58.4 s" in page
-    assert "Wait for Groq&#x27;s per-minute limit" in page and "45.0 s" in page
-    assert "Write the SQL (AI) <span class=\"mut\">(2 tries)</span>" in page
-    assert "Embed the question (text to numbers)" in page and "0.05 s" in page
-    assert "Time taken" not in old_page
+    steps = {s["label"]: s for s in card["time_steps"]}
+    assert card["secs"] == 58.4
+    assert steps["Wait for Groq's per-minute limit"]["secs"] == 45.0
+    assert steps["Write the SQL (AI)"]["note"] == "2 tries"
+    assert steps["Embed the question (text to numbers)"]["secs"] == 0.05
+    assert old_card["time_steps"] == []
 
 
 def test_history_has_a_tokens_column(client, user):
     saved_question(user, model=MAIN, sql_tokens=3717, answer_tokens=800, total_tokens=4517)
     client.force_login(user)
 
-    page = client.get(reverse("history")).content.decode()
-
-    assert '<th class="num">Tokens</th>' in page
-    assert '<td class="num">4,517</td>' in page
+    assert history(client)["questions"][0]["tokens_text"] == "4,517"
 
 
-def test_history_shows_the_ai_usage_box_for_all_users(client, user, other, monkeypatch):
+def test_history_has_the_ai_usage_box_for_all_users(client, user, other, monkeypatch):
     monkeypatch.setenv("GROQ_MODEL", MAIN)
     monkeypatch.setenv("GROQ_FALLBACK_MODEL", BACKUP)
     monkeypatch.delenv("GROQ_DAILY_TOKEN_LIMIT", raising=False)
@@ -364,17 +408,16 @@ def test_history_shows_the_ai_usage_box_for_all_users(client, user, other, monke
     saved_question(user, model=MAIN)                                      # no tokens saved: 0
     client.force_login(user)
 
-    page = client.get(reverse("history")).content.decode()
+    body = history(client)
 
-    assert "AI usage (this app)" in page
-    assert "Daily period since " in page
-    assert "18,240 of 200,000 tokens (9 %)" in page                        # main model, this period
-    assert "0 of 200,000 tokens (0 %)" in page                             # backup model, unused
-    assert page.index(MAIN) < page.index(BACKUP)
-    assert "Groq's real count (rolling last 24 h, this app)" in page
-    assert "This week (since " in page
-    assert "Tests and other tools that use the same" in page
-    assert page.count("Ask again") == 3                                    # the rows are still only mine
+    usage = body["usage"]
+    main, backup = usage["rows"]
+    assert usage["period_start"] and usage["period_end"]                  # "Daily period since ..."
+    assert (main["model"], main["tokens"], main["limit"], main["pct"]) == (MAIN, "18,240", "200,000", 9)
+    assert (backup["model"], backup["tokens"], backup["pct"]) == (BACKUP, "0", 0)   # backup model, unused
+    assert main["rolling"] == "18,240"                                    # Groq's real count, last 24 h
+    assert usage["week_start"] and usage["week_end"]                      # "This week (since ..."
+    assert len(body["questions"]) == 3                                    # the rows are still only mine
 
 
 def test_ai_usage_lists_other_models_and_uses_the_limit_setting(user, monkeypatch):
@@ -400,15 +443,13 @@ def two_models(monkeypatch):
     monkeypatch.delenv("GROQ_DAILY_TOKEN_LIMIT", raising=False)
 
 
-def test_ask_pages_do_not_show_the_usage_box(client, user, mysql, two_models):
-    """The usage box is on History only; the Ask page shows a one-time notice instead."""
+def test_the_ask_screens_do_not_get_the_usage_box(client, user, mysql, two_models):
+    """The usage box is on History only; asking gives a one-time notice instead."""
     saved = saved_question(user, model=MAIN, sql_tokens=3_500, answer_tokens=1_000, total_tokens=4_500)
     client.force_login(user)
 
-    for url in (reverse("ask"), reverse("ask_new"), reverse("ask_result", args=[saved.pk])):
-        page = client.get(url, follow=True).content.decode()
-        assert "AI usage (this app)" not in page, url
-        assert "questions left" not in page and "This week (since" not in page, url
+    for r in (api_get(client, "api_chats"), api_get(client, "api_question", saved.pk), api_get(client, "api_me")):
+        assert "usage" not in r.json() and "questions_left" not in r.content.decode()
 
 
 def test_questions_left_uses_4500_tokens_per_question_until_there_is_data(user, two_models):
@@ -431,21 +472,94 @@ def test_questions_left_is_never_negative(user, two_models):
     assert main["questions_left"] == 0
 
 
-def test_history_box_shows_questions_left_and_the_reset_time(client, user, two_models):
+def test_history_box_has_questions_left_and_the_reset_time(client, user, two_models):
     saved_question(user, model=MAIN, total_tokens=4_000)
     client.force_login(user)
 
-    page = client.get(reverse("history")).content.decode()
+    usage = history(client)["usage"]
 
-    assert "about 49 questions left - resets " in page                     # (200,000 - 4,000) // 4,000
+    assert usage["rows"][0]["questions_left"] == 49                       # (200,000 - 4,000) // 4,000
+    assert usage["period_end"]                                            # "- resets <time>"
 
 
-def test_history_ask_again_sends_the_same_question_to_ask(client, user):
-    saved_question(user, text="Open sales orders?")
+def test_history_ask_again_asks_the_same_question_in_a_new_chat(client, user, fake_ask, mysql):
+    saved = saved_question(user, text="Open sales orders?")
     client.force_login(user)
 
-    page = client.get(reverse("history")).content.decode()
+    line = history(client)["questions"][0]
+    r = api_post(client, "api_again", None, saved.pk)
 
-    assert f'action="{reverse("ask")}"' in page
-    assert 'name="question" value="Open sales orders?"' in page
-    assert reverse("ask_excel", args=[Question.objects.get().pk]) in page
+    assert line["ask_again"] == "Open sales orders?"
+    assert line["excel_url"] == reverse("api_excel", args=[saved.pk])
+    assert r.status_code == 200 and fake_ask == ["Open sales orders?"] and fake_ask.contexts == [[]]
+    new_chat = Conversation.objects.get()
+    assert r.json()["chat"]["id"] == new_chat.pk and new_chat.title == "Open sales orders?"
+
+
+def test_ask_again_is_only_for_my_own_questions(client, user, other, fake_ask):
+    saved = saved_question(user)
+
+    assert api_post(client, "api_again", None, saved.pk).status_code == 401
+    client.force_login(other)
+    assert api_post(client, "api_again", None, saved.pk).status_code == 404
+    assert api_get(client, "api_again", saved.pk).status_code == 405
+    assert fake_ask == []
+
+
+# ---------- step H: answers from the company documents ----------
+
+DOC_SOURCES = [{"heading": "Warranty and Returns Policy, page 1", "kind": "pdf"},
+               {"heading": "Product Catalogue, page 2", "kind": "pdf"}]
+
+
+def docs_question(user, **fields):
+    """A question answered from the PDFs, as agent.ask() saves it: no SQL, no rows, the pages as sources."""
+    return saved_question(user, **{"text": "How long is the warranty on hydraulic motors?", "sql": "",
+                                   "answer": "Hydraulic motors have a warranty of 24 months.", "rows_count": None,
+                                   "status": "docs", "sources": DOC_SOURCES, "tries": 0, **fields})
+
+
+def test_a_documents_answer_has_its_status_and_pages_with_no_sql_or_excel(client, user, mysql):
+    saved = docs_question(user)
+    client.force_login(user)
+
+    card = api_get(client, "api_question", saved.pk).json()["card"]
+
+    assert card["status"] == "docs"                                          # FROM DOCUMENTS
+    assert card["answer"] == "Hydraulic motors have a warranty of 24 months."
+    assert card["sources"] == DOC_SOURCES                                    # the PDF pages, in order
+    assert card["sql"] == "" and card["excel_url"] == "" and card["has_rows"] is False
+    assert mysql == []                                                       # nothing ran
+
+
+def test_a_documents_answer_in_a_chat_has_the_pages(client, user, mysql):
+    chat = Conversation.objects.create(user=user, title="Warranty")
+    docs_question(user, conversation=chat)
+    client.force_login(user)
+
+    card = api_get(client, "api_chat", chat.pk).json()["cards"][0]
+
+    assert card["status"] == "docs" and card["sources"][0] == {"kind": "pdf", "heading": "Warranty and Returns Policy, page 1"}
+    assert card["sql"] == "" and card["excel_url"] == "" and mysql == []
+
+
+def test_excel_for_a_documents_answer_is_not_found(client, user, mysql):
+    saved = docs_question(user)
+    client.force_login(user)
+
+    assert api_get(client, "api_excel", saved.pk).status_code == 404
+    assert mysql == []
+
+
+def test_history_has_a_documents_answer_without_an_excel_link(client, user):
+    docs_question(user)
+    client.force_login(user)
+
+    line = history(client)["questions"][0]
+
+    assert line["status"] == "docs" and line["excel_url"] == ""
+
+
+def test_the_token_notice_of_a_documents_answer_names_the_route_call(user):
+    saved = docs_question(user, model=MAIN, sql_tokens=300, answer_tokens=900, total_tokens=1200)
+    assert services.token_notice(saved) == f"This question used 1,200 tokens (route 300 + answer 900) - {MAIN}"

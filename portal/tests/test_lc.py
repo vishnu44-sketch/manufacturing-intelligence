@@ -1,4 +1,4 @@
-"""The LangChain version (portal/lc/), built step by step next to the classic one (portal/rag/).
+"""The LangChain parts (portal/lc/): every AI call, the embeddings, the docs chunks, the notes search and the PDFs.
 
 No test calls the real Groq API: the LLM parts use fake chat models.
 Run with:  python -m pytest -q portal/tests/test_lc.py
@@ -9,13 +9,14 @@ from langchain_core.language_models.fake_chat_models import FakeListChatModel
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_core.runnables import RunnableLambda
 
-from portal.lc import chains, llm, prompts, switch, vectorstore
-from portal.rag import agent, embed, store
+from portal.lc import chains, llm, prompts, vectorstore
+from portal.rag import agent, store
 
 MAIN, BACKUP = "openai/gpt-oss-120b", "qwen/qwen3.8-27b"
 SQL_VALUES = {"schema": "dim_customers: customer_id, customer_name", "count": 2,
               "documents": "Example SQL ...\n\n---\n\nNOP sales month rule ...",
-              "today": "02-Nov-2026 (Monday)", "earlier": "", "question": "Top 5 customers in Aug 2026?"}
+              "today": "02-Nov-2026 (Monday)", "preferences": "", "earlier": "",
+              "question": "Top 5 customers in Aug 2026?"}
 
 CHUNKS = [  # three notes with small hand-made vectors (like test_store_qdrant.py)
     {"id": "sql_examples-002", "source": "sql_examples.md", "kind": "example",
@@ -41,46 +42,26 @@ class FakeEmbeddings(Embeddings):
 
 @pytest.fixture
 def test_store(monkeypatch, tmp_path):
-    """An in-memory Qdrant with the three CHUNKS, built by the classic store.rebuild(); both versions read it."""
-    monkeypatch.setattr(store.embed, "embed_documents", lambda texts: [VECTORS[t] for t in texts])
-    monkeypatch.setattr(store.embed, "embed_query", lambda text: VECTORS[text])
+    """An in-memory Qdrant with the three CHUNKS, built by vectorstore.rebuild() with the fake vectors."""
     monkeypatch.setattr(vectorstore, "get_embeddings", lambda: FakeEmbeddings())
     path = tmp_path / "qdrant"
-    store.rebuild(CHUNKS, path=path)
     vectorstore.clear()
+    vectorstore.rebuild(CHUNKS, path=path)
     yield path
     vectorstore.clear()
     store.close_clients()
 
 
-# ---------- step A: the packages and the switch ----------
+# ---------- step A: the packages ----------
 
 def test_the_langchain_packages_are_installed():
-    """The versions in requirements.txt (langchain-groq is not used: it needs groq below 1.0)."""
+    """The versions in requirements.txt (langchain-groq is not used: it needs an old groq package)."""
     from importlib.metadata import version
     assert version("langchain-core") == "1.7.3"
     assert version("langchain-openai") == "1.7.3"
     assert version("langchain-qdrant") == "1.1.0"
     assert version("langchain-community") == "0.4.2"
     assert version("langchain-text-splitters") == "1.1.3"
-    assert version("groq") == "1.7.0"                       # the classic pipeline's client stays as it was
-
-
-@pytest.mark.parametrize("value", ["on", "ON", " on ", "1", "true", "yes"])
-def test_the_switch_turns_langchain_on(monkeypatch, value):
-    monkeypatch.setenv("USE_LANGCHAIN", value)
-    assert switch.use_langchain() and switch.pipeline_name() == "langchain"
-
-
-@pytest.mark.parametrize("value", ["off", "", "0", "no", "maybe"])
-def test_the_switch_is_off_by_default_and_for_anything_else(monkeypatch, value):
-    monkeypatch.setenv("USE_LANGCHAIN", value)
-    assert not switch.use_langchain() and switch.pipeline_name() == "classic"
-
-
-def test_no_line_in_env_means_the_classic_version(monkeypatch):
-    monkeypatch.delenv("USE_LANGCHAIN", raising=False)
-    assert switch.pipeline_name() == "classic"
 
 
 # ---------- step B: embeddings, QdrantVectorStore and the retriever ----------
@@ -94,16 +75,11 @@ def test_ingest_also_writes_the_metadata_langchain_reads(test_store):
                                        "heading": payload["heading"], "kind": payload["kind"]}
 
 
-def test_the_langchain_search_gives_the_same_notes_as_the_classic_search(test_store):
-    for question in ("one", "two", "three"):
-        assert vectorstore.search(question, top_k=3, path=test_store) == store.search(question, top_k=3,
-                                                                                         path=test_store)
-
-
-def test_the_retriever_gives_langchain_documents_with_the_notes_details(test_store):
-    documents = vectorstore.get_retriever(k=2, path=test_store).invoke("one")
-    assert [doc.page_content for doc in documents] == ["Rule one text", "Example two text"]
-    assert documents[0].metadata["heading"] == "First rule" and documents[0].metadata["kind"] == "rule"
+def test_the_search_gives_the_notes_best_first_with_their_details(test_store):
+    hits = vectorstore.search("one", top_k=3, path=test_store)
+    assert [h["heading"] for h in hits] == ["First rule", "Q: Second example?", "fact_invoice_lines - columns"]
+    assert hits[0] == {"text": "Rule one text", "source": "business_rules.md", "heading": "First rule",
+                       "kind": "rule", "score": 1.0}
 
 
 def test_the_main_projects_collection_is_refused(monkeypatch):
@@ -120,50 +96,78 @@ def test_a_store_that_was_never_built_says_run_ingest_docs(tmp_path, monkeypatch
     store.close_clients()
 
 
-def test_the_langchain_vectors_are_the_classic_vectors():
-    """The real model, both ways: the classic index can be searched with LangChain's question vectors."""
-    from portal.lc.embeddings import get_embeddings
-    lc = get_embeddings()
-    question, notes = "top customers by net sales", ["NOP sales month rule", "Example question with its SQL"]
-    assert lc.embed_query(question) == pytest.approx(embed.embed_query(question), abs=1e-6)
-    for got, expected in zip(lc.embed_documents(notes), embed.embed_documents(notes)):
-        assert got == pytest.approx(expected, abs=1e-6)
+def test_the_embedding_model_and_its_cache_come_from_the_settings(monkeypatch):
+    from portal.lc import embeddings
+    monkeypatch.setenv("EMBED_MODEL", "")
+    assert embeddings.model_name() == "BAAI/bge-base-en-v1.5"
+    assert embeddings.CACHE_DIR.name == ".fastembed_cache" and (embeddings.CACHE_DIR.parent / "manage.py").exists()
 
 
-QUESTIONS = ["Top 5 customers by net sales in FY 2026-27", "How many sales orders are open?",
-             "What is our current stock value?", "net sales by state last month", "What was our profit last year?"]
-
-
-def test_the_real_index_gives_the_same_5_notes_both_ways():
-    """The real Qdrant and collection (mi_docs): same notes, same order, same scores."""
+def real_points(ids):
+    """The stored points (with their vectors) of these chunk ids in the real collection (mi_docs); skip without it."""
     try:
-        classic = [store.search(question, top_k=5) for question in QUESTIONS]
+        client = store._client()
+        found = client.retrieve(store.COLLECTION, ids=[store.point_id(i) for i in ids], with_vectors=True)
     except Exception as exc:  # Qdrant down or never built: like the other real-service tests
         pytest.skip(f"vector store not available (start Qdrant, run manage.py ingest_docs): {exc}")
+    return {point.payload["id"]: point for point in found}
+
+
+def test_the_real_index_holds_the_langchain_vectors_of_the_notes_without_their_sql():
+    """The real model and the real collection: every note's vector is FastEmbed's passage vector of its
+    embed_text (lc/embeddings.py), so a question vector (embed_query) is compared with the right vectors."""
+    import numpy
+    from django.conf import settings
+    from portal.lc.docs import load_docs
+    from portal.lc.embeddings import get_embeddings
+
+    chunks = [c for c in load_docs(settings.BASE_DIR / "docs") if c["id"] in
+              ("business_rules-001", "data_dictionary-003", "sql_examples-007")]
+    points = real_points([c["id"] for c in chunks])
+    for chunk, vector in zip(chunks, get_embeddings().embed_documents([c["embed_text"] for c in chunks])):
+        expected = numpy.array(vector) / numpy.linalg.norm(vector)  # Qdrant keeps cosine vectors normalised
+        assert points[chunk["id"]].vector == pytest.approx(list(expected), abs=1e-5), chunk["id"]
+        assert points[chunk["id"]].payload["text"] == chunk["text"]
+
+
+QUESTIONS = {  # question -> the note that must come first (02-Nov, the same top 5 as before LangChain-only)
+    "Top 5 customers by net sales in FY 2026-27": "Q: Who were the top 5 customers by invoice value in Aug 2026?",
+    "How many sales orders are open?": "Q: Which customers have open sales orders, and for how much?",
+    "What is our current stock value?": "Q: What is our current stock value (latest stock report)?",
+    "net sales by state last month": "Q: What were net sales in each NOP sales month of FY 2026-27?",
+    "What was our profit last year?":
+        "Q: What were total net sales this year and last year, and how much did they grow?",
+}
+
+
+def test_the_real_index_finds_the_right_notes_with_the_search_and_the_retriever():
+    """The real Qdrant and collection (mi_docs): search() and LangChain's retriever give the same 5 notes, best first."""
     vectorstore.clear()
-    for question, expected in zip(QUESTIONS, classic):
-        got = vectorstore.search(question, top_k=5)
-        assert [hit["heading"] for hit in got] == [hit["heading"] for hit in expected], question
-        assert [hit["score"] for hit in got] == pytest.approx([hit["score"] for hit in expected], abs=1e-3)
-        assert [hit["kind"] for hit in got] == [hit["kind"] for hit in expected]
+    try:
+        vectorstore.search("open orders", top_k=1)
+    except Exception as exc:  # Qdrant down or never built: like the other real-service tests
+        pytest.skip(f"vector store not available (start Qdrant, run manage.py ingest_docs): {exc}")
+    for question, first in QUESTIONS.items():
+        hits = vectorstore.search(question, top_k=5)
+        assert hits[0]["heading"] == first, question
+        assert [h["score"] for h in hits] == sorted((h["score"] for h in hits), reverse=True)
 
 
 # ---------- step C: the chat model, the prompt templates and the chains (fake AI only) ----------
 
-def classic_sql_messages(values):
-    """The SQL call's messages as the classic agent._answer() builds them by hand."""
+def expected_sql_messages(values):
+    """The SQL call's messages: agent.py's prompt texts filled with the values."""
     return [{"role": "system", "content": agent.SQL_SYSTEM_PROMPT},
             {"role": "user", "content": agent.SQL_REQUEST.format(**values)}]
 
 
-def test_the_sql_template_gives_the_same_messages_as_the_classic_code():
+def test_the_sql_template_is_the_agents_prompt_text():
     messages = prompts.SQL_PROMPT.format_messages(**SQL_VALUES)
-    classic = classic_sql_messages(SQL_VALUES)
     assert [type(m) for m in messages] == [SystemMessage, HumanMessage]
-    assert [m.content for m in messages] == [m["content"] for m in classic]
+    assert [m.content for m in messages] == [m["content"] for m in expected_sql_messages(SQL_VALUES)]
 
 
-def test_a_retry_adds_the_ais_reply_and_the_problem_like_the_classic_loop():
+def test_a_retry_adds_the_ais_reply_and_the_problem():
     problem = "MySQL returned an error: Unknown column 'il.amount'"
     retries = [AIMessage("```sql\nSELECT il.amount FROM fact_invoice_lines il\n```"),
                HumanMessage(prompts.RETRY_PROMPT.format(problem=problem))]
@@ -172,14 +176,14 @@ def test_a_retry_adds_the_ais_reply_and_the_problem_like_the_classic_loop():
     assert messages[3].content == agent.RETRY_PROMPT.format(problem=problem)
 
 
-def test_the_rewrite_and_answer_templates_use_the_classic_texts():
+def test_the_rewrite_and_answer_templates_use_the_agents_texts():
     rewrite = prompts.REWRITE_PROMPT.format_messages(earlier="1. Top customers in Aug 2026 (latest)",
                                                      question="and for Sep?")
     assert rewrite[0].content == agent.REWRITE_SYSTEM_PROMPT
     assert rewrite[1].content == agent.REWRITE_REQUEST.format(earlier="1. Top customers in Aug 2026 (latest)",
                                                               question="and for Sep?")
-    values = {"question": "Top customers?", "understood": "", "sql": "SELECT 1", "periods": "",
-              "note": "2 row(s)", "table": "customer_name | net_sales_inr"}
+    values = {"question": "Top customers?", "understood": "", "preferences": "", "sql": "SELECT 1", "periods": "",
+              "note": "2 row(s)", "table": "customer_name | net_sales_inr", "documents": ""}
     answer = prompts.EXPLAIN_PROMPT.format_messages(**values)
     assert [m.content for m in answer] == [agent.EXPLAIN_SYSTEM_PROMPT, agent.EXPLAIN_REQUEST.format(**values)]
 
@@ -193,18 +197,18 @@ def test_the_sql_chain_sends_the_filled_template_to_the_model_and_returns_its_re
 
     reply = chains.sql_chain(RunnableLambda(fake_model)).invoke(SQL_VALUES)
     assert reply.content == "```sql\nSELECT 1\n```"
-    assert [m.content for m in seen[0]] == [m["content"] for m in classic_sql_messages(SQL_VALUES)]
+    assert [m.content for m in seen[0]] == [m["content"] for m in expected_sql_messages(SQL_VALUES)]
 
 
 def test_the_chains_work_with_a_langchain_fake_chat_model():
     fake = FakeListChatModel(responses=["```sql\nSELECT 1\n```", "Aurora had the highest sales.",
                                         "Top customers in Sep 2026?"])
     assert chains.sql_chain(fake).invoke(SQL_VALUES).content == "```sql\nSELECT 1\n```"
-    assert chains.as_text(chains.answer_chain(fake)).invoke(
-        {"question": "q", "understood": "", "sql": "SELECT 1", "periods": "", "note": "1 row(s)",
-         "table": "x"}) == "Aurora had the highest sales."
-    assert chains.as_text(chains.rewrite_chain(fake)).invoke(
-        {"earlier": "1. Top customers in Aug 2026", "question": "and Sep?"}) == "Top customers in Sep 2026?"
+    assert chains.answer_chain(fake).invoke(
+        {"question": "q", "understood": "", "preferences": "", "sql": "SELECT 1", "periods": "", "note": "1 row(s)",
+         "table": "x", "documents": ""}).content == "Aurora had the highest sales."
+    assert chains.rewrite_chain(fake).invoke(
+        {"earlier": "1. Top customers in Aug 2026", "question": "and Sep?"}).content == "Top customers in Sep 2026?"
 
 
 def test_reply_info_reads_the_text_the_tokens_and_a_cut_off_reply():
@@ -214,12 +218,13 @@ def test_reply_info_reads_the_text_the_tokens_and_a_cut_off_reply():
     assert chains.reply_info(AIMessage("ok", response_metadata={"finish_reason": "stop"})) == ("ok", None, False)
 
 
-def test_the_main_model_has_the_classic_settings(monkeypatch):
+def test_the_main_model_has_the_app_settings(monkeypatch):
     monkeypatch.setenv("GROQ_API_KEY", "test-key")
     monkeypatch.setenv("GROQ_MODEL", MAIN)
-    model = llm.main_llm(agent.SQL_MAX_TOKENS, "medium")
+    model = llm.make_llm(agent.model_name(), agent.SQL_MAX_TOKENS, "medium")
     assert model.model_name == MAIN and model.openai_api_base == llm.GROQ_OPENAI_URL
     assert model.temperature == 0 and model.max_tokens == 3000 and model.max_retries == 0
+    assert model.request_timeout == llm.TIMEOUT_SECS == 90
     assert model.extra_body == {"reasoning_effort": "medium", "include_reasoning": False}
     payload = model._get_request_payload([HumanMessage("hi")])
     assert payload["model"] == MAIN and payload["temperature"] == 0
@@ -230,46 +235,36 @@ def test_the_backup_model_gets_its_smaller_limit_and_its_own_setting(monkeypatch
     monkeypatch.setenv("GROQ_API_KEY", "test-key")
     monkeypatch.setenv("GROQ_MODEL", MAIN)
     monkeypatch.setenv("GROQ_FALLBACK_MODEL", BACKUP)
-    model = llm.backup_llm(agent.SQL_MAX_TOKENS, "medium")
+    model = llm.make_llm(agent.fallback_model_name(), agent.SQL_MAX_TOKENS, "medium")
     assert model.model_name == BACKUP and model.max_tokens == agent.FALLBACK_MAX_TOKENS
     assert model.extra_body == {"reasoning_format": "hidden"}
-    monkeypatch.setenv("GROQ_FALLBACK_MODEL", "")
-    assert llm.backup_llm(agent.SQL_MAX_TOKENS, "medium") is None
 
 
-def test_a_missing_key_gives_the_same_friendly_message_as_the_classic_version():
-    with pytest.raises(agent.AIUnavailable) as classic:
-        agent.get_groq_client()
-    with pytest.raises(agent.AIUnavailable) as lc:
-        llm.main_llm(agent.SQL_MAX_TOKENS, "medium")
-    assert str(lc.value) == str(classic.value) == llm.MISSING_KEY
+def test_a_missing_key_gives_the_friendly_message():
+    with pytest.raises(agent.AIUnavailable) as missing:
+        llm.make_llm(MAIN, agent.SQL_MAX_TOKENS, "medium")
+    assert str(missing.value) == llm.MISSING_KEY == "The AI service is not set up (GROQ_API_KEY is missing in .env)."
 
 
 def test_no_test_can_reach_the_real_ai_through_langchain(monkeypatch):
     monkeypatch.setenv("GROQ_API_KEY", "test-key")
     with pytest.raises(AssertionError, match="use a fake chat model"):
-        chains.sql_chain(llm.main_llm(agent.SQL_MAX_TOKENS, "medium")).invoke(SQL_VALUES)
+        chains.sql_chain(llm.make_llm(MAIN, agent.SQL_MAX_TOKENS, "medium")).invoke(SQL_VALUES)
 
 
-# ---------- step D: the app answers through LangChain when USE_LANGCHAIN=on ----------
-# (TEST_PIPELINE=langchain also runs EVERY test again through LangChain - see conftest.pipeline)
+# ---------- step D: the app answers through LangChain (calls.py) ----------
 
 from portal.lc import calls  # noqa: E402
-from portal.tests.conftest import fake_langchain_llm  # noqa: E402
-from portal.tests.test_agent import (ANSWER, GOOD_SQL, HITS, ROWS, FakeMySQL, daily_limit_error,  # noqa: E402
-                                     rate_limit_error, use_fake_groq)
+from portal.tests.test_agent import (ANSWER, GOOD_SQL, HITS, ROWS, FakeMySQL, connection_error,  # noqa: E402
+                                     daily_limit_error, rate_limit_error, use_fake_ai)
 
 
 @pytest.fixture
 def lc_app(monkeypatch):
-    """USE_LANGCHAIN=on with a fake AI (the tests' fake Groq behind LangChain's chains), fake notes and a fake
-    MySQL; .chains = the chain of every AI call that went through portal/lc/calls.py."""
+    """A fake AI behind LangChain's chains, fake notes and a fake MySQL; .chains = the chain of every AI call
+    that went through portal/lc/calls.py."""
     db = FakeMySQL()
-    monkeypatch.setenv("USE_LANGCHAIN", "on")
-    monkeypatch.setattr(llm, "make_llm", fake_langchain_llm)
-    monkeypatch.setattr(vectorstore, "search", lambda text, top_k=5, path=None: HITS)
-    monkeypatch.setattr(store, "search", lambda *args, **kwargs: pytest.fail("the classic search was used"))
-    monkeypatch.setattr(agent, "search", lambda *args, **kwargs: pytest.fail("the classic search was used"))
+    monkeypatch.setattr(agent, "search", lambda text, top_k=5: HITS)
     monkeypatch.setattr(agent.warehouse, "allowed_tables", lambda: {"dim_customers", "dim_calendar", "fact_invoice_lines"})
     monkeypatch.setattr(agent.warehouse, "schema_text", lambda: "dim_customers: customer_id, customer_name")
     monkeypatch.setattr(agent.warehouse, "run_select", db.run_select)
@@ -282,41 +277,36 @@ def lc_app(monkeypatch):
 
 
 @pytest.mark.django_db
-def test_with_the_switch_on_the_answer_comes_through_the_langchain_chains(monkeypatch, lc_app, user):
+def test_the_answer_comes_through_the_langchain_chains(monkeypatch, lc_app, user):
     lc_app.results = [ROWS]
-    fake = use_fake_groq(monkeypatch, [(GOOD_SQL, 4000), (ANSWER, 900)])
+    fake = use_fake_ai(monkeypatch, [(GOOD_SQL, 4000), (ANSWER, 900)])
 
     result = agent.ask("Top customers in Aug 2026?", user)
 
     assert result.status == "ok" and result.answer == ANSWER and result.row_count == 2
     assert lc_app.chains == ["sql", "answer"]                       # both AI calls went through LangChain
-    assert result.sql_tokens == 4000 and result.answer_tokens == 900  # the tokens are still counted
+    assert result.sql_tokens == 4000 and result.answer_tokens == 900  # the tokens are counted
     assert {"search", "sql_ai", "mysql", "answer_ai"} <= set(result.step_secs)
-    assert fake.calls[0][0]["content"] == agent.SQL_SYSTEM_PROMPT    # the same prompt text as classic
+    assert fake.calls[0][0]["content"] == agent.SQL_SYSTEM_PROMPT    # the agent's prompt text
     assert "LIMIT 2" in lc_app.calls[0]                              # our SQL guard's SQL ran on MySQL
 
 
 @pytest.mark.django_db
-def test_with_the_switch_off_langchain_is_never_used(monkeypatch, user):
-    monkeypatch.delenv("USE_LANGCHAIN", raising=False)
-    monkeypatch.setattr(calls, "chat", lambda *args: pytest.fail("LangChain was used with the switch off"))
-    monkeypatch.setattr(vectorstore, "search", lambda *args, **kwargs: pytest.fail("LangChain search was used"))
-    monkeypatch.setattr(agent, "search", lambda question, top_k=5: HITS)
-    db = FakeMySQL()
-    db.results = [ROWS]
-    monkeypatch.setattr(agent.warehouse, "allowed_tables", lambda: {"dim_customers", "dim_calendar", "fact_invoice_lines"})
-    monkeypatch.setattr(agent.warehouse, "schema_text", lambda: "dim_customers: customer_id, customer_name")
-    monkeypatch.setattr(agent.warehouse, "run_select", db.run_select)
-    monkeypatch.setattr(agent, "invoice_data_dates", lambda: None)
-    use_fake_groq(monkeypatch, [GOOD_SQL, ANSWER])
+def test_a_follow_up_is_rewritten_through_the_rewrite_chain(monkeypatch, lc_app, user):
+    from types import SimpleNamespace
+    lc_app.results = [ROWS]
+    use_fake_ai(monkeypatch, ["Top customers in Sep 2026?", GOOD_SQL, ANSWER])
+    earlier = SimpleNamespace(text="Top customers in Aug 2026?", sql="SELECT 1", answer="Aurora.", understood_as="")
 
-    assert agent.ask("Top customers in Aug 2026?", user).answer == ANSWER
+    result = agent.ask("and for Sep?", user, context=[earlier])
+
+    assert lc_app.chains == ["rewrite", "sql", "answer"] and result.understood_as == "Top customers in Sep 2026?"
 
 
 @pytest.mark.django_db
 def test_a_mysql_error_goes_back_to_the_ai_through_the_sql_chains_retries(monkeypatch, lc_app, user):
     lc_app.results = [agent.warehouse.QueryError("(1054) Unknown column 'il.amount'"), ROWS]
-    fake = use_fake_groq(monkeypatch, [GOOD_SQL, GOOD_SQL, ANSWER])
+    fake = use_fake_ai(monkeypatch, [GOOD_SQL, GOOD_SQL, ANSWER])
 
     result = agent.ask("Top customers in Aug 2026?", user)
 
@@ -331,7 +321,7 @@ def test_the_per_minute_limit_waits_and_the_wait_is_shown(monkeypatch, lc_app, u
     waits = []
     monkeypatch.setattr(agent.time, "sleep", waits.append)
     lc_app.results = [ROWS]
-    use_fake_groq(monkeypatch, [rate_limit_error(retry_after=4), GOOD_SQL, ANSWER])
+    use_fake_ai(monkeypatch, [rate_limit_error(retry_after=4), GOOD_SQL, ANSWER])
 
     result = agent.ask("Top customers in Aug 2026?", user)
 
@@ -343,7 +333,7 @@ def test_the_daily_limit_moves_to_the_backup_model(monkeypatch, lc_app, user):
     monkeypatch.setenv("GROQ_MODEL", MAIN)
     monkeypatch.setenv("GROQ_FALLBACK_MODEL", BACKUP)
     lc_app.results = [ROWS]
-    fake = use_fake_groq(monkeypatch, [daily_limit_error(), GOOD_SQL, ANSWER])
+    fake = use_fake_ai(monkeypatch, [daily_limit_error(), GOOD_SQL, ANSWER])
 
     result = agent.ask("Top customers in Aug 2026?", user)
 
@@ -353,22 +343,31 @@ def test_the_daily_limit_moves_to_the_backup_model(monkeypatch, lc_app, user):
 
 @pytest.mark.django_db
 def test_an_unreachable_ai_gives_the_friendly_message(monkeypatch, lc_app, user):
-    monkeypatch.setattr(agent.time, "sleep", lambda secs: None)
-    request = __import__("httpx").Request("POST", "https://api.groq.com")
-    use_fake_groq(monkeypatch, [__import__("groq").APIConnectionError(request=request)] * 2)
+    waits = []
+    monkeypatch.setattr(agent.time, "sleep", waits.append)
+    use_fake_ai(monkeypatch, [connection_error()] * 2)
 
     result = agent.ask("Top customers in Aug 2026?", user)
 
     assert result.status == "error" and result.answer == agent.AI_DOWN and lc_app.calls == []
+    assert waits == [3]                                              # one more try after 3 s
 
 
-def test_the_answer_values_fill_the_classic_answer_text():
-    """explain_messages() (classic) is now explain_values() + the text: the same request as before."""
+@pytest.mark.django_db
+def test_a_missing_key_stops_the_question_with_the_friendly_message(lc_app, user):
+    """No fake AI and no GROQ_API_KEY (conftest removes it): the real make_llm says what to fix."""
+    result = agent.ask("Top customers in Aug 2026?", user)
+
+    assert result.status == "error" and result.answer == llm.MISSING_KEY and lc_app.calls == []
+
+
+def test_the_answer_values_fill_the_answer_template():
+    """agent.explain_values() gives every {field} of the answer template: the request is EXPLAIN_REQUEST filled in."""
     result = agent.AskResult(text="Top customers?", sql="SELECT 1", columns=ROWS["columns"], rows=ROWS["rows"])
     values = agent.explain_values(result, agent.ROWS_FOR_ANSWER)
-    assert agent.explain_messages(result, agent.ROWS_FOR_ANSWER)[1]["content"] == agent.EXPLAIN_REQUEST.format(**values)
-    assert [m.content for m in prompts.EXPLAIN_PROMPT.format_messages(**values)] == [
-        m["content"] for m in agent.explain_messages(result, agent.ROWS_FOR_ANSWER)]
+    messages = prompts.EXPLAIN_PROMPT.format_messages(**values)
+    assert [m.content for m in messages] == [agent.EXPLAIN_SYSTEM_PROMPT, agent.EXPLAIN_REQUEST.format(**values)]
+    assert "Aurora Fluid Power Limited | 1,730,000.00" in messages[1].content
 
 
 # ---------- step G: reading PDFs (load, split, store and search in their own collection mi_pdfs) ----------
@@ -546,3 +545,135 @@ def test_the_real_pdf_index_finds_the_hydraulic_motor_warranty():
     except Exception as exc:  # Qdrant down or never built: like the other real-service tests
         pytest.skip(f"PDF store not available (start Qdrant, run manage.py ingest_pdfs): {exc}")
     assert (hits[0]["source"], hits[0]["page"]) == ("warranty_and_returns_policy.pdf", 1)
+
+
+# ---------- chat memory: LangChain's chat history on our History DB ----------
+
+from types import SimpleNamespace  # noqa: E402
+
+from portal.lc import memory  # noqa: E402
+from portal.models import Conversation, Question  # noqa: E402
+
+EARLIER = [SimpleNamespace(text="who is our top customer  in japan", understood_as="", answer="Sakura Ltd bought most.",
+                           sql="SELECT 1"),
+           SimpleNamespace(text="and for export?", understood_as="Top customer for export sales in FY 2026-27?",
+                           answer="", sql="")]
+
+
+def test_the_chat_history_gives_one_message_pair_per_earlier_question():
+    history = memory.ChatHistory(EARLIER, session_id="7")
+    messages = history.messages
+    assert [type(m) for m in messages] == [HumanMessage, AIMessage, HumanMessage, AIMessage]
+    assert messages[0].content == "who is our top customer  in japan" and messages[1].content == "Sakura Ltd bought most."
+    assert messages[1].additional_kwargs["sql"] == "SELECT 1"
+    assert messages[2].additional_kwargs["understood_as"] == "Top customer for export sales in FY 2026-27?"
+    assert history and len(history) == 2 and list(history) == EARLIER and history.session_id == "7"
+    assert not memory.ChatHistory() and memory.ChatHistory(None).messages == []
+
+
+def test_only_the_last_context_size_questions_are_kept():
+    many = [SimpleNamespace(text=f"Q{n}", understood_as="", answer="", sql="") for n in range(1, 7)]
+    assert [m.content for m in memory.ChatHistory(many).messages[0::2]] == ["Q4", "Q5", "Q6"]
+
+
+def test_the_rewrite_list_is_numbered_with_the_latest_marked():
+    """The format the 27-Oct fix needs ("and for sep 2026?" must build on the LATEST question)."""
+    assert memory.rewrite_earlier(memory.ChatHistory(EARLIER).messages) == (
+        "1. who is our top customer in japan\n2. Top customer for export sales in FY 2026-27? (latest)")
+
+
+def test_the_sql_request_shows_each_earlier_question_with_its_sql_and_answer():
+    text = memory.sql_earlier(memory.ChatHistory(EARLIER).messages)
+    assert text == (agent.EARLIER_HEAD + "\n"
+                    + "1. Question: who is our top customer in japan\n   SQL: SELECT 1\n   Answer: Sakura Ltd bought most.\n"
+                    + "2. Question: and for export?\n   Understood as: Top customer for export sales in FY 2026-27?\n"
+                    + "   SQL: (no SQL - not answered with data)\n   Answer: \n")
+    long = memory.ChatHistory([SimpleNamespace(text="q", understood_as="", answer="a" * 400, sql="S" * 1300)])
+    cut = memory.sql_earlier(long.messages)
+    assert "S" * agent.CONTEXT_SQL_CHARS + " ..." in cut and "a" * agent.CONTEXT_ANSWER_CHARS + " ..." in cut
+    assert memory.sql_earlier([]) == "" and memory.latest_question([]) == ""
+    assert memory.latest_question(memory.ChatHistory(EARLIER).messages) == "Top customer for export sales in FY 2026-27?"
+
+
+def test_the_rewrite_reads_the_chat_memory_without_runnable_with_message_history(monkeypatch):
+    """The rewrite step reads the earlier questions from the chat memory (ChatHistory) and sends them to the
+    plain rewrite chain as a numbered list (03-Nov: RunnableWithMessageHistory is deprecated in favour of
+    LangGraph). Nothing is handed back to the memory: agent.ask() saves the whole Question row."""
+    class SpyHistory(memory.ChatHistory):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.loaded, self.handed_back = 0, []
+
+        @property
+        def messages(self):
+            self.loaded += 1
+            return super().messages
+
+        def add_messages(self, messages):
+            self.handed_back.extend(messages)
+            super().add_messages(messages)
+
+    seen = []
+    model = RunnableLambda(lambda prompt: seen.append(prompt.to_messages()) or AIMessage("Top customer in Sep 2026?"))
+    monkeypatch.setattr(llm, "make_llm", lambda name, max_tokens, effort: model)
+    history = SpyHistory(EARLIER, session_id="42")
+    result = agent.AskResult(text="and for sep 2026?")
+
+    assert agent.rewrite_follow_up(result, history) == "Top customer in Sep 2026?" and history.loaded >= 1
+    assert "1. who is our top customer in japan\n2. Top customer for export sales in FY 2026-27? (latest)" in seen[0][-1].content
+    assert "New question: and for sep 2026?" in seen[0][-1].content
+    assert history.handed_back == []
+    assert not hasattr(chains, "rewrite_with_memory")
+
+
+@pytest.mark.django_db
+def test_the_chat_memory_is_loaded_from_the_history_db_and_never_written_twice(user):
+    chat = Conversation.objects.create(user=user, title="chat")
+    made = [Question.objects.create(user=user, conversation=chat, text=f"Q{n}", answer=f"A{n}", sql="SELECT 1",
+                                    status=status)
+            for n, status in enumerate(["ok", "refused", "ok", "nodata", "ok"], start=1)]
+    history = memory.ChatHistory.for_chat(chat)
+    assert history.session_id == str(chat.pk)
+    assert [m.content for m in history.messages[0::2]] == ["Q3", "Q4", "Q5"]   # last 3, the refused one left out
+    assert [q.text for q in memory.ChatHistory.for_chat(chat, before=made[3]).questions] == ["Q1", "Q3"]
+    history.add_messages([HumanMessage("x"), AIMessage("y")])
+    history.clear()
+    assert Question.objects.count() == 5                                      # LangChain wrote nothing
+
+
+# ---------- step H: running headers and footers are dropped from the PDF pages ----------
+
+import re  # noqa: E402
+
+from langchain_core.documents import Document  # noqa: E402
+
+
+def test_the_real_pdfs_lose_their_running_header_and_footer(real_pages):
+    for page in real_pages:
+        text = page.page_content
+        assert "for testing only" not in text                              # the footer line
+        assert not re.search(r"(?m)^Page \d+$", text)                      # the page number
+        assert not re.search(r"(?m)^Demo Pumps Pvt\. Ltd\.  -  ", text)    # the running header
+    chunks = pdfs.split_pages(real_pages)
+    first = next(c for c in chunks if c.metadata["id"] == "sales_terms_and_discount_policy-p2-01")
+    assert first.page_content.startswith("4. Discount policy")              # the chunk starts with real content
+
+
+def _page(text, number):
+    return Document(page_content=text, metadata={"page": number})
+
+
+def test_only_lines_repeated_at_the_edges_of_every_page_are_dropped():
+    """The header and 'Page N' go; a line repeated in the middle of the pages and a table's last number stay."""
+    pages = [_page("ACME - Guide\nPage 1\nIntro\na\nsame middle line\nb\nc\nd\nModel\n12", 0),
+             _page("ACME  -  guide\nPage 2\nSafety\ne\nsame middle line\nf\ng\nh\nWeight\n12", 1)]
+
+    cleaned = pdfs.drop_running_lines(pages)
+
+    assert cleaned[0].page_content == "Intro\na\nsame middle line\nb\nc\nd\nModel\n12"
+    assert cleaned[1].page_content == "Safety\ne\nsame middle line\nf\ng\nh\nWeight\n12"
+
+
+def test_a_one_page_pdf_is_left_as_it_is():
+    [page] = pdfs.drop_running_lines([_page("ACME - Guide\nPage 1\nIntro", 0)])
+    assert page.page_content == "ACME - Guide\nPage 1\nIntro"

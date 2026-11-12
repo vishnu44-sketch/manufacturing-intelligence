@@ -43,7 +43,6 @@ CALENDAR_END = date(2027, 3, 31)                    # last day in dim_calendar
 NEW_CUSTOMERS = 4957        # + 43 in ai_gold = 5,000 customers
 NEW_ITEMS = 4850            # + 150 = 5,000 items (4,000 FG, 450 RM, 250 CO, 150 CA)
 NEW_ORDERS = 32_200         # about 100,000 sales order lines
-NEW_STOCK_REPORT = date(2027, 3, 20)
 
 CUSTOMER_FILE = "Customer Master Report.xlsx"
 ITEM_FILE = "Item Master Lists.xlsx"
@@ -153,11 +152,6 @@ def strip_title(name):
 def rupees(paise):
     """paise (int) -> the number written in a file: int when whole rupees."""
     return paise // 100 if paise % 100 == 0 else paise / 100
-
-
-def money(paise):
-    """paise -> '1,234,567.89' for the report text."""
-    return f"{paise / 100:,.2f}"
 
 
 def gst(paise, rate):
@@ -620,7 +614,6 @@ class Batch:
         write_xlsx(self.out / ITEM_FILE, "Item Lists", base.item_above, base.item_header, lines, mess,
                    {"Item Description", "Amount"})
         self.item_by_code = {i["code"]: i for i in self.items}
-        self.blank_foreign_codes = sum(1 for i in self.items if not i["foreign"])
 
     # ---------------------------------------------------------- exchange rates
     def make_fx(self):

@@ -8,6 +8,7 @@ Every query gets its own connection:
 then the query runs, at most 500 rows are kept, and the connection is closed.
 
 run_select(sql)   {columns, rows, truncated} of one SELECT (the SQL guard checks it first)
+run_select_params(sql, params)  the same for fixed SQL written in the code, with driver parameters (%s)
 schema()          {table: [columns]} of ai_gold, read once from information_schema
 allowed_tables()  the ai_gold table names (the SQL guard allows only these)
 schema_text()     the same as short text lines 'table: col1, col2, ...' for the AI prompt
@@ -67,13 +68,26 @@ def run_select(sql, max_rows=MAX_ROWS):
     Returns {"columns": [...], "rows": [[...], ...], "truncated": True if more than max_rows}.
     Raises QueryError with MySQL's message when the query fails.
     """
+    return _read_only_query(sql, None, max_rows)  # no parameters, so pymysql leaves '%' in the SQL alone
+
+
+def run_select_params(sql, params=(), max_rows=MAX_ROWS):
+    """Run ONE fixed SELECT written in the code, with driver parameters (%s) for the values a user typed:
+    pymysql quotes them, so a name such as  x' OR 1=1 --  stays plain text and never becomes SQL.
+    The same read-only, time-limited session and row cap as run_select; the same reply."""
+    return _read_only_query(sql, tuple(params), max_rows)
+
+
+def _read_only_query(sql, params, max_rows):
+    """The work of run_select / run_select_params: a new connection, READ ONLY + the time limit, the query,
+    at most max_rows rows (one more is read to see if there were more), then the connection is closed."""
     conn = connect()
     try:
         with conn.cursor() as cur:
             cur.execute("SET SESSION TRANSACTION READ ONLY")
             cur.execute(f"SET SESSION MAX_EXECUTION_TIME = {int(TIME_LIMIT_MS)}")
             try:
-                cur.execute(sql)  # no parameters, so pymysql leaves '%' in the SQL alone
+                cur.execute(sql, params)
             except pymysql.err.MySQLError as exc:
                 raise QueryError(_mysql_message(exc)) from None
             columns = [d[0] for d in (cur.description or [])]

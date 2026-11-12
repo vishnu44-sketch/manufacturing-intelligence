@@ -1,4 +1,4 @@
-"""Groq token usage of this app, for the box on History (portal/_usage_box.html).
+"""Groq token usage of this app, for the usage box on History (api.history).
 
 The saved questions of all users of this app are counted three ways:
 - the daily PERIOD: it starts with the first question and resets exactly 24 hours later at the same

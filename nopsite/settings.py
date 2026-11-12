@@ -27,8 +27,32 @@ if not SECRET_KEY:
         raise ImproperlyConfigured("DJANGO_SECRET_KEY is missing in .env")
     SECRET_KEY = "dev-only-key-not-secret"  # local laptop only
 
+
+def _env_list(key, default=""):
+    """A comma separated .env value as a list (empty parts dropped); default when the key is missing or empty."""
+    return [part.strip() for part in (os.getenv(key, "").strip() or default).split(",") if part.strip()]
+
+
+def _env_on(key, default):
+    """True / False from .env (1, true, yes, on = True); default when the key is missing or empty."""
+    value = os.getenv(key, "").strip().lower()
+    return default if not value else value in ("1", "true", "yes", "on")
+
+
 # the host names the site may be opened with (comma separated in .env)
-ALLOWED_HOSTS = [h.strip() for h in os.getenv("ALLOWED_HOSTS", "localhost,127.0.0.1").split(",") if h.strip()]
+ALLOWED_HOSTS = _env_list("ALLOWED_HOSTS", "localhost,127.0.0.1")
+# the https addresses a POST may come from when the site is opened by a public name
+# (e.g. https://mi.example.com); comma separated in .env, none by default
+CSRF_TRUSTED_ORIGINS = _env_list("CSRF_TRUSTED_ORIGINS")
+
+# production (DEBUG off): the sign-in cookies go only over https (browsers also allow them on http://localhost).
+# DJANGO_SECURE_COOKIES=off in .env for a test over plain http from another machine
+SESSION_COOKIE_SECURE = CSRF_COOKIE_SECURE = _env_on("DJANGO_SECURE_COOKIES", not DEBUG)
+SESSION_COOKIE_HTTPONLY = True   # the session cookie is never readable by JavaScript
+# CSRF_COOKIE_HTTPONLY stays False: the React app reads that cookie for its POSTs
+# behind a proxy that ends https (Cloudflare tunnel, nginx): it says the request came over https
+if _env_on("DJANGO_BEHIND_HTTPS_PROXY", False):
+    SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 
 # own cookie names: a browser shares cookies between ports of the same host, so another Django site
 # on 127.0.0.1 (the main NOP project on :8080) overwrote 'csrftoken' / 'sessionid' -> 403 "CSRF token incorrect"
@@ -48,6 +72,7 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
+    "whitenoise.middleware.WhiteNoiseMiddleware",  # the static files (the React build, the admin's) without DEBUG
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
@@ -62,7 +87,7 @@ TEMPLATES = [
     {
         "BACKEND": "django.template.backends.django.DjangoTemplates",
         "DIRS": [],
-        "APP_DIRS": True,  # templates are found in portal/templates/
+        "APP_DIRS": True,  # only the admin's own templates (the website is the React app)
         "OPTIONS": {
             "context_processors": [
                 "django.template.context_processors.request",
@@ -124,18 +149,35 @@ AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.NumericPasswordValidator"},
 ]
 
-# login / logout pages and where they send the user
-LOGIN_URL = "login"
-LOGIN_REDIRECT_URL = "ask"
-LOGOUT_REDIRECT_URL = "login"
+# the sign-in page is the React app's own (/login); the admin keeps its own sign-in at /admin/login/
+LOGIN_URL = "/login"
+LOGIN_REDIRECT_URL = "/"
+LOGOUT_REDIRECT_URL = "/login"
 
 LANGUAGE_CODE = "en-us"
 TIME_ZONE = "Asia/Kolkata"  # India time on every page
 USE_I18N = True
 USE_TZ = True
 
-# css, js and pictures are found in portal/static/
+# the React app's build (frontend/: npm run build) is found in portal/static/portal/app/
 STATIC_URL = "static/"
+# `python manage.py collectstatic` copies every static file here; WhiteNoise serves them from here when
+# DEBUG is off (with DEBUG on it reads them from the apps' static folders, like runserver)
+STATIC_ROOT = os.getenv("STATIC_ROOT", "").strip() or BASE_DIR / "staticfiles"
+STORAGES = {
+    "default": {"BACKEND": "django.core.files.storage.FileSystemStorage"},
+    # also a gzip copy of each file; no renaming - Vite already puts a hash in the names of its files
+    "staticfiles": {"BACKEND": "whitenoise.storage.CompressedStaticFilesStorage"},
+}
+
+
+def _vite_hashed_file(path, url):
+    """True for Vite's own files (assets/index-B4xY9k2Z.js): their name changes with every build, so a
+    browser may keep them for a year. index.html is read by the view, not served from here."""
+    return "/portal/app/assets/" in url
+
+
+WHITENOISE_IMMUTABLE_FILE_TEST = _vite_hashed_file
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 

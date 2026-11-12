@@ -1,4 +1,4 @@
-"""Step 3 checks: docs/*.md are cut into chunks, and search() finds the right chunk.
+"""Step 3 checks: docs/*.md are cut into chunks (lc/docs.py), and the search (lc/vectorstore.py) finds the right chunk.
 
 The retrieval tests build their own in-process, in-memory Qdrant store (no server), so the real
 vector store is not touched. The first run downloads the embedding model (about 210 MB) into
@@ -9,8 +9,9 @@ from pathlib import Path
 
 import pytest
 
+from portal.lc import vectorstore
+from portal.lc.docs import chunk_markdown, load_docs
 from portal.rag import store
-from portal.rag.chunking import chunk_markdown, load_docs
 
 DOCS_DIR = Path(__file__).resolve().parents[2] / "docs"
 
@@ -39,6 +40,30 @@ def test_one_chunk_per_h2_heading():
     assert "Expected: 1" in chunks[1]["embed_text"]
 
 
+def test_the_langchain_splitter_gives_the_chunks_exactly_as_written():
+    """02-Nov: the chunks of LangChain's MarkdownHeaderTextSplitter are the ones the old hand-written splitter
+    made (same ids, text, embed_text, heading, kind, source, order), so the stored notes and their vectors did
+    not change: the intro is no chunk, a '## ' inside a code block is no heading, an unknown file is 'rule',
+    the SQL keeps its indentation and the blank lines stay (the splitter alone would trim and drop them)."""
+    markdown = ("# Notes\n\nIntro text, not a chunk.\n\n"
+                "## Q: Open orders?  \n\nCount them.\n\n```sql\nSELECT COUNT(*)\n    FROM t\n## not a heading\n```\n"
+                "\nExpected: 3\n"
+                "## Empty\n"
+                "## Last\nline one\n\n\nline two\n")
+    assert chunk_markdown(markdown, "team_notes.md") == [
+        {"id": "team_notes-001", "source": "team_notes.md", "kind": "rule", "heading": "Q: Open orders?",
+         "text": "NOP business rule: Q: Open orders?\n\nCount them.\n\n```sql\nSELECT COUNT(*)\n    FROM t\n"
+                 "## not a heading\n```\n\nExpected: 3",
+         "embed_text": "NOP business rule: Q: Open orders?\n\nCount them.\n\nExpected: 3"},
+        {"id": "team_notes-002", "source": "team_notes.md", "kind": "rule", "heading": "Empty",
+         "text": "NOP business rule: Empty\n\n", "embed_text": "NOP business rule: Empty"},
+        {"id": "team_notes-003", "source": "team_notes.md", "kind": "rule", "heading": "Last",
+         "text": "NOP business rule: Last\n\nline one\n\n\nline two",
+         "embed_text": "NOP business rule: Last\n\nline one\n\nline two"},
+    ]
+    assert chunk_markdown("Only an intro, no '## ' heading.\n", "sql_examples.md") == []
+
+
 def test_docs_folder_gives_the_expected_chunks():
     chunks = load_docs(DOCS_DIR)
     kinds = {c["source"]: c["kind"] for c in chunks}
@@ -63,8 +88,9 @@ def test_docs_folder_gives_the_expected_chunks():
 
 
 def test_search_without_a_store_says_what_to_do(tmp_path):
+    vectorstore.clear()
     with pytest.raises(RuntimeError, match="ingest_docs"):
-        store.search("invoice value", path=tmp_path)
+        vectorstore.search("invoice value", path=tmp_path)
     store.close_clients()
 
 
@@ -78,15 +104,16 @@ class BuiltStore:
         self.path = path
 
     def search(self, question, top_k=5):
-        return store.search(question, top_k=top_k, path=self.path)
+        return vectorstore.search(question, top_k=top_k, path=self.path)
 
 
 @pytest.fixture(scope="module")
 def built(tmp_path_factory):
     path = tmp_path_factory.mktemp("qdrant_store")
     chunks = load_docs(DOCS_DIR)
-    assert store.rebuild(chunks, path=path) == len(chunks)
+    assert vectorstore.rebuild(chunks, path=path) == len(chunks)
     yield BuiltStore(path)
+    vectorstore.clear()
     store.close_clients()
 
 

@@ -1,12 +1,12 @@
-"""The Data page (/data/): records in each ai_gold table, staff only, read-only.
+"""The Data numbers (/api/data): records in each ai_gold table, staff only, read-only.
 MySQL is faked here (the last test uses the real read-only MySQL and is skipped without it).
 Run with:  python -m pytest -q"""
 import datetime
 
 import pytest
-from django.urls import reverse
 
 from portal.rag import warehouse
+from portal.tests.test_views_ask import api_get
 
 pytestmark = pytest.mark.django_db
 
@@ -38,47 +38,50 @@ def fake_mysql(monkeypatch):
     return asked
 
 
-def test_a_stranger_goes_to_login(client):
-    r = client.get(reverse("data"))
-    assert r.status_code == 302
-    assert r.url.startswith(reverse("login"))
+def data(client):
+    return api_get(client, "api_data").json()
+
+
+def test_a_stranger_must_sign_in(client):
+    r = api_get(client, "api_data")
+    assert r.status_code == 401
 
 
 def test_a_normal_user_gets_no_access(client, user, fake_mysql):
     client.force_login(user)
-    r = client.get(reverse("data"))
+    r = api_get(client, "api_data")
     assert r.status_code == 403
-    assert b"You do not have access" in r.content
+    assert "Only administrators can open this page" in r.json()["detail"]
     assert fake_mysql == []  # nothing is counted for them
 
 
 def test_staff_sees_the_records_of_every_table_and_the_total(client, staff, fake_mysql):
     client.force_login(staff)
-    r = client.get(reverse("data"))
-    assert r.status_code == 200
-    page = r.content.decode()
+    body = data(client)
+    rows = {t["name"]: t for t in body["tables"]}
     for name, count in COUNTS.items():
-        assert f"<code>{name}</code>" in page
-        assert f"{count:,}" in page
-    assert "321,415 records in 11 tables" in page
-    assert "Stock ledger = inventory" in page
-    assert "Invoices: 21 Dec 2025 to 20 Mar 2027" in page
-    assert "Last data load: 06 Oct 2026 07:10 PM" in page
+        assert rows[name]["rows"] == count and rows[name]["rows_text"] == f"{count:,}"
+    assert (body["total"], body["table_count"]) == ("321,415", 11)   # "321,415 records in 11 tables"
+    assert rows["fact_stock_ledger"]["note"].startswith("Stock ledger = inventory")
+    assert (body["invoices_from"], body["invoices_to"]) == ("21 Dec 2025", "20 Mar 2027")
+    assert body["last_load"] == "06 Oct 2026 07:10 PM"
+    assert body["database"] and body["mysql_error"] == ""
     assert len(fake_mysql) == 2  # one query counts every table, one gets the dates
 
 
 def test_main_data_first_then_lookups_then_the_load_history(client, staff, fake_mysql):
     client.force_login(staff)
-    page = client.get(reverse("data")).content.decode()
+    tables = data(client)["tables"]
+    names = [t["name"] for t in tables]
     order = ["fact_invoice_lines", "fact_stock_ledger", "dim_calendar", "dim_tax_codes", "load_log"]
-    positions = [page.index(f"<code>{name}</code>") for name in order]
+    positions = [names.index(name) for name in order]
     assert positions == sorted(positions)
-    assert "MAIN DATA" in page and "LOOKUP" in page and "LOAD HISTORY" in page
+    assert {t["kind"] for t in tables} == {"Main data", "Lookup", "Load history"}
 
 
 def test_one_count_query_for_every_table(client, staff, fake_mysql):
     client.force_login(staff)
-    client.get(reverse("data"))
+    data(client)
     count_sql = fake_mysql[0]
     assert count_sql.count("COUNT(*)") == len(COUNTS)
     assert count_sql.count("UNION ALL") == len(COUNTS) - 1
@@ -88,42 +91,34 @@ def test_one_count_query_for_every_table(client, staff, fake_mysql):
 def test_a_table_without_a_note_shows_its_name(client, staff, fake_mysql, monkeypatch):
     monkeypatch.setitem(COUNTS, "fact_new_table", 7)
     client.force_login(staff)
-    page = client.get(reverse("data")).content.decode()
-    assert "<code>fact_new_table</code>" in page
-    assert "321,422 records in 12 tables" in page
+    body = data(client)
+    new = next(t for t in body["tables"] if t["name"] == "fact_new_table")
+    assert new["note"] == "" and new["kind"] == "Main data"
+    assert (body["total"], body["table_count"]) == ("321,422", 12)
 
 
-def test_mysql_down_shows_a_clear_message(client, staff, monkeypatch):
+def test_mysql_down_gives_a_clear_message(client, staff, monkeypatch):
     def down():
         raise warehouse.WarehouseUnavailable("Cannot connect to MySQL as nop_ai_reader: (2003) refused")
 
     monkeypatch.setattr(warehouse, "allowed_tables", down)
     client.force_login(staff)
-    r = client.get(reverse("data"))
+    r = api_get(client, "api_data")
     assert r.status_code == 200
-    page = r.content.decode()
-    assert "The NOP data (MySQL) cannot be read right now" in page
-    assert "(2003) refused" in page
-    assert "records in" not in page
-
-
-def test_menu_link_only_for_staff(client, user, staff):
-    link = f'href="{reverse("data")}"'.encode()
-    client.force_login(user)
-    assert link not in client.get(reverse("ask")).content
-    client.force_login(staff)
-    assert link in client.get(reverse("ask")).content
+    body = r.json()
+    assert "(2003) refused" in body["mysql_error"]     # the app: "The NOP data (MySQL) cannot be read right now: ..."
+    assert body["tables"] == [] and body["table_count"] == 0
 
 
 def test_real_mysql_counts_match_a_direct_count(client, staff):
-    """With the real read-only MySQL: the page shows the same number as a COUNT(*) of its own."""
+    """With the real read-only MySQL: the API gives the same number as a COUNT(*) of its own."""
     try:
         tables = warehouse.allowed_tables()
     except Exception as exc:
         pytest.skip(f"read-only MySQL not available: {exc}")
     client.force_login(staff)
-    page = client.get(reverse("data")).content.decode()
+    rows = {t["name"]: t["rows"] for t in data(client)["tables"]}
     for name in ("fact_invoice_lines", "dim_customers"):
         assert name in tables
-        rows = warehouse.run_select(f"SELECT COUNT(*) FROM {name}")["rows"][0][0]
-        assert f"<code>{name}</code>" in page and f"{rows:,}" in page
+        count = warehouse.run_select(f"SELECT COUNT(*) FROM {name}")["rows"][0][0]
+        assert rows[name] == count

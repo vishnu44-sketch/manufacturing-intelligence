@@ -1,14 +1,19 @@
-"""Cut the Markdown files in docs/ into chunks for the vector store.
+"""LangChain step H: the Markdown files in docs/ cut into chunks for the vector store (manage.py ingest_docs).
 
-One chunk = one '## ' section: its heading + its body, up to the next '## '.
+One chunk = one '## ' section: its heading + its body, up to the next '## '. LangChain's
+MarkdownHeaderTextSplitter finds the sections (a '## ' inside a ``` code block is not a heading).
 The text before the first '## ' (the file title and intro) is not a chunk.
-Each chunk text starts with the kind of document and the heading, so the
-embedding knows where the text comes from.
+Each chunk text starts with the kind of document and the heading, so the embedding knows where
+the text comes from.
 
 Every chunk has two texts:
 - text:       the whole section - stored and given to the AI.
 - embed_text: the same without ``` code blocks - this is what becomes the vector.
   SQL is not plain English and would drown the question of an example.
+
+The splitter trims every line and drops the blank ones: that would take the indentation out of the
+example SQL and change the stored text (and so the vectors). So every line is first tagged with its
+line number, and a section's text is taken back from the file's own lines - exactly as written.
 """
 import re
 from pathlib import Path
@@ -26,25 +31,27 @@ KIND_LABEL = {
     "example": "Example question with its SQL",
 }
 
+# the line-number tag: printable (the splitter drops other characters), at the end of the line (so a
+# heading or a ``` fence still starts the line) and never empty (so no line counts as blank)
+_TAG = " \u27e6L{}\u27e7"
+_TAG_FOUND = re.compile(r"\u27e6L(\d+)\u27e7")
+
 
 def split_sections(markdown):
     """Return [(heading, body), ...] for every '## ' heading of a Markdown text."""
+    from langchain_text_splitters import MarkdownHeaderTextSplitter  # imported here: only ingest needs it
+
+    lines = markdown.splitlines()
+    tagged = "\n".join(line + _TAG.format(number) for number, line in enumerate(lines))
+    splitter = MarkdownHeaderTextSplitter(headers_to_split_on=[("##", "heading")], strip_headers=False)
     sections = []
-    heading = None
-    lines = []
-    in_code = False  # a '## ' inside a ``` code block is not a heading
-    for line in markdown.splitlines():
-        if line.startswith("```"):
-            in_code = not in_code
-        if line.startswith("## ") and not in_code:
-            if heading is not None:
-                sections.append((heading, "\n".join(lines).strip()))
-            heading = line[3:].strip()
-            lines = []
-        elif heading is not None:
-            lines.append(line)
-    if heading is not None:
-        sections.append((heading, "\n".join(lines).strip()))
+    for doc in splitter.split_text(tagged):
+        if "heading" not in doc.metadata:  # the file title and intro before the first '## '
+            continue
+        heading_line = int(_TAG_FOUND.search(doc.metadata["heading"]).group(1))
+        numbers = [int(n) for n in _TAG_FOUND.findall(doc.page_content) if int(n) > heading_line]
+        heading = _TAG_FOUND.sub("", doc.metadata["heading"]).strip()
+        sections.append((heading, "\n".join(lines[n] for n in numbers).strip()))
     return sections
 
 

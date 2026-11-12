@@ -1,8 +1,8 @@
 """python manage.py ingest_docs
 
-Reads docs/*.md, cuts them into chunks (one per '## ' heading), turns every chunk into a
-vector and rebuilds the vector store: the Qdrant server at QDRANT_URL (collection store.COLLECTION).
-Run it again after every docs change.
+Reads docs/*.md, cuts them into chunks (one per '## ' heading, LangChain's MarkdownHeaderTextSplitter),
+turns every chunk into a vector (LangChain's FastEmbedEmbeddings) and rebuilds the vector store: the
+Qdrant server at QDRANT_URL (collection store.COLLECTION). Run it again after every docs change.
 """
 import time
 from collections import Counter
@@ -10,9 +10,10 @@ from collections import Counter
 from django.conf import settings
 from django.core.management.base import BaseCommand, CommandError
 
-from portal.rag.chunking import load_docs
+from portal.lc.docs import load_docs
+from portal.lc.vectorstore import WrongCollection, rebuild
 from portal.rag import store
-from portal.rag.store import VectorStoreUnavailable, describe, rebuild
+from portal.rag.store import VectorStoreUnavailable, describe
 
 
 class Command(BaseCommand):
@@ -33,7 +34,7 @@ class Command(BaseCommand):
         self.stdout.write(f"Vector DB: {describe()}")
         try:
             stored = rebuild(chunks)  # embeds every chunk (first run downloads the model once)
-        except VectorStoreUnavailable as exc:  # e.g. the Qdrant server is not running
+        except (VectorStoreUnavailable, WrongCollection) as exc:  # e.g. the Qdrant server is not running
             raise CommandError(str(exc)) from None
         seconds = time.perf_counter() - started
         self.stdout.write(self.style.SUCCESS(

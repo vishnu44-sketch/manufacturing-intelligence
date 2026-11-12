@@ -1,4 +1,4 @@
-"""The AI usage box on History (portal/usage.py + portal/_usage_box.html), at fixed times.
+"""The AI usage box on History (portal/usage.py, sent by /api/history), at fixed times.
 
 - daily period: starts with the first question, resets exactly 24 h later at the same clock time,
   the next period starts with the next question after that;
@@ -11,9 +11,9 @@ import datetime
 import zoneinfo
 
 import pytest
-from django.template.loader import render_to_string
 from django.urls import reverse
 
+from portal import api
 from portal.models import Question
 from portal.usage import ai_usage, daily_period, week_start
 
@@ -165,37 +165,50 @@ def test_a_question_without_saved_tokens_counts_as_a_question_with_0_tokens(user
     assert row["week_tokens"] == "3,000" and row["week_questions"] == 2
 
 
-# ---------- what the box says ----------
+# ---------- what the box says (History's usage data, /api/history) ----------
 
-def test_the_box_text_at_a_fixed_time(user):
+@pytest.fixture
+def usage_at(monkeypatch):
+    """History's usage box as it would be at a fixed moment."""
+    def fixed(now):
+        monkeypatch.setattr(api, "ai_usage", lambda: ai_usage(now))
+    return fixed
+
+
+def test_the_box_data_at_a_fixed_time(client, user, usage_at):
     asked(user, at(8, 10, 5), 4_000)
     asked(user, at(8, 15, 0), 1_000)
-
-    html = " ".join(render_to_string("portal/_usage_box.html", {"usage": ai_usage(at(8, 18))}).split())
-
-    assert "AI usage (this app)" in html
-    assert "Daily period since Thu 08-Oct 10:05 AM" in html
-    assert "5,000 of 200,000 tokens (2 %)" in html
-    assert "about 78 questions left - resets Fri 09-Oct 10:05 AM" in html  # (200,000 - 5,000) // 2,500
-    assert "Groq's real count (rolling last 24 h, this app): openai/gpt-oss-120b 5,000 - qwen/qwen3.8-27b 0" in html
-    assert ("This week (since Sat 03-Oct 8:20 PM): openai/gpt-oss-120b 5,000 tokens, 2 questions - "
-            "qwen/qwen3.8-27b 0 tokens, 0 questions - resets Sat 10-Oct 8:20 PM") in html
-
-
-def test_the_box_says_when_the_next_period_starts(user):
-    asked(user, at(8, 10, 5), 4_000)
-
-    html = " ".join(render_to_string("portal/_usage_box.html", {"usage": ai_usage(at(9, 11))}).split())
-
-    assert "Daily period: starts with your next question." in html
-    assert "resets Fri" not in html
-
-
-def test_history_shows_the_box_and_the_ask_page_does_not(client, user):
+    usage_at(at(8, 18))
     client.force_login(user)
 
-    history = client.get(reverse("history")).content.decode()
-    ask_page = client.get(reverse("ask")).content.decode()
+    usage = client.get(reverse("api_history")).json()["usage"]
 
-    assert "AI usage (this app)" in history and "This week (since" in history
-    assert "AI usage (this app)" not in ask_page and "This week (since" not in ask_page
+    assert usage["period_start"] == "Thu 08-Oct 10:05 AM"                  # "Daily period since ..."
+    assert usage["period_end"] == "Fri 09-Oct 10:05 AM"                    # "... - resets ..."
+    main, backup = usage["rows"]
+    assert (main["model"], main["tokens"], main["limit"], main["pct"]) == (MAIN, "5,000", "200,000", 2)
+    assert main["questions_left"] == 78                                    # (200,000 - 5,000) // 2,500
+    assert (main["rolling"], backup["model"], backup["rolling"]) == ("5,000", BACKUP, "0")
+    assert (usage["week_start"], usage["week_end"]) == ("Sat 03-Oct 8:20 PM", "Sat 10-Oct 8:20 PM")
+    assert (main["week_tokens"], main["week_questions"]) == ("5,000", 2)
+    assert (backup["week_tokens"], backup["week_questions"]) == ("0", 0)
+
+
+def test_the_box_says_when_the_next_period_starts(client, user, usage_at):
+    asked(user, at(8, 10, 5), 4_000)
+    usage_at(at(9, 11))
+    client.force_login(user)
+
+    usage = client.get(reverse("api_history")).json()["usage"]
+
+    assert usage["period_start"] == "" and usage["period_end"] == ""      # "Daily period: starts with your next question."
+
+
+def test_history_has_the_box_and_the_ask_screens_do_not(client, user):
+    client.force_login(user)
+
+    history = client.get(reverse("api_history")).json()
+    chats = client.get(reverse("api_chats")).json()
+
+    assert history["usage"]["rows"] and history["usage"]["week_start"]
+    assert "usage" not in chats

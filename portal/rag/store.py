@@ -1,13 +1,14 @@
-"""The vector store: the docs/ pieces and their vectors, kept in a Qdrant server
+"""The vector store's connection: the docs/ pieces and their vectors are kept in a Qdrant server
 (QDRANT_URL in .env, default http://127.0.0.1:6333; API key in QDRANT_API_KEY), e.g. in Docker.
 
-rebuild(chunks)               drop the collection and fill it again (used by manage.py ingest_docs)
-search(question, top_k=5)     the top_k chunks closest to the question (used by the agent)
+_client(path)                 the Qdrant client (one per server, reused)
+_qdrant_errors()              'server down' / 'wrong key' -> VectorStoreUnavailable with a safe message
 all_pieces()                  every stored chunk, read-only (used by the Documents page)
 describe()                    which vector DB is used, for messages (never shows the API key)
 
-Qdrant gets OUR OWN vectors from embed.py and compares them by cosine similarity; it never uses
-or downloads a model of its own.
+Filling and searching the notes is LangChain's work: lc/vectorstore.py (rebuild, search) and
+lc/pdfs.py use this connection. Qdrant gets OUR OWN vectors (lc/embeddings.py) and compares them by
+cosine similarity; it never uses or downloads a model of its own.
 `path` is only given by tests and tools: it names an in-process, in-memory store (no server,
 nothing written to disk - Qdrant's on-disk local mode does not really delete a collection on
 Windows, so it is not used).
@@ -15,14 +16,11 @@ Windows, so it is not used).
 import logging
 import os
 import threading
-import time
 import uuid
 import warnings
 from contextlib import contextmanager
 from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit
-
-from . import embed
 
 log = logging.getLogger(__name__)
 
@@ -119,54 +117,9 @@ def _qdrant_errors():
 
 
 # ------------------------------------------------------------------ public functions
-def rebuild(chunks, path=None):
-    """Drop the COLLECTION, create it again and add every chunk with its vector.
-    chunks = list of dicts from chunking.load_docs(). Returns the number of chunks stored."""
-    from qdrant_client import models
-
-    vectors = embed.embed_documents([c.get("embed_text", c["text"]) for c in chunks]) if chunks else []
-    points = [models.PointStruct(id=point_id(c["id"]), vector=vector,
-                                 payload={"id": c["id"], "text": c["text"], "source": c["source"],
-                                          "heading": c["heading"], "kind": c["kind"],
-                                          # the same details where LangChain's QdrantVectorStore reads them
-                                          "metadata": {"id": c["id"], "source": c["source"],
-                                                       "heading": c["heading"], "kind": c["kind"]}})
-              for c, vector in zip(chunks, vectors)]
-    client = _client(path)
-    with _qdrant_errors():
-        if client.collection_exists(COLLECTION):
-            client.delete_collection(COLLECTION)
-        client.create_collection(COLLECTION, vectors_config=models.VectorParams(
-            size=len(vectors[0]) if vectors else VECTOR_SIZE,
-            distance=models.Distance.COSINE))  # compare vectors by cosine similarity
-        for start in range(0, len(points), QDRANT_BATCH):
-            client.upsert(COLLECTION, points=points[start:start + QDRANT_BATCH], wait=True)
-        return client.count(COLLECTION, exact=True).count
-
-
-# the seconds the last search() of this thread spent turning the question into a vector (embed_secs);
-# per thread, so two people asking at the same time do not mix their times
+# the seconds the last notes search (lc/vectorstore.search) of this thread spent turning the question into
+# a vector (embed_secs); per thread, so two people asking at the same time do not mix their times
 last_search = threading.local()
-
-
-def search(question, top_k=5, path=None):
-    """The top_k chunks closest to the question, best first.
-
-    Returns a list of dicts: {text, source (file name), heading, kind ('table' | 'rule' |
-    'example'), score (cosine similarity, 1.0 = same meaning)}. Step 4 relies on this shape.
-    """
-    client = _client(path)
-    with _qdrant_errors():
-        if not client.collection_exists(COLLECTION):
-            raise RuntimeError(STORE_EMPTY)
-        started = time.perf_counter()
-        vector = embed.embed_query(question)
-        last_search.embed_secs = time.perf_counter() - started  # the agent shows it as its own step
-        result = client.query_points(COLLECTION, query=vector, limit=top_k, with_payload=True)
-    return [{"text": p.payload["text"], "source": p.payload["source"],
-             "heading": p.payload["heading"], "kind": p.payload["kind"],
-             "score": round(p.score, 4)}  # Qdrant's cosine score is the similarity itself
-            for p in result.points]
 
 
 def all_pieces(path=None):

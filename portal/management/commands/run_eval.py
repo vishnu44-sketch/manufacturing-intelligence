@@ -160,7 +160,8 @@ class Command(BaseCommand):
                            for c in item.get("context", []) if c in results and results[c]["status"] in ("ok", "nodata")]
                 c0, l0 = len(calls), len(logs)
                 with transaction.atomic():   # nothing of the eval stays in History
-                    result = agent.ask(item["question"], user, context=context)
+                    # the user's saved memories would change the prompts: the eval checks the plain app
+                    result = agent.ask(item["question"], user, context=context, use_memories=False)
                     transaction.set_rollback(True)
                 tokens = sum(call["total"] or 0 for call in calls[c0:])
                 used += tokens
@@ -204,46 +205,38 @@ class Command(BaseCommand):
 
 class OneModel:
     """While a run lasts: only the chosen model is asked, its tokens are recorded, the agent's log is kept,
-    and (with --memory-store) the docs come from a store in memory. Everything is put back at the end."""
+    and (with --memory-store) the docs come from a store in memory. Everything is put back at the end.
+    Every AI call of the agent goes through lc.calls.chat(), so that one function is wrapped."""
 
     def __init__(self, only, backup, calls, logs, memory_store):
         self.only, self.backup, self.calls, self.logs, self.memory_store = only, backup, calls, logs, memory_store
 
     def __enter__(self):
-        self.saved = {"_chat": agent._chat, "get_groq_client": agent.get_groq_client, "search": agent.search,
-                      "_main_resting_until": agent._main_resting_until}
+        from ...lc import calls as lc_calls
+        self.saved = {"search": agent.search, "_main_resting_until": agent._main_resting_until}
+        self.saved_chat = lc_calls.chat
         self.saved_fallback = os.environ.get("GROQ_FALLBACK_MODEL")
-        original_chat, original_client, only, calls = agent._chat, agent.get_groq_client, self.only, self.calls
+        original_chat, only, calls = lc_calls.chat, self.only, self.calls
 
         if self.backup:
             agent._main_resting_until = time.monotonic() + 10 ** 9   # as after the main model's daily limit
         else:
             os.environ["GROQ_FALLBACK_MODEL"] = ""                   # no backup during a main-model run
 
-        def one_model_chat(client, messages, max_tokens, effort, model=None):
-            if (model or agent.model_name()) != only:
+        def one_model_chat(request, max_tokens, effort, model=None):
+            model = model or agent.model_name()
+            if model != only:
                 raise agent.DailyLimitReached(model)                 # never spend the other model's tokens
-            return original_chat(client, messages, max_tokens, effort, model)
+            text, tokens, cut_off = original_chat(request, max_tokens, effort, model)
+            calls.append({"model": model, "total": tokens, "finish": "length" if cut_off else "stop"})
+            return text, tokens, cut_off
 
-        def recording_client():
-            client = original_client()
-            create = client.chat.completions.create
-
-            def recording(**kwargs):
-                response = create(**kwargs)
-                calls.append({"model": kwargs.get("model"), "total": response.usage.total_tokens,
-                              "finish": getattr(response.choices[0], "finish_reason", None)})
-                return response
-            client.chat.completions.create = recording
-            return client
-
-        agent._chat, agent.get_groq_client = one_model_chat, recording_client
+        lc_calls.chat = one_model_chat
         if self.memory_store:
-            from ...rag import store
-            from ...rag.chunking import load_docs
+            from ...lc import docs, vectorstore
             path = Path(tempfile.mkdtemp(prefix="nop_eval_store_"))
-            store.rebuild(load_docs(Path(settings.BASE_DIR) / "docs"), path=path)
-            agent.search = lambda question, top_k=5: store.search(question, top_k=top_k, path=path)
+            vectorstore.rebuild(docs.load_docs(Path(settings.BASE_DIR) / "docs"), path=path)
+            agent.search = lambda question, top_k=5: vectorstore.search(question, top_k=top_k, path=path)
 
         logs = self.logs
 
@@ -257,8 +250,10 @@ class OneModel:
         return self
 
     def __exit__(self, *exc):
+        from ...lc import calls as lc_calls
         for name, value in self.saved.items():
             setattr(agent, name, value)
+        lc_calls.chat = self.saved_chat
         if self.saved_fallback is None:
             os.environ.pop("GROQ_FALLBACK_MODEL", None)
         else:

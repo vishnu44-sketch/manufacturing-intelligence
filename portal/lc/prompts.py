@@ -1,8 +1,10 @@
 """LangChain step C: the prompts as LangChain templates (ChatPromptTemplate).
 
-The texts are read from the classic agent.py, never copied: a better prompt there is a better prompt
-in both versions. The {fields} are the same, e.g. SQL_PROMPT needs schema, count, documents, today,
-earlier and question - exactly what agent._answer() fills in today.
+The texts are read from agent.py (its prompt constants), never copied: they stay next to the rules
+and checks they belong to. The {fields} are what agent.py fills in, e.g. SQL_PROMPT needs schema,
+count, documents, today, preferences, earlier and question (the sql_values of graph.pick_schema).
+{preferences} = the user's saved memories (agent.preferences) in the SQL, answer and documents requests;
+'' when the user has none, so those requests are then exactly as before the memory.
 """
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder, PromptTemplate
 
@@ -28,4 +30,16 @@ REWRITE_PROMPT = ChatPromptTemplate.from_messages([
 EXPLAIN_PROMPT = ChatPromptTemplate.from_messages([
     ("system", agent.EXPLAIN_SYSTEM_PROMPT),
     ("human", agent.EXPLAIN_REQUEST),
+])
+
+# step H, the router: the question + the closest PDF pieces -> one word, data or documents
+ROUTE_PROMPT = ChatPromptTemplate.from_messages([
+    ("system", agent.ROUTE_SYSTEM_PROMPT),
+    ("human", agent.ROUTE_REQUEST),
+])
+
+# step H, a document question: the closest PDF pieces -> a short answer (or NOT_IN_DOCUMENTS: why)
+DOCS_PROMPT = ChatPromptTemplate.from_messages([
+    ("system", agent.DOCS_SYSTEM_PROMPT),
+    ("human", agent.DOCS_REQUEST),
 ])

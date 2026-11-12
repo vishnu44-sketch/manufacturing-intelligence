@@ -1,15 +1,13 @@
 """Which ai_gold tables the SQL call shows (agent.schema_for_prompt) - fewer Groq tokens per question.
 
-No Groq, no MySQL: the schema text and the document pieces are made up here.
+No Groq, no MySQL: the schema text and the document pieces are made up here (the AI is test_agent's fake).
 The full check against every docs example and eval question is done offline with the real docs.
 """
-import copy
-from types import SimpleNamespace
-
 import pytest
 
 from portal.models import Question
 from portal.rag import agent, warehouse
+from portal.tests.test_agent import use_fake_ai
 
 pytestmark = pytest.mark.django_db  # agent.ask() saves a Question
 
@@ -94,20 +92,7 @@ def test_schema_for_prompt_falls_back_to_the_full_schema(schema):
 
 # ---------- a failed try shows the full schema ----------
 
-class FakeGroq:
-    """replies = what each call returns, in order; calls = the messages of every call."""
-
-    def __init__(self, replies):
-        self.replies, self.calls = list(replies), []
-        self.chat = SimpleNamespace(completions=SimpleNamespace(create=self._create))
-
-    def _create(self, **kwargs):
-        self.calls.append(copy.deepcopy(kwargs["messages"]))
-        reply = self.replies.pop(0)
-        return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=reply))])
-
-
-SQL = "```sql\nSELECT ROUND(SUM(il.net_taxable_value), 2) AS net_sales_inr FROM fact_invoice_lines il\n```"
+SQL ="```sql\nSELECT ROUND(SUM(il.net_taxable_value), 2) AS net_sales_inr FROM fact_invoice_lines il\n```"
 
 
 def test_the_retry_after_a_failed_try_shows_every_table(monkeypatch, schema, user):
@@ -123,8 +108,7 @@ def test_the_retry_after_a_failed_try_shows_every_table(monkeypatch, schema, use
     monkeypatch.setattr(agent, "search", lambda question, top_k=5: [])
     monkeypatch.setattr(warehouse, "allowed_tables", lambda: ALL)
     monkeypatch.setattr(warehouse, "run_select", run_select)
-    fake = FakeGroq([SQL, SQL, "Net sales were 1."])
-    monkeypatch.setattr(agent, "get_groq_client", lambda: fake)
+    fake = use_fake_ai(monkeypatch, [SQL, SQL, "Net sales were 1."])
 
     result = agent.ask("What were net sales in Aug 2026?", user)
 
@@ -132,5 +116,5 @@ def test_the_retry_after_a_failed_try_shows_every_table(monkeypatch, schema, use
     first_request = fake.calls[0][1]["content"]
     assert "fact_stock_ledger: " not in first_request          # try 1: only some tables
     retry_message = fake.calls[1][-1]["content"]
-    assert "The full ai_gold schema" in retry_message and "fact_stock_ledger: " in retry_message
+    assert "The rest of the ai_gold schema" in retry_message and "fact_stock_ledger: " in retry_message
     assert Question.objects.count() == 1

@@ -1,10 +1,11 @@
-"""The Documents page (/documents/): what the AI can read, staff only, read-only.
+"""The Documents data (/api/documents): what the AI can read, staff only, read-only.
 The vector store and MySQL are faked here, so the tests are fast and need neither.
 Run with:  python -m pytest -q"""
 import pytest
-from django.urls import reverse
 
+from portal.lc import vectorstore
 from portal.rag import store, warehouse
+from portal.tests.test_views_ask import api_get
 
 pytestmark = pytest.mark.django_db
 
@@ -36,7 +37,7 @@ def fake_store(monkeypatch):
         asked.append((question, top_k))
         return [dict(h) for h in HITS]
 
-    monkeypatch.setattr(store, "search", fake_search)
+    monkeypatch.setattr(vectorstore, "search", fake_search)
     monkeypatch.setattr(warehouse, "allowed_tables", lambda: {
         "dim_calendar", "dim_customers", "dim_products", "dim_fx_rates", "dim_sales_people",
         "dim_tax_codes", "dim_stock_movement_types", "fact_invoice_lines",
@@ -44,57 +45,63 @@ def fake_store(monkeypatch):
     return asked
 
 
-def test_a_stranger_goes_to_login(client):
-    r = client.get(reverse("documents"))
-    assert r.status_code == 302
-    assert r.url.startswith(reverse("login"))
+def documents(client, **params):
+    return api_get(client, "api_documents", data=params).json()
+
+
+def headings(body):
+    return [piece["heading"] for piece in body["pieces"]]
+
+
+def test_a_stranger_must_sign_in(client):
+    r = api_get(client, "api_documents")
+    assert r.status_code == 401
 
 
 def test_a_normal_user_gets_no_access(client, user, fake_store):
     client.force_login(user)
-    r = client.get(reverse("documents"))
+    r = api_get(client, "api_documents", data={"q": "stock value"})
     assert r.status_code == 403
-    assert b"You do not have access" in r.content
+    assert "Only administrators can open this page" in r.json()["detail"]
+    assert fake_store == []  # nothing is searched for them
 
 
 def test_staff_sees_every_piece_and_the_counts(client, staff, fake_store):
     client.force_login(staff)
-    r = client.get(reverse("documents"))
-    assert r.status_code == 200
-    page = r.content.decode()
-    assert "All files · 4 pieces" in page
-    assert "business_rules.md · 2" in page and "data_dictionary.md · 1" in page
-    assert "Showing 4 of 4 pieces" in page
-    for piece in PIECES:
-        assert piece["heading"] in page
-    assert fake_store == []  # no question -> no search
+    body = documents(client)
+    assert body["total"] == 4                                            # "All files · 4 pieces"
+    assert body["counts"] == [{"source": "business_rules.md", "count": 2}, {"source": "data_dictionary.md", "count": 1},
+                              {"source": "sql_examples.md", "count": 1}]
+    assert headings(body) == [p["heading"] for p in PIECES]              # "Showing 4 of 4 pieces"
+    assert [p["no"] for p in body["pieces"]] == [1, 2, 3, 4]
+    assert body["pieces"][1]["text"] == "Never SUM every row." and body["pieces"][1]["kind"] == "rule"
+    assert body["hits"] == [] and fake_store == []  # no question -> no search
 
 
 def test_filter_by_file(client, staff, fake_store):
     client.force_login(staff)
-    page = client.get(reverse("documents"), {"source": "business_rules.md"}).content.decode()
-    assert "Showing 2 of 4 pieces" in page
-    assert "Financial year (FY)" in page and "fact_invoice_lines - what one row is" not in page
+    body = documents(client, source="business_rules.md")
+    assert body["total"] == 4 and len(body["pieces"]) == 2                # "Showing 2 of 4 pieces"
+    assert body["source"] == "business_rules.md"
+    assert "fact_invoice_lines - what one row is" not in headings(body)
 
 
 def test_find_a_word_in_heading_or_text_any_case(client, staff, fake_store):
     client.force_login(staff)
-    page = client.get(reverse("documents"), {"find": "STOCK"}).content.decode()
-    assert "Showing 2 of 4 pieces" in page  # heading of the rule + heading/text of the example
-    assert "Stock value on a date" in page and "Q: What is our current stock value?" in page
-    page = client.get(reverse("documents"), {"find": "never sum"}).content.decode()
-    assert "Showing 1 of 4 pieces" in page  # found in the text only
+    body = documents(client, find="STOCK")
+    assert headings(body) == ["Stock value on a date - Closing balance rows only", "Q: What is our current stock value?"]
+    body = documents(client, find="never sum")
+    assert [p["no"] for p in body["pieces"]] == [2]  # found in the text only; the number stays as in the full list
 
 
-def test_test_search_shows_the_five_pieces_in_order_with_scores(client, staff, fake_store):
+def test_test_search_has_the_five_pieces_in_order_with_scores(client, staff, fake_store):
     client.force_login(staff)
-    page = client.get(reverse("documents"), {"q": "what is our current stock value"}).content.decode()
+    body = documents(client, q="what is our current stock value")
     assert fake_store == [("what is our current stock value", 5)]  # the same search as the AI, top 5
-    positions = [page.index(f"Hit number {i}") for i in range(1, 6)]
-    assert positions == sorted(positions)  # best first
-    assert "score 0.91" in page and "score 0.66" in page  # 2 decimals
-    assert "The SQL step would show the columns of:" in page
-    assert "fact_stock_ledger" in page.split("The SQL step would show the columns of:")[1]
+    assert [hit["heading"] for hit in body["hits"]] == [f"Hit number {i}" for i in range(1, 6)]  # best first
+    assert body["hits"][0]["score"] == 0.9123 and body["hits"][-1]["score"] == 0.655   # the app shows 2 decimals
+    assert body["tables"]["all"] is False                                 # "The SQL step would show the columns of:"
+    assert "fact_stock_ledger" in body["tables"]["names"]
 
 
 def test_test_search_works_without_mysql(client, staff, fake_store, monkeypatch):
@@ -103,25 +110,17 @@ def test_test_search_works_without_mysql(client, staff, fake_store, monkeypatch)
 
     monkeypatch.setattr(warehouse, "allowed_tables", down)
     client.force_login(staff)
-    page = client.get(reverse("documents"), {"q": "open orders"}).content.decode()
-    assert "Hit number 1" in page
-    assert "The SQL step would show" not in page  # that line is simply left out
+    body = documents(client, q="open orders")
+    assert body["hits"][0]["heading"] == "Hit number 1"
+    assert body["tables"] is None  # that line is simply left out
 
 
-def test_an_empty_store_shows_how_to_build_it(client, staff, monkeypatch):
+def test_an_empty_store_says_how_to_build_it(client, staff, fake_store, monkeypatch):
     monkeypatch.setattr(store, "all_pieces", lambda path=None: [])
     client.force_login(staff)
-    page = client.get(reverse("documents"), {"q": "anything"}).content.decode()
-    assert "ingest_docs" in page
-    assert "Test search" not in page
-
-
-def test_menu_link_only_for_staff(client, user, staff, fake_store):
-    link = f'href="{reverse("documents")}"'.encode()
-    client.force_login(user)
-    assert link not in client.get(reverse("ask")).content
-    client.force_login(staff)
-    assert link in client.get(reverse("ask")).content
+    body = documents(client, q="anything")
+    assert body["total"] == 0 and "ingest_docs" in body["store_empty"]
+    assert body["hits"] == [] and fake_store == []  # no test search
 
 
 def test_all_pieces_of_a_missing_store_is_empty_and_creates_nothing(tmp_path):
