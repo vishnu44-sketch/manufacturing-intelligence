@@ -1,5 +1,6 @@
-// History: the AI usage box of this app (all users), then the user's own questions, newest first,
-// 25 per page (?page=2), with their answer, rows, seconds, tokens and status. "Ask again" asks the
+// History: two tabs. "Chats" (the first one shown): the user's chats, to open, rename, remove or delete
+// (HistoryChats). "Questions" (?tab=questions, or a ?page=): the AI usage box of this app (all users), then
+// the user's own questions, newest first, 25 per page (?page=2), with their answer, rows, seconds, tokens and status. "Ask again" asks the
 // question again in a new chat (the Ask page shows "Thinking…"); "Excel" downloads its rows.
 import { useEffect, useState } from 'react'
 import { AuthError, api, problemText } from '../api'
@@ -7,6 +8,8 @@ import { Link, questionPath, useRouter } from '../router'
 import type { HistoryLine, HistoryPage as Page, Status, Usage } from '../types'
 import type { AskAgain } from './AskPage'
 import { ExcelLink, Loading, plural } from './common'
+import HistoryChats from './HistoryChats'
+import { Segmented, SegmentedItem } from './ui/segmented'
 
 const CHIPS: Record<Status, [string, string]> = {
   ok: ['ok', 'ANSWERED'],
@@ -90,7 +93,31 @@ function Line({ line }: { line: HistoryLine }) {
   )
 }
 
+type Tab = 'chats' | 'questions'
+
+/** The tab History opens with: Questions for ?tab=questions or a ?page= (its pager), else Chats. */
+function firstTab(): Tab {
+  const params = new URLSearchParams(window.location.search)
+  return params.get('tab') === 'questions' || params.has('page') ? 'questions' : 'chats'
+}
+
 export default function HistoryPage({ page }: { page: number }) {
+  const [tab, setTab] = useState<Tab>(firstTab)
+  return (
+    <>
+      <div style={{ marginBottom: 16 }}>
+        <Segmented aria-label="What History shows">
+          <SegmentedItem pressed={tab === 'chats'} onClick={() => setTab('chats')}>Chats</SegmentedItem>
+          <SegmentedItem pressed={tab === 'questions'} onClick={() => setTab('questions')}>Questions</SegmentedItem>
+        </Segmented>
+      </div>
+      {tab === 'chats' ? <HistoryChats /> : <Questions page={page} />}
+    </>
+  )
+}
+
+/** The "Questions" tab: the AI usage box, then the user's own questions (one page of them). */
+function Questions({ page }: { page: number }) {
   const [data, setData] = useState<Page | null>(null)
   const [error, setError] = useState('')
 

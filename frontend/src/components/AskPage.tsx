@@ -15,7 +15,7 @@
 // as toasts; deleting a chat asks in a dialog first. Colours are Tailwind token classes only (no fixed
 // colours), so the page follows the light and the dark theme.
 import { type KeyboardEvent, type ReactNode, useCallback, useEffect, useRef, useState } from 'react'
-import { ArrowUp, Check, Database, Menu, Pencil, Plus } from 'lucide-react'
+import { ArrowUp, Check, Ellipsis, Info, Pencil } from 'lucide-react'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import { AuthError, StreamUnavailable, api, problemText } from '../api'
@@ -23,12 +23,13 @@ import { ASK_PATH, Link, chatPath, useRouter } from '../router'
 import type { AskResponse, Card, ChatDetail, ChatSummary, Me, SavedAnswer } from '../types'
 import AnswerCard from './AnswerCard'
 import AskStart from './AskStart'
-import ChatList, { type ChatActions, deleteQuestion, useSlimChatList } from './ChatList'
+import { type ChatActions, ChatMenu, deleteQuestion } from './ChatMenu'
 import { plural } from './common'
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from './ui/alert-dialog'
 import { Button } from './ui/button'
 import { Card as Box } from './ui/card'
 import { Dots } from './ui/dots'
+import { Popover, PopoverContent, PopoverTrigger } from './ui/popover'
 import { Toaster } from './ui/sonner'
 import { Spinner } from './ui/spinner'
 import { Textarea } from './ui/textarea'
@@ -213,6 +214,10 @@ function QuestionBubble({ card, me, editable, onEdit }:
   )
 }
 
+// the tips behind the (i) under the question box
+const TIPS = 'Follow-up questions work ("and for Sep?", "same for export") - the AI sees the last 3 questions of '
+  + 'this chat. A month name means the NOP sales month (21st to 20th) unless you say "calendar month".'
+
 export default function AskPage({ me }: { me: Me }) {
   const { route, state, navigate } = useRouter()
   const [chats, setChats] = useState<ChatSummary[] | null>(null)
@@ -226,8 +231,7 @@ export default function AskPage({ me }: { me: Me }) {
   const [question, setQuestion] = useState(route.kind === 'new' ? route.q.slice(0, me.max_question_chars) : '')
   const [justAsked, setJustAsked] = useState<number | null>(null)
   const [notices, setNotices] = useState<Record<number, string>>({}) // one-time token notices, by card id
-  const [drawer, setDrawer] = useState(false)
-  const [slimList, toggleSlimList] = useSlimChatList() // the chat list made small (a rail), kept in this browser
+  const [menuOpen, setMenuOpen] = useState(false) // the "..." menu of the open chat (rename / remove / delete)
   const [toDelete, setToDelete] = useState<ChatSummary | null>(null) // the chat the "Are you sure?" dialog asks about
   const [askingDelete, setAskingDelete] = useState(false) // that dialog is open
   const box = useRef<HTMLTextAreaElement>(null)
@@ -241,13 +245,6 @@ export default function AskPage({ me }: { me: Me }) {
   useEffect(() => {
     document.body.classList.add('page-ask')
     return () => document.body.classList.remove('page-ask')
-  }, [])
-
-  // Escape closes the phone drawer
-  useEffect(() => {
-    const close = (event: globalThis.KeyboardEvent) => { if (event.key === 'Escape') setDrawer(false) }
-    document.addEventListener('keydown', close)
-    return () => document.removeEventListener('keydown', close)
   }, [])
 
   const refreshChats = useCallback(() => {
@@ -274,7 +271,6 @@ export default function AskPage({ me }: { me: Me }) {
 
   // open a chat: its saved cards (no AI call); a chat just made by asking is already here
   useEffect(() => {
-    setDrawer(false)
     if (chatId === null) {
       setDetail(null)
       return
@@ -294,7 +290,6 @@ export default function AskPage({ me }: { me: Me }) {
 
   // open one saved answer: its card; the box gets its question, asking continues its chat
   useEffect(() => {
-    setDrawer(false)
     setSingle(null)
     if (questionId === null) return
     let gone = false
@@ -481,18 +476,16 @@ export default function AskPage({ me }: { me: Me }) {
   const cards = route.kind === 'chat' ? detail?.cards ?? [] : []
   const withNotice = (card: Card) => (notices[card.id] ? { ...card, token_notice: notices[card.id] } : card)
   const listedChat = (id: number) => [...(chats ?? []), ...removed].find((c) => c.id === id)
-  // the "Chats" / "+ New" buttons of the head show only when the chat list is a drawer (phone, tablet)
-  const drawerOnly = 'min-[901px]:hidden'
   const filled = question.trim() !== ''
   // the first question moves the box from the middle of the page to the bottom: the cursor stays in it
   useEffect(() => { if (!start && pending) box.current?.focus() }, [start]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // The question box: a rounded card with the text and a round send button (in the brand colour when there
-  // is text, grey when empty). On the start screen it is big: two rows of text and, under them, what is
-  // asked ("MySQL ai_gold · read-only") next to the button; under a conversation it is one row.
+  // is text, grey when empty): two rows of text and, under them, the button at the right. The same box on the
+  // start screen (bigger shadow) and under a conversation.
   const sendButton = (
     <Button type="submit" size="icon" aria-label="Ask" title="Ask (Enter)" disabled={pending !== null}
-            className={cn('rounded-full', start ? 'size-10' : 'mb-px size-9',
+            className={cn('rounded-full', start ? 'size-10' : 'size-9',
               !filled && 'bg-secondary text-muted-foreground shadow-none hover:bg-secondary hover:text-foreground')}>
       {pending ? <Spinner /> : <ArrowUp aria-hidden="true" className="size-[18px]" strokeWidth={2.4} />}
     </Button>
@@ -502,40 +495,24 @@ export default function AskPage({ me }: { me: Me }) {
       {askError && <div className="errbox" role="alert" style={{ marginBottom: 10 }}>{askError}</div>}
       <div className={cn('border border-border bg-card transition-[border-color,box-shadow]',
         'focus-within:border-primary focus-within:ring-3 focus-within:ring-primary/15',
-        start ? 'flex flex-col gap-2 rounded-3xl px-5 pt-4 pb-3 shadow-lg max-[700px]:px-4'
-          : 'flex items-end gap-2.5 rounded-3xl py-1.5 pr-1.5 pl-5 shadow-sm')}>
-        <Textarea id="q" ref={box} rows={start ? 2 : 1} maxLength={me.max_question_chars} required aria-label="Your question"
+        'flex flex-col rounded-3xl px-5 max-[700px]:px-4',
+        start ? 'gap-2 pt-4 pb-3 shadow-lg' : 'gap-1 pt-3 pb-2 shadow-sm')}>
+        <Textarea id="q" ref={box} rows={2} maxLength={me.max_question_chars} required aria-label="Your question"
                   className={cn('max-h-[220px] flex-1 rounded-none! border-0! bg-transparent! px-0! shadow-none focus-visible:ring-0',
-                    start ? 'min-h-12 py-0! text-[15px]!' : 'min-h-6 py-[7px]!')}
+                    start ? 'min-h-12 py-0! text-[15px]!' : 'min-h-11 py-0!')}
                   value={question} readOnly={pending !== null} onChange={(e) => setQuestion(e.target.value)}
                   onKeyDown={onKey}
-                  placeholder={start ? 'Ask about sales, customers, orders, stock or documents…' : 'Ask another question about NOP data…'} />
-        {start ? (
-          <div className="flex items-center justify-between gap-3">
-            <span className="inline-flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground" title="The questions run on the NOP gold data, read-only">
-              <Database aria-hidden="true" className="size-3.5 shrink-0" />
-              <span className="truncate">MySQL ai_gold · read-only</span>
-            </span>
-            {sendButton}
-          </div>
-        ) : sendButton}
+                  placeholder="Ask about sales, customers, orders, stock or documents…" />
+        <div className="flex items-center justify-end">{sendButton}</div>
       </div>
     </form>
   )
 
   return (
-    <div className={cn('ask-layout ui-scope', slimList && 'chats-slim')}>
-      <ChatList chats={chats} removed={removed} activeId={chatId ?? single?.chat?.id ?? null} open={drawer}
-                onNew={() => navigate('/new')} onClose={() => setDrawer(false)} actions={actions}
-                slim={slimList} onSlim={toggleSlimList} />
-
+    // no chat list here (12-Nov): "New chat" and "History" (its Chats tab) are in the top bar of the frame
+    <div className="ask-layout chats-none ui-scope">
       <section className="conv" aria-label="Conversation">
         <div className="conv-head">
-          <Button type="button" variant="outline" size="sm" className={drawerOnly} aria-controls="chats"
-                  aria-expanded={drawer} onClick={() => setDrawer(true)}>
-            <Menu aria-hidden="true" className="size-[15px]" />
-            Chats
-          </Button>
           <div className="min-w-0 flex-1">
             {route.kind === 'question' ? (
               <>
@@ -554,15 +531,24 @@ export default function AskPage({ me }: { me: Me }) {
               <>
                 <div className="conv-title">New chat</div>
                 <div className="mt-0.5 text-[12.5px] text-muted-foreground [overflow-wrap:anywhere]">
-                  Your questions and answers are saved - this chat will appear in your chat list.
+                  Your questions and answers are saved - you find this chat again under History.
                 </div>
               </>
             )}
           </div>
-          {(chat || route.kind === 'question') && (
-            <Button type="button" variant="outline" size="sm" className={drawerOnly} onClick={() => navigate('/new')}>
-              <Plus aria-hidden="true" className="size-3.5" strokeWidth={2.4} />New
-            </Button>
+          {chat && route.kind === 'chat' && (
+            <Popover open={menuOpen} onOpenChange={setMenuOpen}>
+              <PopoverTrigger asChild>
+                <Button type="button" variant="ghost" size="icon-sm" className="text-muted-foreground hover:text-primary"
+                        aria-label="Options for this chat" title="Rename, remove or delete">
+                  <Ellipsis aria-hidden="true" />
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent portal={false} align="end" side="bottom" className="w-[min(17rem,calc(100vw-2rem))] p-2.5">
+                <ChatMenu key={chat.id} chat={listedChat(chat.id) ?? { ...chat, questions: detail?.total }}
+                          actions={actions} onDone={() => setMenuOpen(false)} />
+              </PopoverContent>
+            </Popover>
           )}
         </div>
 
@@ -614,16 +600,18 @@ export default function AskPage({ me }: { me: Me }) {
         {!start && (
           <div className="composer">
             {composer}
-            <div className="mt-2 text-center text-[11px] leading-normal text-faint">
-              Enter to send · Shift+Enter for a new line · Follow-up questions work ("and for Sep?", "same for export") -
-              the AI sees the last 3 questions of this chat. A month name means the NOP sales month (21st to 20th) unless
-              you say "calendar month".
+            {/* one short line; the longer tips sit behind the (i) - on hover, and read out by a screen reader */}
+            <div className="mt-2 flex items-center justify-center gap-1.5 text-[11px] leading-normal text-faint">
+              <span>Enter to send · Shift+Enter for a new line</span>
+              <span className="inline-flex cursor-help" title={TIPS}>
+                <Info aria-hidden="true" className="size-3.5" />
+                <span className="sr-only">{TIPS}</span>
+              </span>
             </div>
           </div>
         )}
         <Toaster position="top-center" duration={6000} />
       </section>
-      <div className="chats-backdrop" hidden={!drawer} onClick={() => setDrawer(false)} />
 
       <AlertDialog open={askingDelete} onOpenChange={setAskingDelete}>
         <AlertDialogContent aria-describedby={undefined}>

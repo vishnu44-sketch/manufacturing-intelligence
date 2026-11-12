@@ -119,7 +119,7 @@ describe('App', () => {
 
     fireEvent.click(menu().getByRole('link', { name: /History/ }))
 
-    expect(await screen.findByText('No questions yet')).toBeInTheDocument()
+    expect(await screen.findByText('No chats yet')).toBeInTheDocument()
     expect(window.location.pathname).toBe('/history')
   })
 
@@ -180,7 +180,7 @@ describe('App', () => {
     const bar = within(await screen.findByRole('banner'))
 
     fireEvent.click(bar.getByRole('link', { name: 'History' }))
-    expect(await screen.findByText('No questions yet')).toBeInTheDocument()
+    expect(await screen.findByText('No chats yet')).toBeInTheDocument()
     expect(window.location.pathname).toBe('/history')
 
     fireEvent.click(bar.getByRole('link', { name: 'New chat' }))

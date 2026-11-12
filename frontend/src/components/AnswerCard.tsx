@@ -25,7 +25,7 @@ const CHIPS: Record<Status, [string, string]> = {
   ok: ['ok', 'ANSWERED'],
   docs: ['doc', 'FROM DOCUMENTS'],
   nodata: ['info', 'DATA NOT AVAILABLE'],
-  refused: ['skip', 'NOT A NOP DATA QUESTION'],
+  refused: ['skip', 'NOT A COMPANY DATA QUESTION'],
   error: ['fail', 'NOT ANSWERED'],
   memory: ['ok', 'SAVED TO MEMORY'], // "Remember that ..." - no SQL, rows or Excel
 }

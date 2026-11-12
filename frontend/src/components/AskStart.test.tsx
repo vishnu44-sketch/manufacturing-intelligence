@@ -1,4 +1,4 @@
-// The start screen of the Ask page: the heading, the question box in the middle with "MySQL ai_gold · read-only"
+// The start screen of the Ask page: the heading, the question box in the middle (no "MySQL ai_gold" label: 12-Nov)
 // and the round send button, the four starter cards (a click fills the box, nothing is asked yet), and the
 // box moving to the bottom once a question is asked.
 import { fireEvent, screen, within } from '@testing-library/react'
@@ -16,7 +16,7 @@ describe('AskStart: the start screen', () => {
     const start = (await screen.findByRole('heading', { name: 'What would you like to know?' })).closest('#welcome') as HTMLElement
     const box = within(start).getByLabelText('Your question')                     // the box is in the middle, not docked
     expect(box).toHaveAttribute('placeholder', 'Ask about sales, customers, orders, stock or documents…')
-    expect(within(start).getByText('MySQL ai_gold · read-only')).toBeInTheDocument()
+    expect(screen.queryByText(/MySQL ai_gold/)).not.toBeInTheDocument()   // 12-Nov: "remove this, no need"
     expect(within(start).getByRole('button', { name: 'Ask' })).toBeInTheDocument()
     expect(document.querySelector('.composer')).toBeNull()
     const cards = within(within(start).getByRole('list', { name: 'Starter questions' })).getAllByRole('button')
@@ -45,10 +45,18 @@ describe('AskStart: the start screen', () => {
     })
     renderAt('/c/1', <AskPage me={ASHA} />)
 
-    const box = await screen.findByPlaceholderText('Ask another question about NOP data…')
+    const box = await screen.findByPlaceholderText('Ask about sales, customers, orders, stock or documents…')
     expect(box.closest('.composer')).not.toBeNull()
     expect(screen.queryByText('What would you like to know?')).not.toBeInTheDocument()
-    expect(screen.queryByText('MySQL ai_gold · read-only')).not.toBeInTheDocument()
+    // 12-Nov: the same box as on the start screen - no "NOP data" text, no "MySQL ai_gold" label
+    expect(box).toHaveAttribute('rows', '2')
+    expect(screen.queryByText(/MySQL ai_gold/)).not.toBeInTheDocument()
+    expect(screen.queryByPlaceholderText(/NOP data/)).not.toBeInTheDocument()
+    // one short line under it; the longer tips sit behind the (i)
+    const hint = screen.getByText('Enter to send · Shift+Enter for a new line')
+    const tips = hint.parentElement!.querySelector('[title]')!
+    expect(tips.getAttribute('title')).toMatch(/Follow-up questions work .* NOP sales month \(21st to 20th\)/)
+    expect(tips).toHaveTextContent(/the AI sees the last 3 questions of this chat/)    // read out by a screen reader
   })
 })
 
