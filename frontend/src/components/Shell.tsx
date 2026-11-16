@@ -2,14 +2,14 @@
 // right "New chat", "History", the dark-mode button and the user's round badge, which opens a small menu with
 // the name, the role and "Sign out"), and under it the light menu on the left, in groups: Home (Home, Assistant),
 // Intelligence (Knowledge graph), Tools (History, Memory) and - for staff only - Administration (Users,
-// Documents, Data, Audit). The page it is on is a filled pill. The browser tab shows "<page> · Manufacturing Intelligence".
+// Documents, Data, SQL, Audit). The page it is on is a filled pill. The browser tab shows "<page> · Manufacturing Intelligence".
 // Above the page is a row with its title (a page can go without it: header={false}, as Home and the Assistant do).
 // The « button under the menu makes it small (icons only, the name on hover) on every page; » opens it again. The
 // choice is kept in this browser (localStorage). On a phone the menu is a drawer, opened by the ☰ button in the top bar.
 // Colours are the names of src/tailwind.css (light and dark); the layout is in shell.css.
 import {
   Brain, ChevronsLeft, ChevronsRight, Clock, Database, FileText, History, House, LogOut, type LucideIcon, Menu,
-  MessageSquareText, Moon, Network, Plus, ShieldCheck, Sun, Users,
+  MessageSquareText, Moon, Network, Plus, ShieldCheck, SquareTerminal, Sun, Users,
 } from 'lucide-react'
 import { type ReactNode, useEffect, useState } from 'react'
 import { cn } from '@/lib/utils'
@@ -19,7 +19,7 @@ import type { Me } from '../types'
 import { Popover, PopoverContent, PopoverTrigger } from './ui/popover'
 import './shell.css'
 
-export type MenuItem = 'home' | 'ask' | 'history' | 'memory' | 'graph' | 'users' | 'documents' | 'data' | 'audit' | ''
+export type MenuItem = 'home' | 'ask' | 'history' | 'memory' | 'graph' | 'users' | 'documents' | 'data' | 'sql' | 'audit' | ''
 
 /** A time as the clock shows it, in India time: "Friday, 06 November 2026 · 10:56 AM IST". */
 export function istText(at: Date): string {
@@ -65,6 +65,7 @@ const MENU: Group[] = [
     { to: '/users', item: 'users', name: 'Users', icon: Users },
     { to: '/documents', item: 'documents', name: 'Documents', icon: FileText },
     { to: '/data', item: 'data', name: 'Data', icon: Database },
+    { to: '/sql', item: 'sql', name: 'SQL', icon: SquareTerminal },
     { to: '/audit', item: 'audit', name: 'Audit', icon: ShieldCheck },
   ] },
 ]

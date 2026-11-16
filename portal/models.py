@@ -170,6 +170,8 @@ class AuditLog(models.Model):
         ("mcp_search_notes", "MCP: notes searched"),
         ("mcp_search_documents", "MCP: documents searched"),
         ("mcp_get_schema", "MCP: schema read"),
+        ("sql_run", "SQL page: query run"),
+        ("sql_excel", "SQL page: Excel downloaded"),
     ]
     USER_AGENT_CHARS = 200
 

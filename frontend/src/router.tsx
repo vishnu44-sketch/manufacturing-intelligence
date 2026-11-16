@@ -6,7 +6,7 @@
 //   /c/<id>      one chat                                     /documents[?...]    Documents (staff)
 //   /q/<id>      one saved answer with its rows              /data               Data (staff)
 //   /login       the sign-in page                             /memory             Memory (every user)
-//   /graph       the Knowledge graph (every user)
+//   /graph       the Knowledge graph (every user)            /sql                SQL (staff)
 //   /audit[?page=2&user=..&action=..&from=..&to=..&q=..]       the Audit log (staff)
 // The old Django addresses (/ask/, /ask/new/, /ask/c/<id>/, /ask/<id>/, /app/...) still open the same screens.
 import {
@@ -24,6 +24,7 @@ export type Route =
   | { kind: 'documents'; source: string; find: string; q: string }
   | { kind: 'users' }
   | { kind: 'data' }
+  | { kind: 'sql' }
   | { kind: 'memory' }
   | { kind: 'graph' }
   | { kind: 'audit'; page: number; user: string; action: string; from: string; to: string; q: string }
@@ -47,6 +48,7 @@ export function parseRoute(pathname: string, search = ''): Route {
   }
   if (rest === '/users') return { kind: 'users' }
   if (rest === '/data') return { kind: 'data' }
+  if (rest === '/sql') return { kind: 'sql' }
   if (rest === '/memory') return { kind: 'memory' }
   if (rest === '/graph') return { kind: 'graph' }
   if (rest === '/audit') {

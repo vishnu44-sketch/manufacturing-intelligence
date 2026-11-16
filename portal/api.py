@@ -2,8 +2,9 @@
 
 The rules: a session sign-in (Django's own), a CSRF token on every POST (and any other changing
 method), and a user only reaches his own chats, questions and memories (anyone else's are 'not found'; staff
-as before: a chat is private, a saved question may be opened). Users, Documents and Data are for
+as before: a chat is private, a saved question may be opened). Users, Documents, Data and the SQL page are for
 staff only (403), and so is the Audit log (read-only: there is no way to change or delete a line).
+The SQL page (sql_page.py) runs only one checked SELECT on ai_gold, as the read-only MySQL user.
 Who did what is written to the audit log (audit.py): sign-ins, people, chat and memory actions, Excel
 downloads - never a password. The Knowledge graph (every user, GET only) reads the NOP data live and
 read-only, with no AI call (knowledge_graph.py); so does the Home page (home.py). It never answers with a redirect or an HTML page: without a
@@ -30,7 +31,7 @@ from django.utils.text import Truncator
 from django.views.decorators.cache import never_cache
 from django.views.decorators.csrf import csrf_exempt
 
-from . import audit, charts, home, knowledge_graph, services, user_memory
+from . import audit, charts, home, knowledge_graph, services, sql_page, user_memory
 from .models import AuditLog, Question, UserMemory
 from .rag import agent, warehouse
 from .usage import ai_usage
@@ -598,6 +599,74 @@ def data_tables(request):
         "invoices_to": _format(dates.get("invoices_to"), "d M Y"),
         "last_load": _format(dates.get("last_load"), "d M Y h:i A"),
     })
+
+
+# ------------------------------------------------------------------ SQL page (staff)
+@api_view(["GET"], staff_only=True)
+def sql_schema(request):
+    """The tree of the SQL page: the ai_gold tables A to Z with their rows and columns (name + type), kept a
+    few minutes (sql_page.schema). Only names, types and counts. 503 when MySQL cannot be read now."""
+    try:
+        return JsonResponse(sql_page.schema())
+    except (warehouse.WarehouseUnavailable, warehouse.QueryError) as exc:
+        log.warning("SQL page: the tree could not be read: %s", exc)
+        return _error(503, sql_page.MYSQL_DOWN)
+
+
+def _posted_sql(request):
+    """(the posted SQL text, None) of {"sql": "..."}, or (None, the JSON error) when it is not that."""
+    data = _body(request)
+    if data is None or not isinstance(data.get("sql", ""), str):
+        return None, _error(400, 'Send the SQL as a JSON object: {"sql": "SELECT ..."}.')
+    return data.get("sql", ""), None
+
+
+def _sql_audit(request, action, sql, **details):
+    """One audit line for a SQL page run: the typed SQL (cut by audit.clean) and what came of it."""
+    audit.record(request, action, warehouse.database_name(), sql=sql, **details)
+
+
+@api_view(["POST"], staff_only=True)
+def sql_run(request):
+    """{"sql": "SELECT ..."} -> {sql (as it ran, after the guard), columns, headers, rows, row_count, truncated,
+    max_rows, secs}. Always the SQL guard (one SELECT, only ai_gold tables, at most 500 rows) and the read-only
+    MySQL user with its 30 s limit; no AI call. 400 with a plain message when the guard refuses it or MySQL
+    reports an error, 503 when MySQL is down. Every run is in the audit log."""
+    sql, refused = _posted_sql(request)
+    if refused:
+        return refused
+    try:
+        reply = sql_page.run(sql)
+    except sql_page.SqlProblem as problem:
+        _sql_audit(request, "sql_run", sql, outcome="refused" if problem.status == 400 else "mysql_down",
+                   error=str(problem))
+        return _error(problem.status, str(problem))
+    _sql_audit(request, "sql_run", sql, outcome="ok", rows=reply["row_count"], truncated=reply["truncated"],
+               secs=reply["secs"])
+    return JsonResponse(reply)
+
+
+@api_view(["POST"], staff_only=True)
+def sql_excel(request):
+    """{"sql": "SELECT ..."} -> the rows as an .xlsx download, with the same guard, read-only user and limits as
+    /api/sql (the same 400 / 503 JSON errors). Written to the audit log."""
+    sql, refused = _posted_sql(request)
+    if refused:
+        return refused
+    try:
+        cleaned = sql_page.checked(sql)
+        data, secs = sql_page.fetch(cleaned)
+    except sql_page.SqlProblem as problem:
+        _sql_audit(request, "sql_excel", sql, outcome="refused" if problem.status == 400 else "mysql_down",
+                   error=str(problem))
+        return _error(problem.status, str(problem))
+    response = HttpResponse(
+        services.sql_excel_bytes(cleaned, data, request.user),
+        content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    name = timezone.localtime().strftime("sql_result_%Y%m%d_%H%M%S.xlsx")
+    response["Content-Disposition"] = f'attachment; filename="{name}"'
+    _sql_audit(request, "sql_excel", sql, outcome="ok", rows=len(data["rows"]), secs=secs)
+    return response
 
 
 # ------------------------------------------------------------------ Users (staff)

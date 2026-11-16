@@ -4,6 +4,8 @@ ask(question, user) works step by step:
 -  memory    - "Remember that I only work with export sales" (user_memory.py, rules, no AI call) is saved for
                the user (status 'memory') and not answered. The user's saved memories go into the SQL, answer
                and documents prompts of every later question, in every chat ({preferences}, '' with none).
+-  check     - in a chat, "is that correct?" / "how did you get this?" (answer_check.py, rules, no AI call):
+               the previous answer's saved SQL runs again and the reply says what the check found.
 0. route    - data or documents? The PDF search first (lc/pdfs.py, embeddings only, no tokens): when no PDF
                piece scores PDF_MIN_SCORE, the question goes to the data (steps 1-5) with no AI call; else a
                small AI call decides. A document question (warranty, discount rules, pump specifications ...)
@@ -60,7 +62,7 @@ from sqlglot import exp
 
 from ..lc.pdfs import search_pdfs
 from ..lc.vectorstore import search
-from .. import user_memory
+from .. import answer_check, user_memory
 from ..models import Question
 from . import store, warehouse
 from .sql_guard import GuardError, check_sql, strip_fences
@@ -507,7 +509,9 @@ def ask(question, user, context=None, use_memories=True):
     can be understood.
     A memory instruction ("Remember that I only work with export sales", user_memory.memory_fact) is not
     answered: the fact is saved for the user (status 'memory') - no SQL, no AI call, no tokens. The user's saved
-    memories go into the prompts of every later question (use_memories=False leaves them out, e.g. the eval)."""
+    memories go into the prompts of every later question (use_memories=False leaves them out, e.g. the eval).
+    In a chat, a question about the previous answer ("is that correct?", "how did you get this?") is answered by
+    answer_check.py: the earlier SQL runs again, no AI call, 0 tokens."""
     return run_to_end(ask_events(question, user, context, use_memories, streaming=False))
 
 
@@ -529,11 +533,17 @@ def ask_events(question, user, context=None, use_memories=True, streaming=True):
     text = (question or "").strip()[:MAX_QUESTION_CHARS]
     result = AskResult(text=text)
     fact = user_memory.memory_fact(text)
+    # "is that correct?" / "how did you get this?" in a chat: the previous answer is checked by our own code
+    about = answer_check.about_earlier(text, context) if fact is None else None
     memory = None
     try:
         if fact is not None:
             outcome, result.answer, memory = user_memory.remember(user, fact)
             result.status = "error" if outcome == "refused" else "memory"
+        elif about is not None:
+            if streaming:
+                yield {"type": "step", "label": answer_check.STEP_LABEL}
+            answer_check.answer(result, about, context)
         elif streaming:
             yield from _answer_events(result, context, user if use_memories else None)
         else:
@@ -1117,14 +1127,98 @@ def stops_at_today(sql):
     return bool(_STOPS_AT_TODAY.search(sql or ""))
 
 
+_TODAY_FUNCS = ("CURDATE", "CURRENT_DATE", "NOW", "SYSDATE", "CURRENT_TIMESTAMP", "UTC_DATE", "LOCALTIME",
+                "LOCALTIMESTAMP")
+# the period columns a query may pick "today's" period by (nop_sales_month = (SELECT ... WHERE full_date = CURDATE()))
+_CURRENT_PERIOD_WORDS = {"nop_sales_month": "This NOP sales month", "nop_sales_period_no": "This NOP sales month",
+                         "month_year": "This calendar month", "financial_year": "This FY",
+                         "financial_year_label": "This FY", "nop_sales_year": "This FY",
+                         "fiscal_quarter": "This quarter", "calendar_quarter": "This quarter"}
+
+
+def _is_today(node):
+    """True for CURDATE() / CURRENT_DATE / NOW() ... (also DATE(NOW())) in a parsed SQL."""
+    if node is None:
+        return False
+    if isinstance(node, (exp.CurrentDate, exp.CurrentTimestamp, exp.CurrentDatetime)):
+        return True
+    if isinstance(node, (exp.Anonymous, exp.Func)):
+        name = (node.name if isinstance(node, exp.Anonymous) else node.sql_name()).upper()
+        if name in _TODAY_FUNCS:
+            return True
+        if isinstance(node, (exp.Date, exp.Cast, exp.TsOrDsToDate)) or name in ("DATE", "CAST"):
+            return _is_today(node.this)
+    if isinstance(node, exp.Column) and node.name.upper() in _TODAY_FUNCS:
+        return True  # CURRENT_DATE written without brackets, read as a column by some versions
+    return False
+
+
+def cut_at_today(sql):
+    """True when the SQL keeps only rows up to today: a date compared with today as an UPPER bound (<= / < CURDATE(),
+    BETWEEN ... AND CURDATE(), CURDATE() >= ..., LEAST(period end, CURDATE())). 16-Nov: "new customers of this month" used CURRENT_DATE only to PICK
+    the month (full_date = CURRENT_DATE) and still counted the invoices of 17-20 Nov - stops_at_today() said yes.
+    A SQL that cannot be read: stops_at_today()."""
+    try:
+        tree = sqlglot.parse_one(sql, read="mysql")
+    except (sqlglot.errors.ParseError, sqlglot.errors.TokenError):
+        return stops_at_today(sql)
+    if tree is None:
+        return False
+    # LEAST(nop_sales_period_end, CURDATE()) as the end of the period ("this month so far" in docs/sql_examples.md)
+    if any(_is_today(arg) for least in tree.find_all(exp.Least) for arg in [least.this, *least.expressions]):
+        return True
+    for node in tree.find_all(exp.LTE, exp.LT, exp.GTE, exp.GT, exp.Between):
+        if isinstance(node, exp.Between):
+            if _is_today(node.args.get("high")):
+                return True
+        elif isinstance(node, (exp.LTE, exp.LT)) and _is_today(node.expression):
+            return True
+        elif isinstance(node, (exp.GTE, exp.GT)) and _is_today(node.this):
+            return True
+    return False
+
+
+def current_periods(sql):
+    """The periods a query picks as "today's": a period column compared with a subquery that finds today in the
+    calendar (nop_sales_month = (SELECT nop_sales_month FROM dim_calendar WHERE full_date = CURRENT_DATE)).
+    -> labels like "This NOP sales month", in order, no repeats."""
+    try:
+        tree = sqlglot.parse_one(sql, read="mysql")
+    except (sqlglot.errors.ParseError, sqlglot.errors.TokenError):
+        return []
+    labels = []
+    for select in tree.find_all(exp.Select):
+        if select.parent_select is None:
+            continue  # the subquery that finds today, not the outer query
+        where = select.args.get("where")
+        found = [side for eq in (where.find_all(exp.EQ) if where is not None else [])
+                 for side, other in ((eq.this, eq.expression), (eq.expression, eq.this))
+                 if _is_today(other) and isinstance(side, exp.Column)]
+        if not found:
+            continue
+        # only columns of the calendar row that IS today (the same table): "last month" joins a second calendar
+        # row (p.full_date = t.nop_sales_period_start - 1 day) and picks p.nop_sales_month - that month is over
+        today_tables = {column.table.lower() for column in found}
+        picked = [column.name.lower() for item in select.expressions for column in item.find_all(exp.Column)
+                  if column.table.lower() in today_tables]
+        for name in picked:
+            label = _CURRENT_PERIOD_WORDS.get(name)
+            if label and label not in labels:
+                labels.append(label)
+    return labels
+
+
 def periods_not_over(sql, now=None):
     """The periods the SQL filters on (a FY, a NOP month ...) that are not over yet, when the SQL does not stop at
-    today (CURDATE()) - their numbers would include rows dated after today. 03-Nov: "FY 2026-27 so far" was summed
-    up to 20-Mar-2027. Used by the app's SQL check and the MCP server's run_sql. now = today's date (None = today())."""
-    if stops_at_today(sql):
+    today - their numbers would include rows dated after today. 03-Nov: "FY 2026-27 so far" was summed up to
+    20-Mar-2027. 16-Nov: "this month" picked by full_date = CURRENT_DATE and counted up to the 20th - today's date
+    must be an upper bound (cut_at_today), not only used to pick the period. Used by the app's SQL check and the
+    MCP server's run_sql. now = today's date (None = today())."""
+    if cut_at_today(sql):
         return []
     now = now or today()
-    return [label for _, label, start, end in period_ranges(sql) if start <= now < end]
+    labels = [label for _, label, start, end in period_ranges(sql) if start <= now < end]
+    return labels + [label for label in current_periods(sql) if label not in labels]
 
 
 def invoice_data_dates():

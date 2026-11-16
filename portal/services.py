@@ -221,6 +221,21 @@ def run_saved_sql(saved):
 # ------------------------------------------------------------------ the Excel download
 def excel_bytes(saved, data):
     """An .xlsx with two sheets: 'Result' (headers + rows) and 'Question' (what was asked)."""
+    asked_at = timezone.localtime(saved.created_at).strftime("%d %b %Y %I:%M %p IST")
+    return excel_file(data, "Question", [
+        ("Question", saved.text), ("Answer", saved.answer), ("SQL", saved.sql), ("Asked at", asked_at),
+        ("Asked by", saved.user.get_username()), ("Rows", len(data["rows"]))])
+
+
+def sql_excel_bytes(sql, data, user):
+    """The SQL page's .xlsx: 'Result' (headers + rows) and 'SQL' (the SQL that ran, when and by whom)."""
+    run_at = timezone.localtime().strftime("%d %b %Y %I:%M %p IST")
+    return excel_file(data, "SQL", [("SQL", sql), ("Run at", run_at), ("Run by", user.get_username()),
+                                    ("Rows", len(data["rows"]))])
+
+
+def excel_file(data, info_title, info_rows):
+    """An .xlsx with the sheet 'Result' (headers + rows) and a second sheet of (label, value) lines."""
     from openpyxl import Workbook
     from openpyxl.styles import Alignment, Font, PatternFill
 
@@ -244,11 +259,8 @@ def excel_bytes(saved, data):
         sheet.column_dimensions[letter].width = min(max(12, len(str(column)) + 4), 45)
     sheet.freeze_panes = "A2"
 
-    info = book.create_sheet("Question")
-    asked_at = timezone.localtime(saved.created_at).strftime("%d %b %Y %I:%M %p IST")
-    for label, value in [("Question", saved.text), ("Answer", saved.answer), ("SQL", saved.sql),
-                         ("Asked at", asked_at), ("Asked by", saved.user.get_username()),
-                         ("Rows", len(data["rows"]))]:
+    info = book.create_sheet(info_title)
+    for label, value in info_rows:
         info.append([label, value])
     info.column_dimensions["A"].width = 12
     info.column_dimensions["B"].width = 100

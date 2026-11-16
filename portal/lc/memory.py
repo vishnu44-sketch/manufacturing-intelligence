@@ -15,22 +15,32 @@ from django.db.models.functions import Coalesce
 from langchain_core.chat_history import BaseChatMessageHistory
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 
+from .. import answer_check
 from ..rag import agent
 
 LATEST = " (latest)"
+CHECKS_SKIPPED = 20  # at most this many check messages between the questions a follow-up builds on
 
 
 def chat_questions(chat, before=None):
     """The chat's last answered questions (oldest first, at most agent.CONTEXT_SIZE) for a follow-up;
     with before=, only the ones placed before that question (an edit). Refused / failed questions
-    and edited-away versions are left out; a deleted chat has no memory (its questions are hidden)."""
+    and edited-away versions are left out; a deleted chat has no memory (its questions are hidden).
+    So are the questions about an earlier answer ("is that correct?", answer_check.py): the next follow-up
+    builds on the data question itself, not on the check."""
     if chat.deleted_at is not None:
         return []
     questions = chat.questions.filter(replaced_by__isnull=True, status__in=("ok", "docs", "nodata")).annotate(
         place=Coalesce("chat_order", "created_at"))
     if before is not None:
         questions = questions.filter(place__lt=before.chat_order or before.created_at)
-    return list(questions.order_by("-place", "-pk")[:agent.CONTEXT_SIZE])[::-1]
+    found = []
+    for question in questions.order_by("-place", "-pk")[:agent.CONTEXT_SIZE + CHECKS_SKIPPED]:
+        if answer_check.kind(question.text) is None:
+            found.append(question)
+        if len(found) == agent.CONTEXT_SIZE:
+            break
+    return found[::-1]
 
 
 class ChatHistory(BaseChatMessageHistory):
