@@ -1,45 +1,45 @@
-# Example questions with their correct SQL (ai_gold, MySQL 8)
+# Example questions with their correct SQL (ss_gold, MySQL 8)
 
 Each example: the question, the correct read-only SELECT, why it is written that way, and the key result
-it returns on the BASE data (inputdata/ only, loaded by `load_gold.py` without --batch; checked as nop_ai_reader).
+it returns on the BASE data (inputdata/ only, loaded by `load_gold.py` without --batch; checked as ss_ai_reader).
 After an incremental batch is loaded most totals are bigger: reuse the SQL pattern, never copy an Expected
 number into an answer - every number in an answer must come from the rows the query returns.
 
-## Q: What were net sales in each NOP sales month of FY 2026-27?
+## Q: What were net sales in each sales month of FY 2026-27?
 
-Also asked as: monthly sales for FY 2026-27; month-wise net sales this financial year (NOP months, 21st to 20th).
+Also asked as: monthly sales for FY 2026-27; month-wise net sales this financial year (sales months, 21st to 20th).
 
 ```sql
-SELECT c.nop_sales_month,
-       MIN(c.nop_sales_period_start) AS period_start,
-       MAX(c.nop_sales_period_end) AS period_end,
+SELECT c.sales_month,
+       MIN(c.sales_period_start) AS period_start,
+       MAX(c.sales_period_end) AS period_end,
        ROUND(SUM(il.net_taxable_value), 2) AS net_sales_inr
 FROM fact_invoice_lines il
 JOIN dim_calendar c ON c.date_id = il.invoice_date_id
-WHERE c.nop_sales_year = '2627'
-GROUP BY c.nop_sales_period_no, c.nop_sales_month
-ORDER BY c.nop_sales_period_no;
+WHERE c.sales_year = '2627'
+GROUP BY c.sales_period_no, c.sales_month
+ORDER BY c.sales_period_no;
 ```
 
-Why: net sales = SUM(net_taxable_value) (credit notes already negative); a FY split by NOP sales month filters nop_sales_year so each month (21st to 20th) is complete.
+Why: net sales = SUM(net_taxable_value) (credit notes already negative); a FY split by sales month filters sales_year so each month (21st to 20th) is complete.
 Expected: (base data) 6 rows - Apr 2026 7,950,880.00; May 2026 5,806,675.00; Jun 2026 12,767,485.00; Jul 2026 5,424,475.00; Aug 2026 7,604,315.00; Sep 2026 1,955,500.00 (total 41,509,330.00; no invoices after 13-Sep-2026).
 
-## Q: What was the sales value including freight in NOP sales month Sep 2026?
+## Q: What was the sales value including freight in sales month Sep 2026?
 
 Also asked as: sales incl. freight for Sep 2026; how much did we bill including freight and packing in that month.
 
 ```sql
-SELECT MIN(c.nop_sales_period_start) AS period_start,
-       MAX(c.nop_sales_period_end) AS period_end,
+SELECT MIN(c.sales_period_start) AS period_start,
+       MAX(c.sales_period_end) AS period_end,
        ROUND(SUM(il.net_taxable_value), 2) AS net_sales_inr,
        ROUND(SUM(COALESCE(il.freight_amount, 0)), 2) AS freight_inr,
        ROUND(SUM(il.net_taxable_value) + SUM(COALESCE(il.freight_amount, 0)), 2) AS sales_value_incl_freight_inr
 FROM fact_invoice_lines il
 JOIN dim_calendar c ON c.date_id = il.invoice_date_id
-WHERE c.nop_sales_month = 'Sep 2026';
+WHERE c.sales_month = 'Sep 2026';
 ```
 
-Why: sales value incl. freight = net_taxable_value + freight_amount (freight is NULL on credit notes); NOP month 'Sep 2026' = 21-Aug-2026 to 20-Sep-2026.
+Why: sales value incl. freight = net_taxable_value + freight_amount (freight is NULL on credit notes); sales month 'Sep 2026' = 21-Aug-2026 to 20-Sep-2026.
 Expected: (base data) 2026-08-21 to 2026-09-20 - net sales 1,955,500.00 + freight 8,000.00 = sales value 1,963,500.00.
 
 ## Q: Who were the top 5 customers by invoice value in Aug 2026?
@@ -52,13 +52,13 @@ SELECT cu.customer_name,
 FROM fact_invoice_lines il
 JOIN dim_calendar c ON c.date_id = il.invoice_date_id
 JOIN dim_customers cu ON cu.customer_id = il.customer_id
-WHERE c.nop_sales_month = 'Aug 2026'
+WHERE c.sales_month = 'Aug 2026'
 GROUP BY cu.customer_id, cu.customer_name
 ORDER BY invoice_value_inr DESC
 LIMIT 5;
 ```
 
-Why: a month name means the NOP sales month (21-Jul-2026 to 20-Aug-2026); invoice value = SUM(net_taxable_value); customer name from dim_customers.
+Why: a month name means the sales month (21-Jul-2026 to 20-Aug-2026); invoice value = SUM(net_taxable_value); customer name from dim_customers.
 Expected: (base data) Aurora Fluid Power Limited 1,730,000.00; Meridian Engineering Works Private Limited 1,316,700.00; Pioneer Star Precision Components GmbH 1,238,350.00; Meridian Hydraulics Limited 747,750.00; Tejas Industrial Solutions Private Limited 450,000.00.
 
 ## Q: What were the total net sales in each financial year?
@@ -143,7 +143,7 @@ ORDER BY il.note_date;
 ```
 
 Why: credit notes are fact_invoice_lines rows with document_type 'CREDIT_NOTE'; their invoice_date is the note date; taxable_value is the positive printed amount (net_taxable_value is the negative one).
-Expected: (base data) 3 notes - NOPI/CN/2627/1 2026-04-25 Delta Engineering Works Limited 145,000.00 (171,100.00 incl. GST); NOPI/CN/2627/2 2026-05-04 Delta Engineering Works Limited 6,630.00 (7,823.40); NOPI/CN/2627/3 2026-06-24 Granite Automation Pvt Ltd 123,250.00 (145,435.00); total 274,880.00.
+Expected: (base data) 3 notes - SSMI/CN/2627/1 2026-04-25 Delta Engineering Works Limited 145,000.00 (171,100.00 incl. GST); SSMI/CN/2627/2 2026-05-04 Delta Engineering Works Limited 6,630.00 (7,823.40); SSMI/CN/2627/3 2026-06-24 Granite Automation Pvt Ltd 123,250.00 (145,435.00); total 274,880.00.
 
 ## Q: What were export, domestic and service sales in FY 2026-27?
 
@@ -255,24 +255,24 @@ WHERE t.movement_type = 'COGS'
 Why: COGS = movements whose document prefix is IN / CN / DN / RE (movement_type 'COGS'); COGS value = SUM(-transaction_value), rate = SUM(-transaction_value) / SUM(-quantity).
 Expected: (base data) 0 COGS rows, COGS value 0.00, rate NULL - the report's stock-outs are 'SI' documents = Production (-1,181,063.91), not COGS.
 
-## Q: What were net sales in Japanese yen for each NOP sales month of FY 2026-27?
+## Q: What were net sales in Japanese yen for each sales month of FY 2026-27?
 
 Also asked as: sales in JPY; yen value of monthly sales; convert sales from INR to JPY.
 
 ```sql
-SELECT c.nop_sales_month,
+SELECT c.sales_month,
        f.exchange_rate,
        ROUND(SUM(il.net_taxable_value), 2) AS net_sales_inr,
        ROUND(SUM(il.net_taxable_value * f.exchange_rate), 2) AS net_sales_jpy
 FROM fact_invoice_lines il
 JOIN dim_calendar c ON c.date_id = il.invoice_date_id
 JOIN dim_fx_rates f ON f.fx_rate_id = il.fx_rate_id
-WHERE c.nop_sales_year = '2627'
-GROUP BY c.nop_sales_period_no, c.nop_sales_month, f.exchange_rate
-ORDER BY c.nop_sales_period_no;
+WHERE c.sales_year = '2627'
+GROUP BY c.sales_period_no, c.sales_month, f.exchange_rate
+ORDER BY c.sales_period_no;
 ```
 
-Why: JPY = INR x dim_fx_rates.exchange_rate of the window holding the invoice date (fact_invoice_lines.fx_rate_id); each window is one NOP sales month.
+Why: JPY = INR x dim_fx_rates.exchange_rate of the window holding the invoice date (fact_invoice_lines.fx_rate_id); each window is one sales month.
 Expected: (base data) Apr 2026 rate 1.69 13,436,987.20 JPY; May 2026 1.79 10,393,948.25; Jun 2026 1.64 20,938,675.40; Jul 2026 1.72 9,330,097.00; Aug 2026 1.65 12,547,119.75; Sep 2026 1.69 3,304,795.00.
 
 ## Q: Are there invoice or sales order lines with an Unknown customer or Unknown product?
@@ -388,7 +388,7 @@ WHERE il.document_type = 'INVOICE'
   AND c.month_year = 'Aug 2026';
 ```
 
-Why: the user asked for the calendar month, so dim_calendar.month_year (1st to last day) is used instead of the NOP sales month; invoices are counted on INVOICE rows only.
+Why: the user asked for the calendar month, so dim_calendar.month_year (1st to last day) is used instead of the sales month; invoices are counted on INVOICE rows only.
 Expected: (base data) 17 invoices, 5,440,490.00 INR.
 
 ## Q: Which 5 items had the highest stock value on 20-Sep-2026?
@@ -503,14 +503,14 @@ SELECT cu.customer_name,
 FROM dim_customers cu
 LEFT JOIN fact_invoice_lines il
        ON il.customer_id = cu.customer_id
-      AND il.invoice_date_id IN (SELECT c.date_id FROM dim_calendar c WHERE c.nop_sales_month = 'Feb 2027')
+      AND il.invoice_date_id IN (SELECT c.date_id FROM dim_calendar c WHERE c.sales_month = 'Feb 2027')
 WHERE cu.customer_name LIKE '%Allied Castings%'
 GROUP BY cu.customer_id, cu.customer_name
 ORDER BY net_sales_inr DESC;
 ```
 
 Why: the user's name is partial, so LIKE '%...%' finds every customer whose name contains it; starting from dim_customers with a LEFT JOIN keeps matching customers without sales (0); customers_matched tells the answer how many customers the name matched, so it names each one instead of adding them up. For a whole financial year use `c.financial_year = '2627'` inside the same ON - still one row per matching customer.
-Expected: (base data) no rows - no base customer is called 'Allied Castings'. With batch_001 loaded: 2 customers matched - Allied Castings Limited 134,734,470.50; Allied Castings Pvt Ltd 1,332,000.00 (NOP Feb 2027 = 21-Jan-2027 to 20-Feb-2027). Same SQL for 'Everest Engineering' in FY 2026-27: 4 matched - 15,796,419.50 / 300,630.00 / 0.00 / 0.00.
+Expected: (base data) no rows - no base customer is called 'Allied Castings'. With batch_001 loaded: 2 customers matched - Allied Castings Limited 134,734,470.50; Allied Castings Pvt Ltd 1,332,000.00 (sales month Feb 2027 = 21-Jan-2027 to 20-Feb-2027). Same SQL for 'Everest Engineering' in FY 2026-27: 4 matched - 15,796,419.50 / 300,630.00 / 0.00 / 0.00.
 
 ## Q: What is our COGS (cost of goods sold) now, in the latest stock report?
 
@@ -535,7 +535,7 @@ Expected: (base data) report 2026-09-20 - 0 COGS rows, 0.00 (its stock-outs are 
 
 ## Q: When was the data last loaded, and how many rows did that load add?
 
-Also asked as: last data load; when was ai_gold refreshed; what did the last load add, update or skip; data freshness; load history.
+Also asked as: last data load; when was ss_gold refreshed; what did the last load add, update or skip; data freshness; load history.
 
 ```sql
 SELECT l.run_id,
@@ -557,21 +557,21 @@ Expected: (base data) run 1 FULL from 'inputdata', 10 tables, 2,929 rows inserte
 
 ## Q: How much GST did we collect in Jan 2027?
 
-Also asked as: GST in Jan 2027; total GST (IGST + CGST + SGST + cess) for a month; net GST after credit notes; tax collected in a NOP sales month.
+Also asked as: GST in Jan 2027; total GST (IGST + CGST + SGST + cess) for a month; net GST after credit notes; tax collected in a sales month.
 
 ```sql
-SELECT MIN(c.nop_sales_period_start) AS period_start,
-       MAX(c.nop_sales_period_end) AS period_end,
+SELECT MIN(c.sales_period_start) AS period_start,
+       MAX(c.sales_period_end) AS period_end,
        ROUND(SUM(CASE WHEN il.document_type = 'CREDIT_NOTE' THEN -1 ELSE 1 END
                  * (COALESCE(il.igst_amount, 0) + COALESCE(il.cgst_amount, 0)
                     + COALESCE(il.sgst_amount, 0) + COALESCE(il.cess_amount, 0))), 2) AS net_gst_inr
 FROM fact_invoice_lines il
 JOIN dim_calendar c ON c.date_id = il.invoice_date_id
-WHERE c.nop_sales_month = 'Jan 2027';
+WHERE c.sales_month = 'Jan 2027';
 ```
 
-Why: a month name means the NOP sales month (here 21-Dec-2026 to 20-Jan-2027), also for GST; GST = igst + cgst + sgst + cess; these amounts are positive as printed on credit notes too, so credit note rows are subtracted (CASE ... THEN -1).
-Expected: (base data) no invoices in NOP Jan 2027 (base invoices end 13-Sep-2026) - net_gst_inr NULL. With batch_001 loaded: 2026-12-21 to 2027-01-20, net GST 565,748,776.09 INR (the calendar month 1-31 Jan would give 565,689,314.54 - a different figure).
+Why: a month name means the sales month (here 21-Dec-2026 to 20-Jan-2027), also for GST; GST = igst + cgst + sgst + cess; these amounts are positive as printed on credit notes too, so credit note rows are subtracted (CASE ... THEN -1).
+Expected: (base data) no invoices in sales month Jan 2027 (base invoices end 13-Sep-2026) - net_gst_inr NULL. With batch_001 loaded: 2026-12-21 to 2027-01-20, net GST 565,748,776.09 INR (the calendar month 1-31 Jan would give 565,689,314.54 - a different figure).
 
 ## Q: What were the INR to JPY rates for the last 6 rate months?
 
@@ -632,7 +632,7 @@ CROSS JOIN compare_window w
 CROSS JOIN same_dates sd;
 ```
 
-Why: "this year" / "last year" = the current and the previous FY. The query gives BOTH: each FY's total with the dates the data covers (FY 2025-26 has invoice data only from 21-Dec-2025, and the current FY is not over), and a fair growth % on the SAME dates in both years (the dates where both years have data, shifted by one year), calculated in SQL (revenue_growth_pct). The answer gives the two FY totals with their dates first, then the same-dates growth. When the user said "profit %", the reply also has the line "MISSING: true profit - the NOP data has selling prices but not the cost of the items sold", and the answer calls the % revenue growth, never profit.
+Why: "this year" / "last year" = the current and the previous FY. The query gives BOTH: each FY's total with the dates the data covers (FY 2025-26 has invoice data only from 21-Dec-2025, and the current FY is not over), and a fair growth % on the SAME dates in both years (the dates where both years have data, shifted by one year), calculated in SQL (revenue_growth_pct). The answer gives the two FY totals with their dates first, then the same-dates growth. When the user said "profit %", the reply also has the line "MISSING: true profit - the SS Manufacturing data has selling prices but not the cost of the items sold", and the answer calls the % revenue growth, never profit.
 Expected: (base + batch_001, 08-Oct-2026) FY 2025-26 INR 33,851,075.00 (21-Dec-2025 to 31-Mar-2026); FY 2026-27 INR 21,490,309,878.78 (01-Apr-2026 to 20-Mar-2027); same dates 21-Dec-2025 to 20-Mar-2026 INR 31,327,485.00 vs 21-Dec-2026 to 20-Mar-2027 INR 11,320,219,385.78, revenue_growth_pct 36,035.10.
 
 ## Q: How many new customers did we get in FY 2026-27, and how much did they buy?
@@ -734,21 +734,21 @@ Also asked as: last month sales and the top customer; which customer gave us the
 
 ```sql
 WITH last_month AS (
-  SELECT p.nop_sales_month, p.nop_sales_period_start, p.nop_sales_period_end
+  SELECT p.sales_month, p.sales_period_start, p.sales_period_end
   FROM dim_calendar t
-  JOIN dim_calendar p ON p.full_date = t.nop_sales_period_start - INTERVAL 1 DAY
+  JOIN dim_calendar p ON p.full_date = t.sales_period_start - INTERVAL 1 DAY
   WHERE t.full_date = CURDATE()
 ),
 customer_sales AS (
   SELECT cu.customer_name, SUM(il.net_taxable_value) AS sales_inr
   FROM fact_invoice_lines il
-  JOIN last_month lm ON il.invoice_date BETWEEN lm.nop_sales_period_start AND lm.nop_sales_period_end
+  JOIN last_month lm ON il.invoice_date BETWEEN lm.sales_period_start AND lm.sales_period_end
   JOIN dim_customers cu ON cu.customer_id = il.customer_id
   GROUP BY cu.customer_id, cu.customer_name
 )
-SELECT lm.nop_sales_month AS nop_month,
-       lm.nop_sales_period_start AS period_from,
-       lm.nop_sales_period_end AS period_to,
+SELECT lm.sales_month AS sales_month,
+       lm.sales_period_start AS period_from,
+       lm.sales_period_end AS period_to,
        (SELECT ROUND(SUM(sales_inr), 2) FROM customer_sales) AS net_sales_inr,
        cs.customer_name AS top_customer,
        ROUND(cs.sales_inr, 2) AS top_customer_sales_inr
@@ -758,7 +758,7 @@ ORDER BY cs.sales_inr DESC
 LIMIT 1;
 ```
 
-Why: "last month" is worked out from TODAY (CURDATE()) in dim_calendar - never from the newest invoice and never by sorting nop_sales_month, which is text ('Sep 2026' sorts after 'Mar 2027'). Last month = the NOP sales month that ends the day before today's NOP month starts: on 12-Oct-2026 today is in 'Oct 2026', so last month = 'Sep 2026' (21-Aug-2026 to 20-Sep-2026). For "this month" use the SQL of the example "What are our sales this month so far?" (only up to today). The answer states the month and its dates.
+Why: "last month" is worked out from TODAY (CURDATE()) in dim_calendar - never from the newest invoice and never by sorting sales_month, which is text ('Sep 2026' sorts after 'Mar 2027'). Last month = the sales month that ends the day before today's sales month starts: on 12-Oct-2026 today is in 'Oct 2026', so last month = 'Sep 2026' (21-Aug-2026 to 20-Sep-2026). For "this month" use the SQL of the example "What are our sales this month so far?" (only up to today). The answer states the month and its dates.
 Expected: (asked on 12-Oct-2026) Sep 2026, 21-Aug-2026 to 20-Sep-2026: net sales 1,955,500.00; top customer Meridian Hydraulics Limited 1,070,100.00.
 
 ## Q: What are our sales this month so far?
@@ -767,21 +767,21 @@ Also asked as: current month sales; this month's net sales; sales of the running
 
 ```sql
 WITH this_month AS (
-  SELECT nop_sales_month, nop_sales_period_start, LEAST(nop_sales_period_end, CURDATE()) AS so_far_to
+  SELECT sales_month, sales_period_start, LEAST(sales_period_end, CURDATE()) AS so_far_to
   FROM dim_calendar
   WHERE full_date = CURDATE()
 )
-SELECT tm.nop_sales_month AS nop_month,
-       tm.nop_sales_period_start AS period_from,
+SELECT tm.sales_month AS sales_month,
+       tm.sales_period_start AS period_from,
        tm.so_far_to AS period_to,
        ROUND(SUM(il.net_taxable_value), 2) AS net_sales_so_far_inr,
        COUNT(DISTINCT CASE WHEN il.document_type = 'INVOICE' THEN il.invoice_number END) AS invoices_so_far
 FROM this_month tm
-LEFT JOIN fact_invoice_lines il ON il.invoice_date BETWEEN tm.nop_sales_period_start AND tm.so_far_to
-GROUP BY tm.nop_sales_month, tm.nop_sales_period_start, tm.so_far_to;
+LEFT JOIN fact_invoice_lines il ON il.invoice_date BETWEEN tm.sales_period_start AND tm.so_far_to
+GROUP BY tm.sales_month, tm.sales_period_start, tm.so_far_to;
 ```
 
-Why: this month is not over yet, so it counts only from its first day up to TODAY (CURDATE()) - never to the month's last day: data dated after today must not be counted. The answer says "so far" with both dates, e.g. "In NOP sales month Nov 2026 so far (21-Oct-2026 to 27-Oct-2026) net sales were ...". For a top customer, a product or a split, keep the same dates (invoice_date BETWEEN period_from AND period_to).
+Why: this month is not over yet, so it counts only from its first day up to TODAY (CURDATE()) - never to the month's last day: data dated after today must not be counted. The answer says "so far" with both dates, e.g. "In sales month Nov 2026 so far (21-Oct-2026 to 27-Oct-2026) net sales were ...". For a top customer, a product or a split, keep the same dates (invoice_date BETWEEN period_from AND period_to).
 Expected: (asked on 27-Oct-2026) Nov 2026, 21-Oct-2026 to 27-Oct-2026: net sales so far 827,149,042.00 (the whole month in the test data, to 20-Nov-2026, would be 3,869,959,327.00 - wrong).
 
 ## Q: Who are our new customers this month so far?
@@ -790,7 +790,7 @@ Also asked as: new customers this month; who is our new customer in this month; 
 
 ```sql
 WITH this_month AS (
-  SELECT nop_sales_month, nop_sales_period_start, LEAST(nop_sales_period_end, CURDATE()) AS so_far_to
+  SELECT sales_month, sales_period_start, LEAST(sales_period_end, CURDATE()) AS so_far_to
   FROM dim_calendar
   WHERE full_date = CURDATE()
 ),
@@ -803,11 +803,11 @@ first_invoice AS (
 month_sales AS (
   SELECT il.customer_id, SUM(il.net_taxable_value) AS sales_inr
   FROM fact_invoice_lines il
-  JOIN this_month tm ON il.invoice_date BETWEEN tm.nop_sales_period_start AND tm.so_far_to
+  JOIN this_month tm ON il.invoice_date BETWEEN tm.sales_period_start AND tm.so_far_to
   GROUP BY il.customer_id
 )
-SELECT tm.nop_sales_month AS nop_month,
-       tm.nop_sales_period_start AS period_from,
+SELECT tm.sales_month AS sales_month,
+       tm.sales_period_start AS period_from,
        tm.so_far_to AS period_to,
        cu.customer_name,
        fi.first_invoice_date,
@@ -815,13 +815,13 @@ SELECT tm.nop_sales_month AS nop_month,
        COUNT(*) OVER () AS new_customers,
        (SELECT MIN(d.invoice_date) FROM fact_invoice_lines d) AS invoice_history_starts
 FROM this_month tm
-JOIN first_invoice fi ON fi.first_invoice_date BETWEEN tm.nop_sales_period_start AND tm.so_far_to
+JOIN first_invoice fi ON fi.first_invoice_date BETWEEN tm.sales_period_start AND tm.so_far_to
 JOIN month_sales ms ON ms.customer_id = fi.customer_id
 JOIN dim_customers cu ON cu.customer_id = fi.customer_id
 ORDER BY ms.sales_inr DESC, cu.customer_name;
 ```
 
-Why: this month is not over yet, so the month counts only up to TODAY (LEAST(nop_sales_period_end, CURDATE())) - invoices dated after today must not be counted, neither as a first invoice nor as sales. A new customer = the customer's FIRST invoice line in the data falls in the period (see "How many new customers did we get in FY 2026-27"); the Unknown customer (-1) is not a customer. One row per new customer, the biggest sales first, with the count of all of them in new_customers (COUNT(*) OVER (), so it is right even when only the first 500 rows are shown). The answer says "so far" with both dates and that "first" is checked against all invoices since invoice_history_starts.
+Why: this month is not over yet, so the month counts only up to TODAY (LEAST(sales_period_end, CURDATE())) - invoices dated after today must not be counted, neither as a first invoice nor as sales. A new customer = the customer's FIRST invoice line in the data falls in the period (see "How many new customers did we get in FY 2026-27"); the Unknown customer (-1) is not a customer. One row per new customer, the biggest sales first, with the count of all of them in new_customers (COUNT(*) OVER (), so it is right even when only the first 500 rows are shown). The answer says "so far" with both dates and that "first" is checked against all invoices since invoice_history_starts.
 Expected: (asked on 16-Nov-2026) Nov 2026 so far, 21-Oct-2026 to 16-Nov-2026: 967 new customers; the biggest Sunrise Precision Components Ltd INR 10,301,300.00, then Lotus Automation Pvt. Ltd. INR 8,103,125.00 and Agni Machine Tools Pvt. Ltd. INR 6,412,752.50 (counting the whole month to 20-Nov-2026 would give 1,088 - wrong, those days are still to come).
 
 ## Q: Who were our new customers last month?
@@ -830,9 +830,9 @@ Also asked as: new customers in the previous month; first-time buyers last month
 
 ```sql
 WITH last_month AS (
-  SELECT p.nop_sales_month, p.nop_sales_period_start, p.nop_sales_period_end
+  SELECT p.sales_month, p.sales_period_start, p.sales_period_end
   FROM dim_calendar t
-  JOIN dim_calendar p ON p.full_date = t.nop_sales_period_start - INTERVAL 1 DAY
+  JOIN dim_calendar p ON p.full_date = t.sales_period_start - INTERVAL 1 DAY
   WHERE t.full_date = CURDATE()
 ),
 first_invoice AS (
@@ -844,25 +844,25 @@ first_invoice AS (
 month_sales AS (
   SELECT il.customer_id, SUM(il.net_taxable_value) AS sales_inr
   FROM fact_invoice_lines il
-  JOIN last_month lm ON il.invoice_date BETWEEN lm.nop_sales_period_start AND lm.nop_sales_period_end
+  JOIN last_month lm ON il.invoice_date BETWEEN lm.sales_period_start AND lm.sales_period_end
   GROUP BY il.customer_id
 )
-SELECT lm.nop_sales_month AS nop_month,
-       lm.nop_sales_period_start AS period_from,
-       lm.nop_sales_period_end AS period_to,
+SELECT lm.sales_month AS sales_month,
+       lm.sales_period_start AS period_from,
+       lm.sales_period_end AS period_to,
        cu.customer_name,
        fi.first_invoice_date,
        ROUND(ms.sales_inr, 2) AS sales_inr,
        COUNT(*) OVER () AS new_customers,
        (SELECT MIN(d.invoice_date) FROM fact_invoice_lines d) AS invoice_history_starts
 FROM last_month lm
-JOIN first_invoice fi ON fi.first_invoice_date BETWEEN lm.nop_sales_period_start AND lm.nop_sales_period_end
+JOIN first_invoice fi ON fi.first_invoice_date BETWEEN lm.sales_period_start AND lm.sales_period_end
 JOIN month_sales ms ON ms.customer_id = fi.customer_id
 JOIN dim_customers cu ON cu.customer_id = fi.customer_id
 ORDER BY ms.sales_inr DESC, cu.customer_name;
 ```
 
-Why: "last month" is the NOP sales month before today's one, worked out from CURDATE() in dim_calendar (as in "What were last month's sales"). It is over, so its whole period counts. A new customer = the customer's FIRST invoice line in the data falls in that month; one row per new customer, the biggest first, with the count of all of them in new_customers.
+Why: "last month" is the sales month before today's one, worked out from CURDATE() in dim_calendar (as in "What were last month's sales"). It is over, so its whole period counts. A new customer = the customer's FIRST invoice line in the data falls in that month; one row per new customer, the biggest first, with the count of all of them in new_customers.
 Expected: (asked on 16-Nov-2026) Oct 2026, 21-Sep-2026 to 20-Oct-2026: 1,403 new customers; the biggest Allied Castings Limited INR 63,648,019.00, then Crescent Motors (Pvt) Ltd INR 46,500,692.00 and Supreme Machine Tools Pvt. Ltd. INR 39,841,730.50.
 
 ## Q: Show net sales month by month from Jan 2026 to Mar 2027.
@@ -870,19 +870,19 @@ Expected: (asked on 16-Nov-2026) Oct 2026, 21-Sep-2026 to 20-Oct-2026: 1,403 new
 Also asked as: monthly sales from Jan 2026 to Mar 2027; month by month sales between two months; month-wise net sales from Apr 2026 to Sep 2026 after credit and debit notes; monthly sales trend from one month to another; sales of each month in a range of months.
 
 ```sql
-SELECT c.nop_sales_month,
-       c.nop_sales_period_start AS period_start,
-       c.nop_sales_period_end AS period_end,
+SELECT c.sales_month,
+       c.sales_period_start AS period_start,
+       c.sales_period_end AS period_end,
        ROUND(SUM(il.net_taxable_value), 2) AS net_sales_inr
 FROM fact_invoice_lines il
 JOIN dim_calendar c ON c.date_id = il.invoice_date_id
-WHERE c.nop_sales_period_start >= (SELECT MIN(nop_sales_period_start) FROM dim_calendar WHERE nop_sales_month = 'Jan 2026')
-  AND c.nop_sales_period_end <= (SELECT MAX(nop_sales_period_end) FROM dim_calendar WHERE nop_sales_month = 'Mar 2027')
-GROUP BY c.nop_sales_month, c.nop_sales_period_start, c.nop_sales_period_end
-ORDER BY c.nop_sales_period_start;
+WHERE c.sales_period_start >= (SELECT MIN(sales_period_start) FROM dim_calendar WHERE sales_month = 'Jan 2026')
+  AND c.sales_period_end <= (SELECT MAX(sales_period_end) FROM dim_calendar WHERE sales_month = 'Mar 2027')
+GROUP BY c.sales_month, c.sales_period_start, c.sales_period_end
+ORDER BY c.sales_period_start;
 ```
 
-Why: a range of named months is a range of NOP sales months (21st to 20th), one row per NOP month: 'Jan 2026' starts on 21-Dec-2025 and 'Mar 2027' ends on 20-Mar-2027. The first and last month are looked up by name (no date arithmetic). period_start / period_end are the NOP month's own dates from dim_calendar - never MIN / MAX of the invoice dates. Order by nop_sales_period_start, never by the month text. net_taxable_value already has credit notes negative and debit notes positive. Use calendar months (c.month_year) only when the user says "calendar month" or gives exact dates.
+Why: a range of named months is a range of sales months (21st to 20th), one row per sales month: 'Jan 2026' starts on 21-Dec-2025 and 'Mar 2027' ends on 20-Mar-2027. The first and last month are looked up by name (no date arithmetic). period_start / period_end are the sales month's own dates from dim_calendar - never MIN / MAX of the invoice dates. Order by sales_period_start, never by the month text. net_taxable_value already has credit notes negative and debit notes positive. Use calendar months (c.month_year) only when the user says "calendar month" or gives exact dates.
 Expected: (data of 13-Oct-2026) 15 rows from Jan 2026 (21-Dec-2025 to 20-Jan-2026) 13,356,235.00 to Mar 2027 (21-Feb-2027 to 20-Mar-2027) 3,503,352,034.65; lowest Sep 2026 1,955,500.00; highest Jan 2027 3,953,546,625.88.
 
 ## Q: Which customers bought from us between Jan 2026 and Jun 2026 but have bought nothing since Oct 2026?
@@ -891,9 +891,9 @@ Also asked as: customers who bought in one period but not since a month; custome
 
 ```sql
 WITH bounds AS (
-  SELECT (SELECT MIN(nop_sales_period_start) FROM dim_calendar WHERE nop_sales_month = 'Jan 2026') AS bought_from,
-         (SELECT MAX(nop_sales_period_end) FROM dim_calendar WHERE nop_sales_month = 'Jun 2026') AS bought_to,
-         (SELECT MIN(nop_sales_period_start) FROM dim_calendar WHERE nop_sales_month = 'Oct 2026') AS nothing_since
+  SELECT (SELECT MIN(sales_period_start) FROM dim_calendar WHERE sales_month = 'Jan 2026') AS bought_from,
+         (SELECT MAX(sales_period_end) FROM dim_calendar WHERE sales_month = 'Jun 2026') AS bought_to,
+         (SELECT MIN(sales_period_start) FROM dim_calendar WHERE sales_month = 'Oct 2026') AS nothing_since
 ),
 per_customer AS (
   SELECT il.customer_id,
@@ -917,7 +917,7 @@ WHERE pc.invoices_in_period > 0 AND pc.invoices_since = 0
 ORDER BY pc.sales_in_period DESC;
 ```
 
-Why: month names are NOP sales months, looked up by name: "between Jan 2026 and Jun 2026" = 21-Dec-2025 to 20-Jun-2026; "nothing since Oct 2026" = no invoice on or after the FIRST day of Oct 2026 (21-Sep-2026) - October itself counts, so never compare with the month's last day. Buying = an INVOICE line; a later credit / debit note is not a purchase. The Unknown customer (-1) is not a customer and gets no row. The answer states the three dates and matching_customers.
+Why: month names are sales months, looked up by name: "between Jan 2026 and Jun 2026" = 21-Dec-2025 to 20-Jun-2026; "nothing since Oct 2026" = no invoice on or after the FIRST day of Oct 2026 (21-Sep-2026) - October itself counts, so never compare with the month's last day. Buying = an INVOICE line; a later credit / debit note is not a purchase. The Unknown customer (-1) is not a customer and gets no row. The answer states the three dates and matching_customers.
 Expected: (data of 13-Oct-2026) 5 customers, no invoice on or after 21-Sep-2026: Demo Pump Japan Co., Ltd. 1,255,250.00 (last invoice 08-Aug-2026); Tejas Machine Tools LLC 1,188,155.00; Zenith Precision Components LLP 975,200.00; Coral Fluid Power Pvt. Ltd. 180,840.00; Pioneer Star Grinding Machines Inc. 68,000.00.
 
 ## Q: Which items had the biggest increase in stock value between 20-Sep-2026 and 20-Mar-2027?
@@ -1012,22 +1012,22 @@ Expected: (data of 14-Oct-2026, base + batch_001) 21-Dec-2025 to 20-Mar-2027: in
 
 ## Q: Which dates does Q1 of FY 2026-27 cover?
 
-Also asked as: dates of quarter 1 / Q2 / Q3 / Q4 of this FY; does a quarter use calendar dates or NOP sales months; which quarter definition does the app use; is Q1 April to June or 21-Mar to 20-Jun (for Q2 use fiscal_quarter = 2 and the NOP months Jul, Aug and Sep 2026; Q3 = Oct-Dec; Q4 = Jan-Mar 2027).
+Also asked as: dates of quarter 1 / Q2 / Q3 / Q4 of this FY; does a quarter use calendar dates or sales months; which quarter definition does the app use; is Q1 April to June or 21-Mar to 20-Jun (for Q2 use fiscal_quarter = 2 and the sales months Jul, Aug and Sep 2026; Q3 = Oct-Dec; Q4 = Jan-Mar 2027).
 
 ```sql
-SELECT 'Q1 of FY 2026-27 (the quarter Ask NOP uses)' AS quarter_meaning,
+SELECT 'Q1 of FY 2026-27 (the quarter Manufacturing Intelligence uses)' AS quarter_meaning,
        MIN(c.full_date) AS period_from,
        MAX(c.full_date) AS period_to
 FROM dim_calendar c
 WHERE c.financial_year = '2627' AND c.fiscal_quarter = 1
 UNION ALL
-SELECT 'NOP sales months Apr, May and Jun 2026', MIN(c.nop_sales_period_start), MAX(c.nop_sales_period_end)
+SELECT 'sales months Apr, May and Jun 2026', MIN(c.sales_period_start), MAX(c.sales_period_end)
 FROM dim_calendar c
-WHERE c.nop_sales_month IN ('Apr 2026', 'May 2026', 'Jun 2026');
+WHERE c.sales_month IN ('Apr 2026', 'May 2026', 'Jun 2026');
 ```
 
-Why: Ask NOP's quarter is the FY quarter by calendar dates (dim_calendar.fiscal_quarter: Q1 = 1-Apr to 30-Jun), and every answer about a quarter states its dates; the NOP sales months of the same quarter start on the 21st, so they are shown next to it. A question about which dates a period covers is a NOP data question - answer it from dim_calendar, never with NO_SQL.
-Expected: Q1 of FY 2026-27 = 01-Apr-2026 to 30-Jun-2026 (used by Ask NOP); NOP sales months Apr-Jun 2026 = 21-Mar-2026 to 20-Jun-2026.
+Why: Manufacturing Intelligence's quarter is the FY quarter by calendar dates (dim_calendar.fiscal_quarter: Q1 = 1-Apr to 30-Jun), and every answer about a quarter states its dates; the sales months of the same quarter start on the 21st, so they are shown next to it. A question about which dates a period covers is an SS Manufacturing data question - answer it from dim_calendar, never with NO_SQL.
+Expected: Q1 of FY 2026-27 = 01-Apr-2026 to 30-Jun-2026 (used by Manufacturing Intelligence); sales months Apr-Jun 2026 = 21-Mar-2026 to 20-Jun-2026.
 
 ## Q: Which items are below their minimum inventory level right now?
 
@@ -1055,5 +1055,5 @@ LEFT JOIN stock s ON s.product_id = p.product_id
 GROUP BY l.report_date;
 ```
 
-Why: the minimum level IS in the NOP data: dim_products.minimum_inventory_qty, the minimum set in SAP, where 0 means no minimum is set for that item - never write a MISSING line for it. Compare it with the stock of the newest stock report ('Closing balance' rows; an item with no closing row has 0 stock). ONE summary row, also when nothing is below: items_with_a_minimum_set tells "no item has a minimum set in SAP" (0) apart from "every item is above its minimum". Always return report_date.
+Why: the minimum level IS in the SS Manufacturing data: dim_products.minimum_inventory_qty, the minimum set in SAP, where 0 means no minimum is set for that item - never write a MISSING line for it. Compare it with the stock of the newest stock report ('Closing balance' rows; an item with no closing row has 0 stock). ONE summary row, also when nothing is below: items_with_a_minimum_set tells "no item has a minimum set in SAP" (0) apart from "every item is above its minimum". Always return report_date.
 Expected: (data of 22-Oct-2026) stock report 20-Mar-2027: 0 items with a minimum set (minimum_inventory_qty is 0 for all 5,001 items), so no item is below its minimum - the answer says no minimum levels are set in SAP yet.

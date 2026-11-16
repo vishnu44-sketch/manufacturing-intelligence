@@ -274,7 +274,7 @@ function QuestionBubble({ card, me, editable, onEdit }:
 
 // the tips behind the (i) under the question box
 const TIPS = 'Follow-up questions work ("and for Sep?", "same for export") - the AI sees the last 3 questions of '
-  + 'this chat. A month name means the NOP sales month (21st to 20th) unless you say "calendar month".'
+  + 'this chat. A month name means the sales month (21st to 20th) unless you say "calendar month".'
 
 export default function AskPage({ me }: { me: Me }) {
   const { route, state, navigate } = useRouter()

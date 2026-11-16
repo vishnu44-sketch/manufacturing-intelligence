@@ -14,7 +14,7 @@ from portal.rag import agent, store
 
 MAIN, BACKUP = "openai/gpt-oss-120b", "qwen/qwen3.8-27b"
 SQL_VALUES = {"schema": "dim_customers: customer_id, customer_name", "count": 2,
-              "documents": "Example SQL ...\n\n---\n\nNOP sales month rule ...",
+              "documents": "Example SQL ...\n\n---\n\nSales month rule ...",
               "today": "02-Nov-2026 (Monday)", "preferences": "", "earlier": "",
               "question": "Top 5 customers in Aug 2026?"}
 
@@ -134,7 +134,7 @@ QUESTIONS = {  # question -> the note that must come first (02-Nov, the same top
     "Top 5 customers by net sales in FY 2026-27": "Q: Who were the top 5 customers by invoice value in Aug 2026?",
     "How many sales orders are open?": "Q: Which customers have open sales orders, and for how much?",
     "What is our current stock value?": "Q: What is our current stock value (latest stock report)?",
-    "net sales by state last month": "Q: What were net sales in each NOP sales month of FY 2026-27?",
+    "net sales by state last month": "Q: What were net sales in each sales month of FY 2026-27?",
     "What was our profit last year?":
         "Q: What were total net sales this year and last year, and how much did they grow?",
 }

@@ -17,7 +17,7 @@ interface Starter {
 // in the order they show; the examples are handed out most exact first (see starterQuestions)
 const STARTERS: Starter[] = [
   { title: 'Sales', icon: TrendingUp, fits: /\b(sales|invoice|revenue)/i,
-    question: 'Net sales of the last 6 NOP months as a line chart' },
+    question: 'Net sales of the last 6 sales months as a line chart' },
   { title: 'Customers', icon: Users, fits: /\bcustomer/i,
     question: 'Top 10 customers this FY by net sales' },
   { title: 'Open orders', icon: ClipboardList, fits: /\bopen\b.*\borders?\b|\borders?\b.*\bopen\b/i,
@@ -72,7 +72,7 @@ export default function AskStart({ examples, onPick, children }:
       </ul>
 
       <div className="mt-5 text-center text-[11px] leading-normal text-faint">
-        Enter to send · Shift+Enter for a new line · A month name means the NOP sales month (21st to 20th) unless you
+        Enter to send · Shift+Enter for a new line · A month name means the sales month (21st to 20th) unless you
         say "calendar month".
       </div>
     </div>

@@ -91,7 +91,7 @@ describe('App', () => {
   it('shows the staff menu to staff with the page lit', async () => {
     fakeFetch({
       '/api/me': { body: BOSS },
-      '/api/data': { body: { database: 'ai_gold', mysql_error: '', tables: [], table_count: 0, total: '0',
+      '/api/data': { body: { database: 'ss_gold', mysql_error: '', tables: [], table_count: 0, total: '0',
                              invoices_from: '', invoices_to: '', last_load: '' } },
     })
 

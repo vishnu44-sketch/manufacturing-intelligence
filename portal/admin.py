@@ -3,8 +3,8 @@ from django.contrib import admin
 from .models import AuditLog, Conversation, Question, SavedQuery
 
 # titles on the Django admin pages
-admin.site.site_header = "NOP Intelligence - admin"
-admin.site.site_title = "NOP Intelligence admin"
+admin.site.site_header = "Manufacturing Intelligence - admin"
+admin.site.site_title = "Manufacturing Intelligence admin"
 
 
 @admin.register(Question)

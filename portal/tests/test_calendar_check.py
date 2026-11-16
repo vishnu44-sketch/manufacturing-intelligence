@@ -23,18 +23,18 @@ pytestmark = pytest.mark.django_db  # agent.ask() saves a Question
 QUESTION = "can you plot a bar graph for the last 6 month of sales"
 
 # the query of 16-Nov, as the AI wrote it: the list of "6 months" is LIMIT 6 of calendar DAYS
-SIX_DAYS_SQL = ("```sql\nWITH recent_months AS (\n  SELECT c.nop_sales_month, c.nop_sales_period_start, c.nop_sales_period_end\n"
-                "  FROM dim_calendar AS c\n  WHERE c.nop_sales_period_end <= CURRENT_DATE\n"
-                "  ORDER BY c.nop_sales_period_end DESC\n  LIMIT 6\n)\n"
-                "SELECT rm.nop_sales_month, rm.nop_sales_period_start AS period_start, rm.nop_sales_period_end AS period_end,\n"
+SIX_DAYS_SQL = ("```sql\nWITH recent_months AS (\n  SELECT c.sales_month, c.sales_period_start, c.sales_period_end\n"
+                "  FROM dim_calendar AS c\n  WHERE c.sales_period_end <= CURRENT_DATE\n"
+                "  ORDER BY c.sales_period_end DESC\n  LIMIT 6\n)\n"
+                "SELECT rm.sales_month, rm.sales_period_start AS period_start, rm.sales_period_end AS period_end,\n"
                 "  ROUND(SUM(il.net_taxable_value), 2) AS net_sales_inr\nFROM recent_months AS rm\n"
-                "JOIN dim_calendar AS c ON c.nop_sales_month = rm.nop_sales_month\n"
+                "JOIN dim_calendar AS c ON c.sales_month = rm.sales_month\n"
                 "JOIN fact_invoice_lines AS il ON il.invoice_date_id = c.date_id\n"
-                "GROUP BY rm.nop_sales_month, rm.nop_sales_period_start, rm.nop_sales_period_end\n```")
-ONE_MONTH_SQL = ("```sql\nSELECT c.nop_sales_month, ROUND(SUM(il.net_taxable_value), 2) AS net_sales_inr\n"
+                "GROUP BY rm.sales_month, rm.sales_period_start, rm.sales_period_end\n```")
+ONE_MONTH_SQL = ("```sql\nSELECT c.sales_month, ROUND(SUM(il.net_taxable_value), 2) AS net_sales_inr\n"
                  "FROM fact_invoice_lines il\nJOIN dim_calendar c ON c.date_id = il.invoice_date_id\n"
-                 "WHERE c.nop_sales_month = 'Oct 2026'\nGROUP BY c.nop_sales_month\n```")
-ONE_ROW = {"columns": ["nop_sales_month", "net_sales_inr"], "rows": [["Oct 2026", Decimal("2367096647.50")]],
+                 "WHERE c.sales_month = 'Oct 2026'\nGROUP BY c.sales_month\n```")
+ONE_ROW = {"columns": ["sales_month", "net_sales_inr"], "rows": [["Oct 2026", Decimal("2367096647.50")]],
            "truncated": False}
 
 
@@ -45,9 +45,9 @@ def sql_of(reply):
 
 
 @pytest.mark.parametrize("sql, expected", [
-    (sql_of(SIX_DAYS_SQL), ("nop_sales_month", 6)),                                   # 16-Nov
-    ("SELECT c.nop_sales_month FROM dim_calendar AS c WHERE c.nop_sales_period_end <= CURRENT_DATE "
-     "ORDER BY c.nop_sales_period_end DESC LIMIT 3", ("nop_sales_month", 3)),          # 05-Nov
+    (sql_of(SIX_DAYS_SQL), ("sales_month", 6)),                                   # 16-Nov
+    ("SELECT c.sales_month FROM dim_calendar AS c WHERE c.sales_period_end <= CURRENT_DATE "
+     "ORDER BY c.sales_period_end DESC LIMIT 3", ("sales_month", 3)),          # 05-Nov
     ("SELECT x.m FROM (SELECT c.month_year AS m FROM dim_calendar c ORDER BY c.full_date DESC LIMIT 12) x",
      ("month_year", 12)),                                                               # in a subquery
     ("SELECT c.financial_year, c.fiscal_quarter FROM dim_calendar c JOIN fact_invoice_lines il "
@@ -59,14 +59,14 @@ def test_a_limit_of_calendar_days_used_as_periods_is_found(sql, expected):
 
 @pytest.mark.parametrize("sql", [
     # the right way: one row per period first, then the limit
-    "SELECT DISTINCT c.nop_sales_month, c.nop_sales_period_end FROM dim_calendar c "
-    "WHERE c.nop_sales_period_end <= CURRENT_DATE ORDER BY c.nop_sales_period_end DESC LIMIT 6",
-    "SELECT c.nop_sales_month FROM dim_calendar c WHERE c.nop_sales_period_end <= CURRENT_DATE "
-    "GROUP BY c.nop_sales_month, c.nop_sales_period_end ORDER BY c.nop_sales_period_end DESC LIMIT 6",
+    "SELECT DISTINCT c.sales_month, c.sales_period_end FROM dim_calendar c "
+    "WHERE c.sales_period_end <= CURRENT_DATE ORDER BY c.sales_period_end DESC LIMIT 6",
+    "SELECT c.sales_month FROM dim_calendar c WHERE c.sales_period_end <= CURRENT_DATE "
+    "GROUP BY c.sales_month, c.sales_period_end ORDER BY c.sales_period_end DESC LIMIT 6",
     # LIMIT 1: one value, e.g. the last complete month
     "SELECT SUM(il.net_taxable_value) FROM fact_invoice_lines il JOIN dim_calendar c ON c.date_id = il.invoice_date_id "
-    "WHERE c.nop_sales_month = (SELECT c2.nop_sales_month FROM dim_calendar c2 WHERE c2.nop_sales_period_end <= "
-    "CURRENT_DATE ORDER BY c2.nop_sales_period_end DESC LIMIT 1)",
+    "WHERE c.sales_month = (SELECT c2.sales_month FROM dim_calendar c2 WHERE c2.sales_period_end <= "
+    "CURRENT_DATE ORDER BY c2.sales_period_end DESC LIMIT 1)",
     # days asked as days
     "SELECT c.full_date FROM dim_calendar c ORDER BY c.full_date DESC LIMIT 7",
     # a top 10 of something else
@@ -79,9 +79,9 @@ def test_the_right_period_lists_and_other_limits_are_fine(sql):
 
 
 def test_the_problem_says_how_to_build_the_list():
-    text = agent.CALENDAR_LIMIT_PROBLEM.format(column="nop_sales_month", limit=6)
+    text = agent.CALENDAR_LIMIT_PROBLEM.format(column="sales_month", limit=6)
     assert "ONE ROW PER DAY" in text and "6 DAYS" in text and "counts the sales 6 times" in text
-    assert "SELECT DISTINCT nop_sales_month" in text and "LIMIT 6" in text
+    assert "SELECT DISTINCT sales_month" in text and "LIMIT 6" in text
 
 
 # ---------- in the graph: sent back before it runs ----------
@@ -112,7 +112,7 @@ def test_it_is_never_run_also_on_the_last_try(monkeypatch, mysql, user):
 
 @pytest.mark.parametrize("text", [
     QUESTION, "monthly sales as a pie chart", "sales by month bar chart",
-    "sales of the last 3 nop months as a donut chart", "show a graph of each month's sales",
+    "sales of the last 3 sales months as a donut chart", "show a graph of each month's sales",
     "net sales line chart",                                            # a line chart, as before
 ])
 def test_a_chart_of_several_periods_is_found(text):

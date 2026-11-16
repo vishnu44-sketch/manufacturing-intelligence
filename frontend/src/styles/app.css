@@ -189,7 +189,7 @@ code { background: var(--tint); border-radius: 6px; padding: 2px 6px; font-size:
 }
 
 /* ------------------------------------------------------------ login
-   Split sign-in: NOP's own banner and logo on the left, the card on the right. */
+   Split sign-in: SS Manufacturing's own banner and logo on the left, the card on the right. */
 .login-split { display: flex; min-height: 100vh; }
 .login-card { width: 430px; max-width: 100%; background: var(--surface); border-radius: 18px;
   padding: 34px 38px 30px; box-shadow: 0 30px 70px -30px color-mix(in srgb, var(--shadow-c) 65%, transparent);
@@ -231,7 +231,7 @@ code { background: var(--tint); border-radius: 6px; padding: 2px 6px; font-size:
   .login-side { padding: 24px 16px; }
 }
 
-/* ------------------------------------------------------------ Ask NOP + History */
+/* ------------------------------------------------------------ Manufacturing Intelligence + History */
 .btn.small { padding: 6px 12px; font-size: 12px; border-radius: 8px; }
 .btn.secondary .spin { border-color: var(--line-strong); border-top-color: var(--brand); }
 .twrap.scroll { overflow-x: auto; }
@@ -269,7 +269,7 @@ pre.sql { margin: 12px 0 0; background: var(--tint); border-radius: 10px; paddin
 .usage-sub { color: var(--muted); font-size: 12.5px; margin-top: 2px; }
 .usage-extra { font-size: 12.5px; margin: 4px 0; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
 
-/* ------------------------------------------------------------ Ask NOP chats (like ChatGPT)
+/* ------------------------------------------------------------ Manufacturing Intelligence chats (like ChatGPT)
    Left: the user's chats (New chat, grouped by day, a "..." menu per chat). Right: the open chat -
    question bubble on the right, answer card under it - and the question box stuck to the bottom.
    scroll-margin keeps a #q-<id> target clear of the topbar. */

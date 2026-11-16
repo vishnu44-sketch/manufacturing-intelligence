@@ -1,5 +1,5 @@
 // The welcome banner at the top of Home: the greeting (with a wave), a short line, the India-time clock (the same
-// text the top bar of the other pages shows, changing every minute - Home has no top bar), the NOP sales month we
+// text the top bar of the other pages shows, changing every minute - Home has no top bar), the sales month we
 // are in and the FY, and a quick start with example questions (a click opens the Ask page with the question in
 // its box - nothing is asked until Ask is pressed).
 // It moves a little, calmly: a soft light sweeps slowly over the blue to deep navy background, a few soft shapes
@@ -69,7 +69,7 @@ export default function HomeHero({ name, calendar, loading, examples }:
                 <>
                   <li className="mi-hero-in" style={step(2)}>
                     <Badge variant="outline" className="h-auto border-white/25 bg-white/15 py-1 whitespace-normal text-white">
-                      NOP sales month {calendar.month} · {calendar.month_from} to {calendar.month_to}
+                      Sales month {calendar.month} · {calendar.month_from} to {calendar.month_to}
                     </Badge>
                   </li>
                   <li className="mi-hero-in" style={step(3)}><Badge variant="outline" className={cn(onDark, 'py-1')}>{calendar.fy_label}</Badge></li>

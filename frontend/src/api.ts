@@ -8,7 +8,7 @@ import type {
 } from './types'
 
 // this app's own cookie name (nopsite/settings.py CSRF_COOKIE_NAME), then Django's default
-const CSRF_COOKIES = ['asknop_csrftoken', 'csrftoken']
+const CSRF_COOKIES = ['ask_csrftoken', 'csrftoken']
 
 export class AuthError extends Error {}
 
@@ -252,7 +252,7 @@ export const api = {
     request<GraphNodeReply>('GET', `/api/graph/node${query({ type, id, fy, limit })}`),
   graphSimilar: (customerId: string, fy: string, limit?: number) =>
     request<GraphSimilarReply>('GET', `/api/graph/similar${query({ customer_id: customerId, fy, limit })}`),
-  // the SQL page (staff): the ai_gold tables and columns, one read-only SELECT, and its rows as Excel
+  // the SQL page (staff): the ss_gold tables and columns, one read-only SELECT, and its rows as Excel
   sqlSchema: () => request<SqlSchema>('GET', '/api/sql/schema'),
   sql: (sql: string) => request<SqlResult>('POST', '/api/sql', { sql }),
   sqlExcel: (sql: string) => download('/api/sql/excel', { sql }),

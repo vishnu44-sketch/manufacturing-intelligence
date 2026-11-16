@@ -1,4 +1,4 @@
-"""Ask NOP as chats (like ChatGPT), through the JSON API: the user's chats (grouped by day, newest
+"""Manufacturing Intelligence as chats (like ChatGPT), through the JSON API: the user's chats (grouped by day, newest
 first), a chat is only made with its first question, Rename / Remove from list / Restore / Delete,
 editing an old question, follow-ups, owner-only access, and showing a chat never calls the AI or
 runs SQL. Plus the data migration that put the old questions into one chat per user per day.
@@ -145,7 +145,7 @@ def test_new_chat_makes_a_chat_only_with_its_first_question(client, user, fake_a
 
 
 def test_a_long_first_question_becomes_a_short_title():
-    long = "What were the net sales of every customer in the south region for each NOP month of FY 2026-27?"
+    long = "What were the net sales of every customer in the south region for each sales month of FY 2026-27?"
 
     title = Conversation.title_from(long)
 
@@ -505,7 +505,7 @@ def test_deleting_a_chat_also_hides_the_edited_away_versions(client, user, fake_
 
 def test_a_no_data_answer_has_its_own_status(client, user, mysql):
     chat = make_chat(user, "profit this year?", status="nodata", sql="", rows_count=None,
-                     answer="The NOP data does not have this: profit needs costs.")
+                     answer="The SS Manufacturing data does not have this: profit needs costs.")
     client.force_login(user)
 
     assert open_chat(client, chat)["cards"][0]["status"] == "nodata"     # DATA NOT AVAILABLE

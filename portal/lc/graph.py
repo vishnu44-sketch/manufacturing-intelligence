@@ -70,7 +70,7 @@ RECURSION_LIMIT = 50
 LINE_CHART_WORDS = re.compile(r"\bline\s*-?\s*(?:chart|graph|plot|diagram)s?\b|\btrend(?:s|lines?)?\b|\bover\s+time\b",
                               re.I)
 ONE_ROW_LINE_CHART_PROBLEM = ("your query returned only 1 row, but this question asks for a line chart / trend or "
-                              "a chart of several periods - it needs one row per period: return the last periods (e.g. the last 6 NOP "
+                              "a chart of several periods - it needs one row per period: return the last periods (e.g. the last 6 sales "
                               "months, or every period the earlier answer covered), one row per period, ordered by "
                               "period; dim_calendar has one row per day - use SELECT DISTINCT for the period list.")
 
@@ -82,9 +82,9 @@ def line_chart_request(text):
 
 SEVERAL_PERIODS = re.compile(
     r"\b(?:last|past|previous|recent)\s+(?:\d+|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|few|several)"
-    r"\s+(?:nop\s+)?(?:sales\s+)?(?:calendar\s+)?(?:months?|quarters?|years?|weeks?|days?|periods?)\b"
+    r"\s+(?:sales\s+)?(?:calendar\s+)?(?:months?|quarters?|years?|weeks?|days?|periods?)\b"
     r"|\b(?:monthly|quarterly|yearly|weekly|daily|month[\s-]*wise|month[\s-]*by[\s-]*month)\b"
-    r"|\b(?:each|every|per|by)\s+(?:nop\s+)?(?:sales\s+)?(?:month|quarter|year|week|day|period)\b", re.I)
+    r"|\b(?:each|every|per|by)\s+(?:sales\s+)?(?:month|quarter|year|week|day|period)\b", re.I)
 
 
 def several_periods_chart_request(text):
@@ -107,7 +107,7 @@ class AskState(TypedDict, total=False):
     memories_loaded: bool     # run_events() read the memories before the graph (its steps run in another thread)
     caller_thread: int        # the thread that runs the question (a step in another thread closes its DB link)
     hits: list                # the notes closest to the question
-    allowed: set              # the ai_gold tables the SQL may use
+    allowed: set              # the ss_gold tables the SQL may use
     full_schema_shown: bool   # the SQL call already saw every table
     sql_values: dict          # the values of the SQL prompt template
     retries: list             # the failed tries: the AI's reply (AIMessage) + what was wrong (HumanMessage)
@@ -123,7 +123,7 @@ class AskState(TypedDict, total=False):
     last_sql: str             # the last SQL the AI wrote (for the error text after 3 failed tries)
     name_check_used: bool     # a query that adds name matches into one number is sent back only once
     profit_switched: bool     # a profit % between two periods is sent back once for the revenue growth
-    chart_retry_used: bool    # a chart question of NOP data that got NO_SQL is sent back once
+    chart_retry_used: bool    # a chart question of SS Manufacturing data that got NO_SQL is sent back once
     values_checked: bool      # a query that found no data has its filter values checked once
     year_check_used: bool     # a quarter / month number grouped over all years is sent back once
     today_check_used: bool    # a period not over yet, counted past today, is sent back once
@@ -219,7 +219,7 @@ def pick_schema(state):
 
 def write_sql(state):
     """The AI writes the SQL: LangChain's SQL chain with the prompt values and the failed tries so far.
-    NO_SQL -> refused (a chart question of NOP data: first sent back once); NO_DATA -> nodata (or, once, the revenue growth for a profit % between two periods);
+    NO_SQL -> refused (a chart question of SS Manufacturing data: first sent back once); NO_DATA -> nodata (or, once, the revenue growth for a profit % between two periods);
     a reply without SQL -> a retry."""
     result, attempt = state["result"], state["attempt"] + 1
     result.tries = attempt
@@ -264,10 +264,10 @@ def write_sql(state):
         log.info("MISSING line dropped - the question did not ask for it: %s", missing)
         missing = ""
     update["missing"] = missing
-    if kind == "no_data":  # a NOP business question, but nothing in it is in ai_gold (e.g. profit)
+    if kind == "no_data":  # an SS Manufacturing business question, but nothing in it is in ss_gold (e.g. profit)
         if (try_question and not state["profit_switched"] and attempt < agent.MAX_TRIES
                 and agent.profit_comparison(state["asked"])):
-            # the model said "not available" although NOP wants the revenue growth + a note:
+            # the model said "not available" although SS Manufacturing wants the revenue growth + a note:
             # keep its reason for the answer and ask once more for the revenue SQL
             result.notes.append(agent.MISSING_NOTE.format(missing=(no_data or "profit").rstrip(".")))
             update.update(profit_switched=True, schema_not_needed=True,
@@ -396,7 +396,7 @@ def retry(state):
     """A failed try goes back to the AI: its reply + what was wrong (RETRY_PROMPT). A question whose first
     try saw only some tables now gets every table - the columns of the tables it did not see (the others are
     in the first request above it) - unless the problem was about values or wording."""
-    log.info("Ask NOP try %s failed: %s", state["attempt"], state["problem"])
+    log.info("Manufacturing Intelligence try %s failed: %s", state["attempt"], state["problem"])
     text = agent.RETRY_PROMPT.format(problem=state["problem"])
     update = {}
     if not state["full_schema_shown"] and not state["schema_not_needed"]:
@@ -412,7 +412,7 @@ def retry(state):
 def failed(state):
     """Every try failed: the fixed "3 tries" answer, with the last problem and SQL for the admin."""
     result = state["result"]
-    log.info("Ask NOP try %s failed: %s", state["attempt"], state["problem"])
+    log.info("Manufacturing Intelligence try %s failed: %s", state["attempt"], state["problem"])
     result.status, result.answer = "error", agent.FAILED_ANSWER
     result.error = f"{agent.MAX_TRIES} tries failed. Last problem: {state['problem']}\nLast SQL:\n{state['last_sql']}"
     return {}
@@ -427,7 +427,7 @@ def check_names(state):
     if not_found:
         result.answer = not_found
         if state["missing"]:
-            result.answer += f" Also, this is not in the NOP data: {state['missing'].rstrip('.')}."
+            result.answer += f" Also, this is not in the SS Manufacturing data: {state['missing'].rstrip('.')}."
         return {"not_found": not_found}
     result.notes.extend(name_notes)
     return {}

@@ -17,17 +17,17 @@ const COUNTS = TREND.map((p, i) => ({ label: p.label, value: [410, 380, 0, 455, 
 
 const KPIS: KpiData[] = [
   { key: 'month_sales', label: 'Net sales Oct 2026', money: true, value: 1200000, text: 'INR 1,200,000.00',
-    note: '21-Sep-2026 to 20-Oct-2026 (last complete NOP sales month)', change: { pct: 20, direction: 'up', text: '20.0% vs Sep 2026' },
-    trend: TREND, ask: 'Net sales of the last 6 NOP months as a line chart', facts: null },
+    note: '21-Sep-2026 to 20-Oct-2026 (last complete sales month)', change: { pct: 20, direction: 'up', text: '20.0% vs Sep 2026' },
+    trend: TREND, ask: 'Net sales of the last 6 sales months as a line chart', facts: null },
   { key: 'fy_sales', label: 'Net sales FY 2026-27 so far', money: true, value: 4360522752.5, text: 'INR 4,360,522,752.50',
     note: '01-Apr-2026 to 05-Nov-2026', change: null,
     trend: [{ label: 'Apr 2026', value: 300000000 }, { label: 'May 2026', value: 900000000 }, { label: 'Jun 2026', value: 1500000000 }],
-    ask: 'Net sales by NOP month of FY 2026-27 so far as a line chart', facts: null },
+    ask: 'Net sales by sales month of FY 2026-27 so far as a line chart', facts: null },
   { key: 'customers', label: 'Active customers', money: false, value: 2090, text: '2,090', total: 5000,
     note: 'of 5,000 customers bought in FY 2026-27 so far', change: { pct: -12.5, direction: 'down', text: '12.5% vs the same dates of FY 2025-26' },
-    trend: COUNTS, ask: 'Active customers in each of the last 6 NOP months', facts: null },
+    trend: COUNTS, ask: 'Active customers in each of the last 6 sales months', facts: null },
   { key: 'products', label: 'Products sold', money: false, value: 3811, text: '3,811', note: 'different products invoiced',
-    change: null, trend: COUNTS, ask: 'Number of products sold in each of the last 6 NOP months', facts: null },
+    change: null, trend: COUNTS, ask: 'Number of products sold in each of the last 6 sales months', facts: null },
   { key: 'open_orders', label: 'Open sales orders', money: true, value: 5335415, text: 'INR 5,335,415.00',
     note: '10 orders (14 lines) before GST, as of 05-Nov-2026', change: null, trend: null,
     ask: 'List the open sales orders up to today', facts: ['10 orders', '14 lines', 'INR 60.6 L incl. GST'] },
@@ -35,11 +35,11 @@ const KPIS: KpiData[] = [
     note: 'Stock report of 20-Sep-2026 (52 items)', change: null, trend: null,
     ask: 'Stock value by item group on the latest stock report', facts: ['52 items', 'Report 20-Sep-2026'] },
   { key: 'top_customer', label: 'Top customer Oct 2026', name: 'Allied Castings Limited', money: true, value: 32400,
-    text: 'INR 32,400.00', note: '21-Sep-2026 to 20-Oct-2026 (last complete NOP sales month)', change: null, trend: null,
-    ask: 'Top 10 customers of the last NOP month by net sales', facts: ['2.7% of Oct 2026 sales'] },
+    text: 'INR 32,400.00', note: '21-Sep-2026 to 20-Oct-2026 (last complete sales month)', change: null, trend: null,
+    ask: 'Top 10 customers of the last sales month by net sales', facts: ['2.7% of Oct 2026 sales'] },
   { key: 'top_product', label: 'Top product Oct 2026', name: 'Coolant pump HM-445-1B', money: true, value: 18000,
-    text: 'INR 18,000.00', note: '21-Sep-2026 to 20-Oct-2026 (last complete NOP sales month)', change: null, trend: null,
-    ask: 'Top 10 products of the last NOP month by net sales', facts: ['1.5% of Oct 2026 sales'] },
+    text: 'INR 18,000.00', note: '21-Sep-2026 to 20-Oct-2026 (last complete sales month)', change: null, trend: null,
+    ask: 'Top 10 products of the last sales month by net sales', facts: ['1.5% of Oct 2026 sales'] },
 ]
 const byKey = (key: string) => KPIS.find((k) => k.key === key) as KpiData
 
@@ -103,7 +103,7 @@ describe('HomeKpiCards', () => {
     expect(path.getAttribute('d')).toMatch(/^M0,44 L.* Z$/)            // closed down to the bottom: a filled area
     expect(path.getAttribute('fill')).toMatch(/^url\(#kpi-area-/)
     expect(area.querySelector(`linearGradient#${path.getAttribute('fill')!.slice(5, -1)}`)).toBeInTheDocument()
-    expect(within(area).getByText(/The FY running total at the end of the last 3 NOP sales months: Apr 2026: INR 30 Cr/)).toHaveClass('sr-only')
+    expect(within(area).getByText(/The FY running total at the end of the last 3 sales months: Apr 2026: INR 30 Cr/)).toHaveClass('sr-only')
     expect(fy.querySelector('[data-slot="sparkline"]')).toBeNull()
   })
 
@@ -145,7 +145,7 @@ describe('HomeKpiCards', () => {
     expect(rects[0]).toHaveAttribute('opacity', '0.3')
     expect(Number(rects[2].getAttribute('height'))).toBeGreaterThan(0)             // a month with none: a thin stub
     expect(within(bars).getByText('May 2026')).toBeInTheDocument()
-    expect(within(bars).getByText(/The last 6 NOP sales months: May 2026: 410, .*Oct 2026: 433\./)).toHaveClass('sr-only')
+    expect(within(bars).getByText(/The last 6 sales months: May 2026: 410, .*Oct 2026: 433\./)).toHaveClass('sr-only')
   })
 
   it('products with fewer than 2 months: no bars and no line', () => {

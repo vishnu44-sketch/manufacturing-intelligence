@@ -1,4 +1,4 @@
-// The start screen of the Ask page: the heading, the question box in the middle (no "MySQL ai_gold" label: 12-Nov)
+// The start screen of the Ask page: the heading, the question box in the middle (no "MySQL ss_gold" label: 12-Nov)
 // and the round send button, the four starter cards (a click fills the box, nothing is asked yet), and the
 // box moving to the bottom once a question is asked.
 import { fireEvent, screen, within } from '@testing-library/react'
@@ -16,7 +16,7 @@ describe('AskStart: the start screen', () => {
     const start = (await screen.findByRole('heading', { name: 'What would you like to know?' })).closest('#welcome') as HTMLElement
     const box = within(start).getByLabelText('Your question')                     // the box is in the middle, not docked
     expect(box).toHaveAttribute('placeholder', 'Ask about sales, customers, orders, stock or documents…')
-    expect(screen.queryByText(/MySQL ai_gold/)).not.toBeInTheDocument()   // 12-Nov: "remove this, no need"
+    expect(screen.queryByText(/MySQL ss_gold/)).not.toBeInTheDocument()   // 12-Nov: "remove this, no need"
     expect(within(start).getByRole('button', { name: 'Ask' })).toBeInTheDocument()
     expect(box).toHaveAttribute('rows', '2')                                       // the start screen keeps its big box
     expect(document.querySelector('.composer')).toBeNull()
@@ -51,14 +51,14 @@ describe('AskStart: the start screen', () => {
     const box = await screen.findByPlaceholderText('Ask about sales, customers, orders, stock or documents…')
     expect(box.closest('.composer')).not.toBeNull()
     expect(screen.queryByText('What would you like to know?')).not.toBeInTheDocument()
-    // 12-Nov: no "NOP data" text, no "MySQL ai_gold" label; 16-Nov: one row under a conversation (it grows with the text)
+    // 12-Nov: no "SS Manufacturing data" text, no "MySQL ss_gold" label; 16-Nov: one row under a conversation (it grows with the text)
     expect(box).toHaveAttribute('rows', '1')
-    expect(screen.queryByText(/MySQL ai_gold/)).not.toBeInTheDocument()
-    expect(screen.queryByPlaceholderText(/NOP data/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/MySQL ss_gold/)).not.toBeInTheDocument()
+    expect(screen.queryByPlaceholderText(/SS Manufacturing data/)).not.toBeInTheDocument()
     // one short line under it; the longer tips sit behind the (i)
     const hint = screen.getByText('Enter to send · Shift+Enter for a new line')
     const tips = hint.parentElement!.querySelector('[title]')!
-    expect(tips.getAttribute('title')).toMatch(/Follow-up questions work .* NOP sales month \(21st to 20th\)/)
+    expect(tips.getAttribute('title')).toMatch(/Follow-up questions work .* sales month \(21st to 20th\)/)
     expect(tips).toHaveTextContent(/the AI sees the last 3 questions of this chat/)    // read out by a screen reader
   })
 })
@@ -66,7 +66,7 @@ describe('AskStart: the start screen', () => {
 describe('starterQuestions', () => {
   it('uses the fixed questions when no example fits', () => {
     expect(starterQuestions([])).toEqual([
-      'Net sales of the last 6 NOP months as a line chart', 'Top 10 customers this FY by net sales',
+      'Net sales of the last 6 sales months as a line chart', 'Top 10 customers this FY by net sales',
       'List the open sales orders up to today', 'Stock value by item group on the latest stock report'])
   })
 
@@ -74,6 +74,6 @@ describe('starterQuestions', () => {
     const picked = starterQuestions(ASHA.examples)
     expect(picked[1]).toBe('Top 5 customers by invoice value in Aug 2026?')            // Customers, not Sales
     expect(picked[2]).toBe('How many sales orders are open and what is their value?')  // Open orders, not Sales
-    expect(picked[0]).toBe('Net sales of the last 6 NOP months as a line chart')
+    expect(picked[0]).toBe('Net sales of the last 6 sales months as a line chart')
   })
 })

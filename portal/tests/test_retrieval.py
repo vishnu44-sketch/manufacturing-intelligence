@@ -33,7 +33,7 @@ def test_one_chunk_per_h2_heading():
     assert [c["id"] for c in chunks] == ["business_rules-001", "business_rules-002"]
     assert all(c["kind"] == "rule" and c["source"] == "business_rules.md" for c in chunks)
     # the text starts with the kind label and the heading, then the body
-    assert chunks[0]["text"] == "NOP business rule: First rule\n\nUse table_a."
+    assert chunks[0]["text"] == "SS Manufacturing business rule: First rule\n\nUse table_a."
     # the code block stays in the text, but is left out of what gets embedded
     assert "SELECT 1;" in chunks[1]["text"]
     assert "SELECT 1;" not in chunks[1]["embed_text"]
@@ -52,14 +52,14 @@ def test_the_langchain_splitter_gives_the_chunks_exactly_as_written():
                 "## Last\nline one\n\n\nline two\n")
     assert chunk_markdown(markdown, "team_notes.md") == [
         {"id": "team_notes-001", "source": "team_notes.md", "kind": "rule", "heading": "Q: Open orders?",
-         "text": "NOP business rule: Q: Open orders?\n\nCount them.\n\n```sql\nSELECT COUNT(*)\n    FROM t\n"
+         "text": "SS Manufacturing business rule: Q: Open orders?\n\nCount them.\n\n```sql\nSELECT COUNT(*)\n    FROM t\n"
                  "## not a heading\n```\n\nExpected: 3",
-         "embed_text": "NOP business rule: Q: Open orders?\n\nCount them.\n\nExpected: 3"},
+         "embed_text": "SS Manufacturing business rule: Q: Open orders?\n\nCount them.\n\nExpected: 3"},
         {"id": "team_notes-002", "source": "team_notes.md", "kind": "rule", "heading": "Empty",
-         "text": "NOP business rule: Empty\n\n", "embed_text": "NOP business rule: Empty"},
+         "text": "SS Manufacturing business rule: Empty\n\n", "embed_text": "SS Manufacturing business rule: Empty"},
         {"id": "team_notes-003", "source": "team_notes.md", "kind": "rule", "heading": "Last",
-         "text": "NOP business rule: Last\n\nline one\n\n\nline two",
-         "embed_text": "NOP business rule: Last\n\nline one\n\nline two"},
+         "text": "SS Manufacturing business rule: Last\n\nline one\n\n\nline two",
+         "embed_text": "SS Manufacturing business rule: Last\n\nline one\n\nline two"},
     ]
     assert chunk_markdown("Only an intro, no '## ' heading.\n", "sql_examples.md") == []
 
@@ -135,10 +135,10 @@ def test_invoice_value_finds_the_invoice_amount_columns_first(built):
     assert "`taxable_value`" in top["text"] and "`net_taxable_value`" in top["text"]
 
 
-def test_which_month_is_oct_2026_finds_the_nop_month_rule_first(built):
+def test_which_month_is_oct_2026_finds_the_sales_month_rule_first(built):
     top = built.search("which month is Oct 2026")[0]
     assert top["kind"] == "rule"
-    assert top["heading"].startswith("NOP sales month")
+    assert top["heading"].startswith("sales month")
     assert "21-Sep-2026 to 20-Oct-2026" in top["text"]
 
 

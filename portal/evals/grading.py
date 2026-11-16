@@ -1,6 +1,6 @@
 """Grade one saved answer of the golden set: PASS, PARTIAL or FAIL, with the reasons.
 
-The truth always comes from the question's own SQL, run now on ai_gold (never from the AI being tested):
+The truth always comes from the question's own SQL, run now on ss_gold (never from the AI being tested):
   must      values that MUST appear in the answer (wrong / missing -> FAIL)
   should    values that should appear too, e.g. the report date (missing -> PARTIAL)
   must_have / must_not   phrases (case-insensitive); by default no "profit" and no vague data-date sentence

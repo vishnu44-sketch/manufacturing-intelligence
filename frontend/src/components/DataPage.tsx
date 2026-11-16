@@ -1,4 +1,4 @@
-// Data (staff): how many records each table of the NOP data (MySQL ai_gold) has, counted now with the
+// Data (staff): how many records each table of the SS Manufacturing data (MySQL ss_gold) has, counted now with the
 // read-only user, the invoice dates and the last data load. Main data first, then the lookups, then
 // the load history. Read-only: it never asks the AI.
 import { useEffect, useState } from 'react'
@@ -36,7 +36,7 @@ export default function DataPage() {
       <div className="card">
         <div className="h2">Records in each table</div>
         <div className="mut">
-          The tables of the NOP data (MySQL {data.database || 'ai_gold'}) that the AI reads, counted now with the
+          The tables of the SS Manufacturing data (MySQL {data.database || 'ss_gold'}) that the AI reads, counted now with the
           read-only user. After a data load the new counts show here at once. This page only reads - it never asks the AI.
         </div>
         {data.tables.length > 0 && (
@@ -49,7 +49,7 @@ export default function DataPage() {
       </div>
 
       {data.mysql_error ? (
-        <div className="errbox">The NOP data (MySQL) cannot be read right now: {data.mysql_error}</div>
+        <div className="errbox">The SS Manufacturing data (MySQL) cannot be read right now: {data.mysql_error}</div>
       ) : (
         <>
           <div className="twrap scroll">

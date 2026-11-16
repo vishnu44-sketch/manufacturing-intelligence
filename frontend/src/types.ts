@@ -215,7 +215,7 @@ export interface DataTables {
   last_load: string
 }
 
-// the SQL page (staff): the tables of ai_gold with their columns, and the rows of one read-only query
+// the SQL page (staff): the tables of ss_gold with their columns, and the rows of one read-only query
 export interface SqlColumn {
   name: string
   type: string // the MySQL type, e.g. 'int', 'varchar(100)'
@@ -452,7 +452,7 @@ export interface HomeKpi {
   text: string // 'INR 1,200,000.00' / '2,063'
   note: string // the dates or what it counts
   change: HomeChange | null // against the previous period, where that makes sense
-  trend?: HomeTrendPoint[] | null // up to 6 NOP sales months, oldest first (null / missing: no small line)
+  trend?: HomeTrendPoint[] | null // up to 6 sales months, oldest first (null / missing: no small line)
   ask?: string // a question about this number for the Ask page (missing on an older server)
   facts?: string[] | null // 1-3 short facts shown as chips where there is no small line ('10 orders', '14 lines')
 }
@@ -473,7 +473,7 @@ export interface HomeRecent {
 
 export interface HomeCalendar {
   today: string // '05-Nov-2026'
-  month: string // the NOP sales month we are in: 'Nov 2026'
+  month: string // the sales month we are in: 'Nov 2026'
   month_from: string // '21-Oct-2026'
   month_to: string // '20-Nov-2026'
   fy: string
@@ -492,8 +492,8 @@ export interface HomeTable {
 }
 
 export interface HomeConnection {
-  key: string // ai_gold, app_db, docs, pdfs, groq
-  name: string // 'MySQL ai_gold' - names only, never a host, a port or a key
+  key: string // ss_gold, app_db, docs, pdfs, groq
+  name: string // 'MySQL ss_gold' - names only, never a host, a port or a key
   what: string
   ok: boolean
   note: string // 'Reachable', '91 pieces', 'Key set' ...

@@ -1,4 +1,4 @@
-"""The LangChain parts of Ask NOP: every AI call, the embeddings, the docs chunks and the notes search.
+"""The LangChain parts of Manufacturing Intelligence: every AI call, the embeddings, the docs chunks and the notes search.
 
 LangChain does the LLM calls (llm.py, prompts.py, chains.py, calls.py), the embeddings (embeddings.py), the
 docs chunks (docs.py), the notes in Qdrant (vectorstore.py) and the PDFs (pdfs.py). Our own code in

@@ -1,10 +1,10 @@
 """The SQL of an answer told in plain English, for business users ("how did you get this?").
 
-describe_sql(sql) reads one MySQL SELECT on the ai_gold star schema with sqlglot and gives back
+describe_sql(sql) reads one MySQL SELECT on the ss_gold star schema with sqlglot and gives back
 3-8 short sentences in the order the database does the work, e.g.
     "Took the invoice lines (sales, credit and debit notes)."
     "Matched each line to its date in the calendar."
-    "Kept the NOP sales month Aug 2026."
+    "Kept the sales month Aug 2026."
     "Added up the net value before GST (net sales) for each customer."
     "Showed the top 5 customers by net sales."
 No AI is used (0 tokens): the words come from the small tables below (docs/data_dictionary.md
@@ -91,13 +91,13 @@ COLUMN_WORDS = {
     "quantity": "quantity",
     "unit_price": "unit price",
     "discount_pct": "discount %",
-    "nop_sales_month": "NOP sales month",
-    "nop_sales_month_name": "NOP sales month",
-    "nop_sales_month_no": "NOP sales month",
-    "nop_sales_period_no": "NOP sales month",
-    "nop_sales_period_start": "start of the NOP sales month",
-    "nop_sales_period_end": "end of the NOP sales month",
-    "nop_sales_year": "NOP sales year",
+    "sales_month": "sales month",
+    "sales_month_name": "sales month",
+    "sales_month_no": "sales month",
+    "sales_period_no": "sales month",
+    "sales_period_start": "start of the sales month",
+    "sales_period_end": "end of the sales month",
+    "sales_year": "sales year",
     "financial_year": "financial year",
     "financial_year_label": "financial year",
     "fiscal_period": "month of the financial year",
@@ -186,7 +186,7 @@ COUNT_WORDS = {
     "product_code": "products",
     "sales_person_id": "sales people",
     "report_date": "stock reports",
-    "nop_sales_month": "NOP sales months",
+    "sales_month": "sales months",
     "full_date": "days",
 }
 # the Unknown (-1) row of each key
@@ -203,14 +203,14 @@ UNKNOWN_WORDS = {
 TIME_COLUMNS = {
     "invoice_date", "order_date", "delivery_date", "report_date", "posting_date", "note_date",
     "so_date", "system_date", "full_date", "start_date", "end_date", "original_invoice_date",
-    "nop_sales_month", "nop_sales_period_no", "nop_sales_period_start", "nop_sales_period_end",
-    "nop_sales_year", "financial_year", "financial_year_label", "month_year", "month_no",
+    "sales_month", "sales_period_no", "sales_period_start", "sales_period_end",
+    "sales_year", "financial_year", "financial_year_label", "month_year", "month_no",
     "fiscal_period", "calendar_year", "date_id", "rate_month", "run_id", "loaded_at", "week_of_year",
 }
 DATE_COLUMNS = {
     "invoice_date", "order_date", "delivery_date", "report_date", "posting_date", "note_date",
     "so_date", "system_date", "full_date", "start_date", "end_date", "original_invoice_date",
-    "nop_sales_period_start", "nop_sales_period_end", "loaded_at",
+    "sales_period_start", "sales_period_end", "loaded_at",
 }
 # how "Kept the lines ___ up to today" reads for each date column
 DATE_VERBS = {
@@ -221,8 +221,8 @@ DATE_VERBS = {
     "posting_date": "posted",
     "note_date": "with a note dated",
     "so_date": "with a sales order dated",
-    "nop_sales_period_end": "whose NOP sales month ended",
-    "nop_sales_period_start": "whose NOP sales month started",
+    "sales_period_end": "whose sales month ended",
+    "sales_period_start": "whose sales month started",
 }
 # columns whose LIKE '%x%' means "names containing x"
 LIKE_WORDS = {
@@ -257,14 +257,14 @@ VALUE_SHORT = {
 }
 WORD_PARTS = {
     "inr": "(INR)", "jpy": "(JPY)", "pct": "%", "qty": "quantity", "no": "number", "gst": "GST",
-    "igst": "IGST", "cgst": "CGST", "sgst": "SGST", "fy": "FY", "nop": "NOP", "sap": "SAP",
+    "igst": "IGST", "cgst": "CGST", "sgst": "SGST", "fy": "FY", "sap": "SAP",
     "cogs": "COGS", "oem": "OEM", "aft": "AFT", "hsn": "HSN", "incl": "including",
     "id": "", "avg": "average", "num": "number", "cnt": "count", "amt": "amount",
 }
 # names given to ROW_NUMBER() / RANK() results
 RANK_NAMES = {"rn", "rnk", "rank", "rank_no", "row_no", "row_num", "rownum", "position"}
-# group columns that only describe the NOP sales month next to it
-GROUP_EXTRAS = {"start of the NOP sales month", "end of the NOP sales month", "period from", "period to",
+# group columns that only describe the sales month next to it
+GROUP_EXTRAS = {"start of the sales month", "end of the sales month", "period from", "period to",
                 "period start", "period end"}
 # the order of the verbs in the "Added up ..., counted ... and found ..." sentence
 VERB_ORDER = {"added up": 0, "counted": 1, "averaged": 2, "worked out": 3, "found": 4, "listed": 5,
@@ -310,7 +310,7 @@ def _tidy(sentence):
 
 
 def _lower_first(text):
-    """'Kept the ...' -> 'kept the ...' (but 'NOP ...' stays)."""
+    """'Kept the ...' -> 'kept the ...' (but 'FY ...' stays)."""
     if len(text) > 1 and text[0].isupper() and text[1].islower():
         return text[0].lower() + text[1:]
     return text
@@ -815,21 +815,21 @@ class _Describer:
         return f"Kept only the {groups} with {obj} {how} {val}"
 
     def equals(self, name, col, raw, val, unit):
-        """col = value -> 'Kept the NOP sales month Aug 2026' and friends."""
+        """col = value -> 'Kept the sales month Aug 2026' and friends."""
         if raw is not None and (name, raw) in VALUE_WORDS:
             return f"Kept only the {VALUE_WORDS[(name, raw)]}"
         if name == "full_date" and val == "today":
             return "Kept today's row of the calendar"
         if name != "report_date" and (val.startswith("the latest ") or val.startswith("the first ")):
             return f"Kept only {val}"
-        if name == "nop_sales_month":
-            return f"Kept the NOP sales month {val}"
+        if name == "sales_month":
+            return f"Kept the sales month {val}"
         if name == "month_year":
             return f"Kept the calendar month {val}"
         if name == "financial_year":
             return f"Kept the financial year {_fy(val)}"
-        if name == "nop_sales_year":
-            return f"Kept the NOP sales months of {_fy(val)}"
+        if name == "sales_year":
+            return f"Kept the sales months of {_fy(val)}"
         if name == "financial_year_label":
             return f"Kept the financial year {val}"
         if name == "calendar_year":
@@ -904,12 +904,12 @@ class _Describer:
             return f"Kept the {unit} whose {_col_words(col)} is in a looked-up list"
         values = [self.value(v) for v in cond.expressions]
         raws = [v.this for v in cond.expressions if isinstance(v, exp.Literal)]
-        if name == "nop_sales_month":
-            return f"Kept the NOP sales months {_and(values)}"
+        if name == "sales_month":
+            return f"Kept the sales months {_and(values)}"
         if name == "month_year":
             return f"Kept the calendar months {_and(values)}"
-        if name in {"financial_year", "nop_sales_year"}:
-            word = "financial years" if name == "financial_year" else "NOP sales months of"
+        if name in {"financial_year", "sales_year"}:
+            word = "financial years" if name == "financial_year" else "sales months of"
             return f"Kept the {word} {_and([_fy(v) for v in values])}"
         if name == "sale_type":
             return f"Kept only the {_and([v.lower() for v in values])} sales"
@@ -935,8 +935,8 @@ class _Describer:
             word = _col_words(col)
             if word not in words:
                 words.append(word)
-        # the start / end dates of a NOP sales month are not groups of their own
-        if "NOP sales month" in words:
+        # the start / end dates of a sales month are not groups of their own
+        if "sales month" in words:
             words = [w for w in words if w not in GROUP_EXTRAS]
         return words
 
@@ -1116,8 +1116,8 @@ class _Describer:
             if col is None:
                 return None
             name = col.name.lower()
-            if name in {"nop_sales_period_start", "nop_sales_period_end"}:
-                return "found", "the start and end dates of the NOP sales month"
+            if name in {"sales_period_start", "sales_period_end"}:
+                return "found", "the start and end dates of the sales month"
             if name in TIME_COLUMNS:
                 word = "first" if isinstance(e, exp.Min) else "last"
             else:
@@ -1227,8 +1227,8 @@ class _Describer:
         if time_col is not None:
             how = "newest first" if desc else "oldest first"
             if group_words and _col_words(time_col) == group_words[0] or (
-                    group_words and time_col.name.lower().startswith("nop_sales_period")
-                    and group_words[0] == "NOP sales month"):
+                    group_words and time_col.name.lower().startswith("sales_period")
+                    and group_words[0] == "sales month"):
                 return f"Showed the {_plural(group_words[0])} {how}{at_most}"
             if limit == 1:
                 return f"Took only the {'newest' if desc else 'oldest'} one"

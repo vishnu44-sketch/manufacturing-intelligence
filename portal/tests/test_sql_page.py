@@ -1,4 +1,4 @@
-"""The SQL page (/api/sql/schema, /api/sql, /api/sql/excel): staff only, one checked SELECT on ai_gold,
+"""The SQL page (/api/sql/schema, /api/sql, /api/sql/excel): staff only, one checked SELECT on ss_gold,
 run as the read-only MySQL user, every run in the audit log. MySQL is faked here (the last tests use the
 real read-only MySQL and are skipped without it). No AI call.
 Run with:  python -m pytest portal/tests/test_sql_page.py -q"""
@@ -19,7 +19,7 @@ from portal.tests.test_views_ask import api_get, api_post
 
 pytestmark = pytest.mark.django_db
 
-COLUMNS = {  # a small ai_gold: table -> [(column, type)]
+COLUMNS = {  # a small ss_gold: table -> [(column, type)]
     "dim_customers": [("customer_id", "int"), ("customer_name", "varchar(200)")],
     "fact_invoice_lines": [("invoice_id", "bigint"), ("invoice_date", "date"),
                            ("net_taxable_value", "decimal(18,2)")],
@@ -31,7 +31,7 @@ SECRET = "S3cret-Reader-Pass"
 
 
 class FakeMySQL:
-    """The read-only MySQL, faked: the ai_gold tables, the information_schema read of the tree, the row counts
+    """The read-only MySQL, faked: the ss_gold tables, the information_schema read of the tree, the row counts
     of the Data page, and one reply (or error) for a typed SELECT. Every SQL it was given is kept in .asked."""
 
     def __init__(self):
@@ -149,7 +149,7 @@ def test_the_tree_is_kept_a_few_minutes(client, staff, mysql):
 
 def test_the_tree_when_mysql_is_down(client, staff, monkeypatch):
     def down():
-        raise warehouse.WarehouseUnavailable("Cannot connect to MySQL as nop_ai_reader: (2003) refused on localhost")
+        raise warehouse.WarehouseUnavailable("Cannot connect to MySQL as ss_ai_reader: (2003) refused on localhost")
 
     monkeypatch.setattr(warehouse, "allowed_tables", down)
     sql_page.clear_cache()
@@ -157,7 +157,7 @@ def test_the_tree_when_mysql_is_down(client, staff, monkeypatch):
     r = api_get(client, "api_sql_schema")
     assert r.status_code == 503
     assert r.json()["detail"] == sql_page.MYSQL_DOWN
-    assert "nop_ai_reader" not in r.content.decode() and "localhost" not in r.content.decode()
+    assert "ss_ai_reader" not in r.content.decode() and "localhost" not in r.content.decode()
 
 
 # ------------------------------------------------------------------ running a SELECT
@@ -216,7 +216,7 @@ def test_at_most_500_rows_and_truncated(client, staff, mysql):
     ("SELECT * FROM portal_question", "Unknown table 'portal_question'"),
     ("SELECT * FROM mi_app.portal_question", "not 'mi_app'"),
     ("SELECT * FROM mi_app.auth_user", "not 'mi_app'"),
-    ("SELECT * FROM ai_gold.auth_user", "Unknown table 'auth_user'"),
+    ("SELECT * FROM ss_gold.auth_user", "Unknown table 'auth_user'"),
     ("SELECT * FROM information_schema.tables", "not 'information_schema'"),
     ("SELECT user, authentication_string FROM mysql.user", "not 'mysql'"),
     ("SELECT c.customer_id FROM dim_customers c JOIN mi_app.auth_user u ON u.id = c.customer_id", "not 'mi_app'"),
@@ -264,12 +264,12 @@ def test_the_30_second_limit_in_plain_words(client, staff, mysql):
 
 
 def test_mysql_down_is_503(client, staff, mysql):
-    mysql.error = warehouse.WarehouseUnavailable("Cannot connect to MySQL as nop_ai_reader: (2003) refused on localhost")
+    mysql.error = warehouse.WarehouseUnavailable("Cannot connect to MySQL as ss_ai_reader: (2003) refused on localhost")
     client.force_login(staff)
     r = run(client, SELECT)
     assert r.status_code == 503
     assert r.json()["detail"] == sql_page.MYSQL_DOWN
-    assert "nop_ai_reader" not in r.content.decode()
+    assert "ss_ai_reader" not in r.content.decode()
 
 
 def test_mysql_down_before_the_guard_is_503(client, staff, mysql, monkeypatch):

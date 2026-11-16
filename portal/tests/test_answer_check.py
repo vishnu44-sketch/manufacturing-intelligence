@@ -23,17 +23,17 @@ from portal.tests.test_agent import ANSWER, GOOD_SQL, ROWS, mysql, use_fake_ai  
 pytestmark = pytest.mark.django_db
 
 BAR_QUESTION = "can you create one plot bar chart last 5 month sales"
-BAR_SQL = ("SELECT c.nop_sales_month, ROUND(SUM(il.net_taxable_value), 2) AS net_sales_inr\n"
+BAR_SQL = ("SELECT c.sales_month, ROUND(SUM(il.net_taxable_value), 2) AS net_sales_inr\n"
            "FROM fact_invoice_lines il\nJOIN dim_calendar c ON c.date_id = il.invoice_date_id\n"
-           "WHERE c.nop_sales_period_end <= CURRENT_DATE\n"
-           "GROUP BY c.nop_sales_year, c.nop_sales_period_no, c.nop_sales_month\n"
-           "ORDER BY c.nop_sales_year DESC, c.nop_sales_period_no DESC\nLIMIT 5")
-BAR_ROWS = {"columns": ["nop_sales_month", "net_sales_inr"],
+           "WHERE c.sales_period_end <= CURRENT_DATE\n"
+           "GROUP BY c.sales_year, c.sales_period_no, c.sales_month\n"
+           "ORDER BY c.sales_year DESC, c.sales_period_no DESC\nLIMIT 5")
+BAR_ROWS = {"columns": ["sales_month", "net_sales_inr"],
             "rows": [["Oct 2026", Decimal("2367096647.50")], ["Sep 2026", Decimal("1955500.00")],
                      ["Aug 2026", Decimal("747750.00")], ["Jul 2026", Decimal("1730000.00")],
                      ["Jun 2026", Decimal("12767485.00")]],
             "truncated": False}
-BAR_ANSWER = ("Over the last 5 NOP months (Jun 2026 to Oct 2026, 21-May-2026 to 20-Oct-2026), net sales were highest "
+BAR_ANSWER = ("Over the last 5 sales months (Jun 2026 to Oct 2026, 21-May-2026 to 20-Oct-2026), net sales were highest "
               "in Oct 2026 at INR 2,367,096,647.50 and lowest in Aug 2026 at INR 747,750.00; Jun 2026 had "
               "INR 12,767,485.00. The full list is in the table.")
 CHECKED_OK = ("I ran the same query again on the database: 5 rows, the same as before, and every number in my answer "
@@ -151,7 +151,7 @@ def test_an_answer_without_amounts_says_so(monkeypatch, mysql, user):
 
 
 def test_the_saved_sql_that_does_not_run_again_is_said(monkeypatch, mysql, user):
-    mysql.results = [warehouse.QueryError("(1146) Table 'ai_gold.fact_invoice_lines' doesn't exist")]
+    mysql.results = [warehouse.QueryError("(1146) Table 'ss_gold.fact_invoice_lines' doesn't exist")]
     fake = no_ai(monkeypatch)
 
     result = agent.ask("can you confirm", user, context=ChatHistory.for_chat(bar_chat(user)))
@@ -219,7 +219,7 @@ def test_an_earlier_documents_answer_is_pointed_to_its_pages(monkeypatch, mysql,
 def test_an_earlier_no_data_answer_has_nothing_to_check(monkeypatch, mysql, user):
     chat = Conversation.objects.create(user=user, title="chat")
     Question.objects.create(user=user, conversation=chat, text="profit in Aug?", status="nodata",
-                            answer="The NOP data does not have this: profit.")
+                            answer="The SS Manufacturing data does not have this: profit.")
     no_ai(monkeypatch)
 
     result = agent.ask("is that right?", user, context=ChatHistory.for_chat(chat))
@@ -230,7 +230,7 @@ def test_an_earlier_no_data_answer_has_nothing_to_check(monkeypatch, mysql, user
 # ---------- how did you get this ----------
 
 STEPS = ["Took the invoice lines (fact_invoice_lines).", "Added up net_taxable_value (net sales).",
-         "Grouped by NOP sales month.", "Kept the 5 newest months up to today."]
+         "Grouped by sales month.", "Kept the 5 newest months up to today."]
 
 
 def test_how_did_you_get_this_gives_the_sql_in_plain_words(monkeypatch, mysql, user):
@@ -354,7 +354,7 @@ def test_the_next_follow_up_after_a_check_builds_on_the_data_question(monkeypatc
 
     assert [q.text for q in ChatHistory.for_chat(chat).questions] == [BAR_QUESTION]   # the checks are left out
     mysql.results = [ROWS]
-    fake = use_fake_ai(monkeypatch, ["Net sales of the last 5 NOP months in Japan", GOOD_SQL, ANSWER])
+    fake = use_fake_ai(monkeypatch, ["Net sales of the last 5 sales months in Japan", GOOD_SQL, ANSWER])
     saved, _ = services.answer_in_chat(user, chat, "and for Japan?")
 
     rewrite = fake.calls[0][-1]["content"]
@@ -362,7 +362,7 @@ def test_the_next_follow_up_after_a_check_builds_on_the_data_question(monkeypatc
     sql_request = fake.calls[1][1]["content"]
     assert "Earlier in this chat" in sql_request and "1. Question: " + BAR_QUESTION in sql_request
     assert "2. Question:" not in sql_request and "I ran the same query" not in sql_request
-    assert saved.understood_as == "Net sales of the last 5 NOP months in Japan" and saved.answer == ANSWER
+    assert saved.understood_as == "Net sales of the last 5 sales months in Japan" and saved.answer == ANSWER
 
 
 def test_a_check_after_a_check_still_checks_the_data_question(monkeypatch, mysql, user):

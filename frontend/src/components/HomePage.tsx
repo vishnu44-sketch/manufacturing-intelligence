@@ -1,9 +1,9 @@
 // Home (/, every user): the first page after signing in. From the top:
-// - the welcome banner (HomeHero.tsx): the greeting, the India-time clock, the NOP sales month we are in and the
+// - the welcome banner (HomeHero.tsx): the greeting, the India-time clock, the sales month we are in and the
 //   FY, and a quick start with example questions;
 // - the KPI cards (HomeKpiCards.tsx, each with its own look: net sales, customers, products, open orders,
 //   stock, the top customer and product - never after today): the number counting up the first time it
-//   shows, a small picture of the last NOP months (or a few short facts as chips), the change; a click opens
+//   shows, a small picture of the last sales months (or a few short facts as chips), the change; a click opens
 //   the Ask page with a question about that number filled in (nothing is asked until Ask is pressed);
 // - the user's last questions (a click opens the saved answer - no AI call) and the user's usage today;
 // - what the app is connected to (names and a green / red dot), the main tables with their records and
@@ -125,8 +125,8 @@ const FLOW: [LucideIcon, string, string, string][] = [
     'The AI model (Groq) writes one read-only SELECT from the question and the notes.'],
   [ShieldCheck, 'SQL guard', 'our own check',
     'Our own check reads the SQL before it runs: one SELECT only, only the allowed tables, nothing that changes data.'],
-  [Database, 'Read-only MySQL', 'ai_gold, 30 s limit',
-    'The SQL runs on MySQL ai_gold with a read-only user and a 30 second limit.'],
+  [Database, 'Read-only MySQL', 'ss_gold, 30 s limit',
+    'The SQL runs on MySQL ss_gold with a read-only user and a 30 second limit.'],
   [ChartColumn, 'Answer, chart, Excel', 'ready to use',
     'The AI writes a short answer from the rows; you also get the table, a chart and an Excel download.'],
 ]
@@ -306,7 +306,7 @@ function connectionIcon(key: string): LucideIcon {
   if (key === 'groq') return Bot
   if (key === 'docs') return BookOpenText
   if (key === 'pdfs') return FileText
-  if (key === 'ai_gold' || key === 'app_db') return Database
+  if (key === 'ss_gold' || key === 'app_db') return Database
   return Plug
 }
 
@@ -513,7 +513,7 @@ export default function HomePage({ me }: { me: Me }) {
 
       {/* 6. our data */}
       {!error && (
-        <Section title="Our data" aside="MySQL ai_gold, read-only">
+        <Section title="Our data" aside="MySQL ss_gold, read-only">
           {loading ? (
             <CardGrid count={6} most={3} className="gap-3.5">{Array.from({ length: 6 }, (_, i) => <Skeleton key={i} className="h-32 w-full rounded-xl" />)}</CardGrid>
           ) : data?.tables_error ? (

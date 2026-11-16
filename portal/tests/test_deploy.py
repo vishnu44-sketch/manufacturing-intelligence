@@ -1,6 +1,7 @@
 """Deploy checks (03-Nov): the settings that come from .env (DEBUG, hosts, https cookies), WhiteNoise for the
 static files, the React page with DEBUG off, and the Docker files (one image: the website and the MCP server).
 Nothing is started: settings.py is read again with test values, the Docker files are only read."""
+import re
 import runpy
 from pathlib import Path
 
@@ -90,6 +91,21 @@ def test_the_start_script_builds_both_indexes_once():
     assert "index_ready QDRANT_COLLECTION mi_docs" in text and "ingest_docs" in text
     assert "index_ready QDRANT_PDF_COLLECTION mi_pdfs" in text and "ingest_pdfs" in text
     assert "flock" in text and "migrate --noinput" in text
+
+
+def test_the_loader_writes_only_the_ss_gold_database():
+    """16-Nov rename: the POC's own data database ss_gold and its reader ss_ai_reader; the old company name and
+    the other project's database / user (still used by that project on the laptop) are gone from these files."""
+    loader = (REPO / "loader" / "load_gold.py").read_text(encoding="utf-8")
+    assert 'GOLD_DB = "ss_gold"' in loader and 'READER_USER = "ss_ai_reader"' in loader
+    assert '("sales_month", "VARCHAR(8)"' in loader and '("sales_period_start", "DATE"' in loader
+    deploy = (REPO / "DEPLOY.md").read_text(encoding="utf-8")
+    assert "AI_GOLD_DATABASE=ss_gold" in deploy and "AI_DB_USER=ss_ai_reader" in deploy
+    for name in ["loader/load_gold.py", "loader/make_messy_batch.py", "DEPLOY.md", "docker-compose.yml",
+                 "docker-entrypoint.sh"]:
+        text = (REPO / name).read_text(encoding="utf-8")
+        assert "ai_gold" not in text and "nop_ai_reader" not in text and "nop_" not in text, name
+        assert not re.search(r"\bNOP", text), name
 
 
 def test_compose_runs_the_website_next_to_the_mcp_server():

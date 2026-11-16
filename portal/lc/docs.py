@@ -26,8 +26,8 @@ KIND_BY_FILE = {
 }
 # a readable label for each kind, written in front of every chunk text
 KIND_LABEL = {
-    "table": "Data dictionary (ai_gold table and columns)",
-    "rule": "NOP business rule",
+    "table": "Data dictionary (ss_gold table and columns)",
+    "rule": "SS Manufacturing business rule",
     "example": "Example question with its SQL",
 }
 

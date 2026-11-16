@@ -136,7 +136,7 @@ const MEASURE = /(qty|quantity|count|pct|percent)/i
 const CATEGORY = /(^|_)(type|category|segment|group|class|status|kind|mode|channel|region|zone|division|market|country|source)s?$/i
 // numbers that do not add up to a whole (an average of the parts is not a part)
 const NOT_ADDITIVE = /(avg|average|mean|rate|price|growth|change|margin|pct|percent|share|ratio)/i
-// a number label that is a time (year 2026, quarter 1, month 3, nop_sales_period_no 7)
+// a number label that is a time (year 2026, quarter 1, month 3, sales_period_no 7)
 const TIME_NAME = /(year|quarter|month|period|week|day|date|fy)(_no|_number)?$/i
 
 const MONTH = '(jan(uary)?|feb(ruary)?|mar(ch)?|apr(il)?|may|june?|july?|aug(ust)?|sep(t(ember)?)?|oct(ober)?|nov(ember)?|dec(ember)?)'

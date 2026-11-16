@@ -101,8 +101,8 @@ def test_a_document_question_takes_the_documents_path(monkeypatch, mysql, user, 
 
 @pytest.mark.parametrize("reply, status, answer", [
     ("NO_SQL", "refused", agent.REFUSAL_ANSWER),
-    ("NO_DATA: salaries are not in the NOP data", "nodata", "The NOP data does not have this: salaries are not in "
-                                                            "the NOP data."),
+    ("NO_DATA: salaries are not in the SS Manufacturing data", "nodata", "The SS Manufacturing data does not have this: salaries are not in "
+                                                            "the SS Manufacturing data."),
 ])
 def test_refused_and_nodata_end_right_after_the_sql_step(monkeypatch, mysql, user, steps, reply, status, answer):
     fake = use_fake_ai(monkeypatch, [reply])
@@ -277,25 +277,25 @@ def test_a_document_question_has_the_same_time_steps_and_tokens(monkeypatch, mys
 
 # ---------- a chart of an earlier answer (05-Nov: "create line chart" was refused as a CREATE) ----------
 
-TREND_SQL = ("```sql\nSELECT c.nop_sales_month, ROUND(SUM(il.net_taxable_value), 2) AS net_sales_inr\n"
+TREND_SQL = ("```sql\nSELECT c.sales_month, ROUND(SUM(il.net_taxable_value), 2) AS net_sales_inr\n"
              "FROM fact_invoice_lines il\nJOIN dim_calendar c ON c.date_id = il.invoice_date_id\n"
-             "WHERE c.nop_sales_month IN ('May 2026', 'Jun 2026', 'Jul 2026', 'Aug 2026', 'Sep 2026', 'Oct 2026')\n"
-             "GROUP BY c.nop_sales_year, c.nop_sales_period_no, c.nop_sales_month\n"
-             "ORDER BY c.nop_sales_year, c.nop_sales_period_no\n```")
-TREND_ROWS = {"columns": ["nop_sales_month", "net_sales_inr"],
+             "WHERE c.sales_month IN ('May 2026', 'Jun 2026', 'Jul 2026', 'Aug 2026', 'Sep 2026', 'Oct 2026')\n"
+             "GROUP BY c.sales_year, c.sales_period_no, c.sales_month\n"
+             "ORDER BY c.sales_year, c.sales_period_no\n```")
+TREND_ROWS = {"columns": ["sales_month", "net_sales_inr"],
               "rows": [[m, 1000 + n] for n, m in enumerate(("May 2026", "Jun 2026", "Jul 2026", "Aug 2026",
                                                             "Sep 2026", "Oct 2026"))],
               "truncated": False}
-TREND_ANSWER = "Over the last 6 NOP months, ending with Oct 2026, net sales rose from INR 1,000 to INR 1,005."
+TREND_ANSWER = "Over the last 6 sales months, ending with Oct 2026, net sales rose from INR 1,000 to INR 1,005."
 CHART_FOLLOW_UP = "give me above answer create line chart"
-CHART_UNDERSTOOD = "Net sales of the last 6 NOP months up to Oct 2026 as a line chart"
+CHART_UNDERSTOOD = "Net sales of the last 6 sales months up to Oct 2026 as a line chart"
 
 
 def sales_chat(user):
     """The owner's chat of 05-Nov: one answered question about last month's sales."""
     chat = Conversation.objects.create(user=user, title="chat")
     Question.objects.create(user=user, conversation=chat, text="what is that out last month sales",
-                            answer="In NOP sales month Oct 2026 net sales were INR 2,367,096,647.50.",
+                            answer="In sales month Oct 2026 net sales were INR 2,367,096,647.50.",
                             sql="SELECT ROUND(SUM(il.net_taxable_value), 2) AS net_sales_inr FROM ...", status="ok")
     return chat
 
@@ -313,7 +313,7 @@ def test_a_follow_up_create_line_chart_goes_to_the_sql_and_returns_the_rows(monk
     assert len(mysql.calls) == 1 and "'May 2026'" in mysql.calls[0]
 
 
-def test_no_sql_for_a_chart_of_nop_data_is_sent_back_once_and_then_answered(monkeypatch, mysql, user, steps):
+def test_no_sql_for_a_chart_of_company_data_is_sent_back_once_and_then_answered(monkeypatch, mysql, user, steps):
     mysql.results = [TREND_ROWS]
     fake = use_fake_ai(monkeypatch, ["Create a line chart of last month's sales", "NO_SQL", TREND_SQL, TREND_ANSWER])
 

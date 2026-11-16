@@ -4,10 +4,10 @@ The rules: a session sign-in (Django's own), a CSRF token on every POST (and any
 method), and a user only reaches his own chats, questions and memories (anyone else's are 'not found'; staff
 as before: a chat is private, a saved question may be opened). Users, Documents, Data and the SQL page are for
 staff only (403), and so is the Audit log (read-only: there is no way to change or delete a line).
-The SQL page (sql_page.py) runs only one checked SELECT on ai_gold, as the read-only MySQL user; its saved
+The SQL page (sql_page.py) runs only one checked SELECT on ss_gold, as the read-only MySQL user; its saved
 queries are only text in the app's own database (only the owner changes one; shared ones are seen by staff).
 Who did what is written to the audit log (audit.py): sign-ins, people, chat and memory actions, Excel
-downloads - never a password. The Knowledge graph (every user, GET only) reads the NOP data live and
+downloads - never a password. The Knowledge graph (every user, GET only) reads the SS Manufacturing data live and
 read-only, with no AI call (knowledge_graph.py); so does the Home page (home.py). It never answers with a redirect or an HTML page: without a
 sign-in every endpoint says 401 in JSON. The work itself is in services.py. Never sent: the admin-only `error` details of a
 question, and any password or password hash.
@@ -458,7 +458,7 @@ def question_excel(request, pk):
     response = HttpResponse(
         services.excel_bytes(saved, data),
         content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-    response["Content-Disposition"] = f'attachment; filename="ask_nop_{saved.pk}.xlsx"'
+    response["Content-Disposition"] = f'attachment; filename="manufacturing_intelligence_{saved.pk}.xlsx"'
     audit.record(request, "excel_downloaded", f"question {saved.pk}", rows=len(data["rows"]))
     return response
 
@@ -582,7 +582,7 @@ def documents(request):
 
 @api_view(["GET"], staff_only=True)
 def data_tables(request):
-    """How many records each table of the NOP data (MySQL ai_gold) has, counted now with the read-only
+    """How many records each table of the SS Manufacturing data (MySQL ss_gold) has, counted now with the read-only
     user, plus the invoice dates and the last data load. mysql_error = why MySQL cannot be read now.
     Read-only: no AI call and nothing is written."""
     database = warehouse.database_name()
@@ -606,7 +606,7 @@ def data_tables(request):
 # ------------------------------------------------------------------ SQL page (staff)
 @api_view(["GET"], staff_only=True)
 def sql_schema(request):
-    """The tree of the SQL page: the ai_gold tables A to Z with their rows and columns (name + type), kept a
+    """The tree of the SQL page: the ss_gold tables A to Z with their rows and columns (name + type), kept a
     few minutes (sql_page.schema). Only names, types and counts. 503 when MySQL cannot be read now."""
     try:
         return JsonResponse(sql_page.schema())
@@ -631,7 +631,7 @@ def _sql_audit(request, action, sql, **details):
 @api_view(["POST"], staff_only=True)
 def sql_run(request):
     """{"sql": "SELECT ..."} -> {sql (as it ran, after the guard), columns, headers, rows, row_count, truncated,
-    max_rows, secs}. Always the SQL guard (one SELECT, only ai_gold tables, at most 500 rows) and the read-only
+    max_rows, secs}. Always the SQL guard (one SELECT, only ss_gold tables, at most 500 rows) and the read-only
     MySQL user with its 30 s limit; no AI call. 400 with a plain message when the guard refuses it or MySQL
     reports an error, 503 when MySQL is down. Every run is in the audit log."""
     sql, refused = _posted_sql(request)
@@ -1075,7 +1075,7 @@ def _graph_reply(make):
     except knowledge_graph.NotFound as exc:
         return _error(404, str(exc))
     except (warehouse.WarehouseUnavailable, warehouse.QueryError) as exc:
-        log.warning("Knowledge graph: the NOP data could not be read: %s", exc)
+        log.warning("Knowledge graph: the SS Manufacturing data could not be read: %s", exc)
         return _error(503, knowledge_graph.MYSQL_DOWN)
 
 

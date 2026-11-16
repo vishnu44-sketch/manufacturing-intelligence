@@ -33,7 +33,7 @@ ROWS = {"columns": ["customer_name", "invoice_value_inr"],
         "truncated": False}
 ANSWER = "Aurora Fluid Power Limited had the highest invoice value, INR 1,730,000.00."
 SOURCES = [{"heading": "Q: Who were the top 5 customers by invoice value in Aug 2026?", "kind": "example"},
-           {"heading": "NOP sales month", "kind": "rule"}]
+           {"heading": "sales month", "kind": "rule"}]
 QUESTION = "Top 5 customers by invoice value?"
 
 
@@ -147,7 +147,7 @@ def test_a_saved_answer_has_its_answer_rows_sql_and_sources(client, user, mysql)
 
     card = body["card"]
     assert card["status"] == "ok" and card["answer"] == ANSWER and card["text"] == QUESTION
-    assert "FROM fact_invoice_lines" in card["sql"] and card["sources"][1]["heading"] == "NOP sales month"
+    assert "FROM fact_invoice_lines" in card["sql"] and card["sources"][1]["heading"] == "sales month"
     assert "1,730,000.00" in json.dumps(rows) and rows["row_count"] == 2
     assert card["excel_url"] == reverse("api_excel", args=[saved.pk])
     assert body["chat"] is None                                              # this one is in no chat
@@ -204,7 +204,7 @@ def test_refused_question_has_no_sql_and_runs_nothing(client, user, mysql):
 
     card = api_get(client, "api_question", saved.pk).json()["card"]
 
-    assert card["status"] == "refused"                           # NOT A NOP DATA QUESTION
+    assert card["status"] == "refused"                           # NOT AN SS MANUFACTURING DATA QUESTION
     assert card["answer"] == agent.REFUSAL_ANSWER
     assert card["sql"] == "" and card["excel_url"] == "" and card["has_rows"] is False
     assert api_get(client, "api_rows", saved.pk).status_code == 404
@@ -213,7 +213,7 @@ def test_refused_question_has_no_sql_and_runs_nothing(client, user, mysql):
 
 def test_a_saved_answer_still_shows_when_the_rows_cannot_be_loaded(client, user, monkeypatch):
     def mysql_refuses(sql):
-        raise warehouse.QueryError("(1146) Table 'ai_gold.dim_customers' doesn't exist")
+        raise warehouse.QueryError("(1146) Table 'ss_gold.dim_customers' doesn't exist")
     monkeypatch.setattr(warehouse, "allowed_tables", lambda: TABLES)
     monkeypatch.setattr(warehouse, "run_select", mysql_refuses)
     saved = saved_question(user)
@@ -265,7 +265,7 @@ def test_owner_downloads_an_excel_file_with_result_and_question_sheets(client, u
 
     assert r.status_code == 200
     assert r["Content-Type"] == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    assert f'filename="ask_nop_{saved.pk}.xlsx"' in r["Content-Disposition"]
+    assert f'filename="manufacturing_intelligence_{saved.pk}.xlsx"' in r["Content-Disposition"]
     book = load_workbook(io.BytesIO(r.content))  # openpyxl can open it
     assert book.sheetnames == ["Result", "Question"]
     result_rows = list(book["Result"].iter_rows(values_only=True))

@@ -1,5 +1,5 @@
-"""The Knowledge graph page (/graph): who buys what, from whom and where, built live from the NOP data (MySQL
-ai_gold) on every call. No database of its own, nothing is written, and no AI call (0 tokens): fixed SQL written
+"""The Knowledge graph page (/graph): who buys what, from whom and where, built live from the SS Manufacturing data (MySQL
+ss_gold) on every call. No database of its own, nothing is written, and no AI call (0 tokens): fixed SQL written
 here, run read-only with driver parameters (warehouse.run_select_params), so what a user types never becomes SQL.
 
 Nodes - "type:key" ids that stay the same between calls:
@@ -57,7 +57,7 @@ SIMILAR_LIMIT = 10
 MAX_SIMILAR = 25
 CANDIDATES = 200         # customers looked at for similar()
 CACHE_SECONDS = 600      # the FY dates, the small totals and the document links are kept 10 minutes
-MYSQL_DOWN = "The NOP data (MySQL) cannot be read right now - please try again in a minute."
+MYSQL_DOWN = "The SS Manufacturing data (MySQL) cannot be read right now - please try again in a minute."
 
 # the smarter search box (no AI): type words, and close spellings of the names
 TOP_LIMIT = 10           # nodes in a reply to a type word ("customers", "customer tamil")

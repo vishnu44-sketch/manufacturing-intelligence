@@ -1,4 +1,4 @@
-"""The Data numbers (/api/data): records in each ai_gold table, staff only, read-only.
+"""The Data numbers (/api/data): records in each ss_gold table, staff only, read-only.
 MySQL is faked here (the last test uses the real read-only MySQL and is skipped without it).
 Run with:  python -m pytest -q"""
 import datetime
@@ -99,14 +99,14 @@ def test_a_table_without_a_note_shows_its_name(client, staff, fake_mysql, monkey
 
 def test_mysql_down_gives_a_clear_message(client, staff, monkeypatch):
     def down():
-        raise warehouse.WarehouseUnavailable("Cannot connect to MySQL as nop_ai_reader: (2003) refused")
+        raise warehouse.WarehouseUnavailable("Cannot connect to MySQL as ss_ai_reader: (2003) refused")
 
     monkeypatch.setattr(warehouse, "allowed_tables", down)
     client.force_login(staff)
     r = api_get(client, "api_data")
     assert r.status_code == 200
     body = r.json()
-    assert "(2003) refused" in body["mysql_error"]     # the app: "The NOP data (MySQL) cannot be read right now: ..."
+    assert "(2003) refused" in body["mysql_error"]     # the app: "The SS Manufacturing data (MySQL) cannot be read right now: ..."
     assert body["tables"] == [] and body["table_count"] == 0
 
 

@@ -11,7 +11,7 @@ class ConversationQuerySet(models.QuerySet):
 
 
 class Conversation(models.Model):
-    """One Ask NOP chat (like a ChatGPT conversation): the questions a user asked in it, listed on
+    """One Manufacturing Intelligence chat (like a ChatGPT conversation): the questions a user asked in it, listed on
     the left of the Ask page. A chat is only made with its first question, so no empty chats pile up.
     "Remove from list" only hides it (archived) - its questions stay in History; "Delete" hides the
     chat AND its questions everywhere for the user (soft delete, 03-Nov): the rows stay, so the audit
@@ -57,15 +57,15 @@ class QuestionQuerySet(models.QuerySet):
 
 
 class Question(models.Model):
-    """One question a user asked on the Ask NOP page, with what came back. It is the audit trail of the
+    """One question a user asked on the Manufacturing Intelligence page, with what came back. It is the audit trail of the
     questions: a deleted chat only hides its questions, they are never removed by the app."""
 
     # how the question ended
     STATUS_CHOICES = [
         ("ok", "Answered"),        # SQL ran, rows + answer shown
         ("docs", "From documents"),  # answered from the company PDFs (the pages are the sources), no SQL
-        ("nodata", "No data"),     # a NOP business question, but its data is not in ai_gold (e.g. profit)
-        ("refused", "Refused"),    # not a question about NOP data - no SQL was run
+        ("nodata", "No data"),     # an SS Manufacturing business question, but its data is not in ss_gold (e.g. profit)
+        ("refused", "Refused"),    # not a question about SS Manufacturing data - no SQL was run
         ("error", "Failed"),       # no working SQL after 3 tries, or a service was down
         ("memory", "Saved to memory"),  # "Remember that ..." - saved as a UserMemory, no SQL and no AI call
     ]
@@ -140,7 +140,7 @@ class UserMemory(models.Model):
 
 class SavedQuery(models.Model):
     """One SQL an administrator saved on the SQL page (like a saved script in MySQL Workbench), kept in the app's
-    own database - never in ai_gold. Only text: saving never runs the SQL and never checks it; it is checked by the
+    own database - never in ss_gold. Only text: saving never runs the SQL and never checks it; it is checked by the
     SQL guard and run read-only only when someone presses Run. Only the owner changes or deletes it; when shared,
     the other administrators see it too (and can "Save as" their own copy). The SQL is at most
     sql_page.MAX_SQL_CHARS (20,000) characters - checked by the views."""

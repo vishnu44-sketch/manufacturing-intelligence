@@ -3,11 +3,11 @@
 // badge, the note at the bottom, and a click opens the Ask page with its question filled in (nothing is asked
 // until Ask is pressed). Every card fills its row's height, so the notes and the links of a row line up.
 // Each card has its own look (by kpi.key):
-// - month_sales: the main card - the blue brand gradient, white text, a white small line of the last NOP months;
+// - month_sales: the main card - the blue brand gradient, white text, a white small line of the last sales months;
 // - fy_sales: a teal stripe along the top and a small filled area of the FY's running total (teal, so it
 //   still differs from the blue main card);
 // - customers: a green ring of the active customers out of all customers ("total");
-// - products: small amber bars, one per NOP month, the newest one strong;
+// - products: small amber bars, one per sales month, the newest one strong;
 // - open_orders / stock: a soft violet / slate card, the facts as chips, a big faint icon in the corner;
 // - top_customer / top_product: a round green / amber avatar (the customer's initials, the product's award),
 //   a small "No. 1" / "Top product" tag, the name, the amount and its share as a chip.
@@ -207,7 +207,7 @@ function LastDot({ x, y, ring }: { x: number; y: number; ring?: string }) {
   )
 }
 
-/** A small line of the last NOP months over a soft area. Nothing for fewer than 2 months. The picture is hidden
+/** A small line of the last sales months over a soft area. Nothing for fewer than 2 months. The picture is hidden
  *  from screen readers; a sentence says the same. */
 export function Sparkline({ points, money, className, dot, area = 0.1 }:
   { points: HomeTrendPoint[] | null | undefined; money: boolean; className?: string; dot?: string; area?: number }) {
@@ -234,7 +234,7 @@ export function Sparkline({ points, money, className, dot, area = 0.1 }:
       </svg>
       <LastDot x={(lastX / W) * 100} y={(lastY / H) * 100} ring={dot} />
       <span className="sr-only">
-        The last {good.length} NOP sales months: {good.map((p) => pointText(p, money)).join(', ')}.
+        The last {good.length} sales months: {good.map((p) => pointText(p, money)).join(', ')}.
       </span>
     </div>
   )
@@ -270,13 +270,13 @@ function AreaChart({ points, money, className }: { points: HomeTrendPoint[]; mon
       </svg>
       <LastDot x={(lastX / W) * 100} y={(lastY / H) * 100} />
       <span className="sr-only">
-        The FY running total at the end of the last {points.length} NOP sales months: {points.map((p) => pointText(p, money)).join(', ')}.
+        The FY running total at the end of the last {points.length} sales months: {points.map((p) => pointText(p, money)).join(', ')}.
       </span>
     </div>
   )
 }
 
-/** Small bars, one per NOP month (from 0 up), the newest one strong; the first and last month written under them. */
+/** Small bars, one per sales month (from 0 up), the newest one strong; the first and last month written under them. */
 function Bars({ points, money, className }: { points: HomeTrendPoint[]; money: boolean; className?: string }) {
   const W = 120
   const H = 40
@@ -300,7 +300,7 @@ function Bars({ points, money, className }: { points: HomeTrendPoint[]; money: b
         <span>{points[0].label}</span><span>{points[points.length - 1].label}</span>
       </div>
       <span className="sr-only">
-        The last {points.length} NOP sales months: {points.map((p) => pointText(p, money)).join(', ')}.
+        The last {points.length} sales months: {points.map((p) => pointText(p, money)).join(', ')}.
       </span>
     </div>
   )

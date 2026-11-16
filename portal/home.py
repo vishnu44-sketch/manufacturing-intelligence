@@ -1,16 +1,16 @@
 """The Home page (/api/home, every signed-in user): everything the first page shows, in one read-only reply.
 
-calendar     today, the NOP sales month we are in (21st of the previous month to the 20th, named after the
+calendar     today, the sales month we are in (21st of the previous month to the 20th, named after the
              month it ends in) and the financial year
-kpis         net sales of the last complete NOP sales month (against the month before), net sales, active
+kpis         net sales of the last complete sales month (against the month before), net sales, active
              customers and products sold this FY so far, open sales orders, and the stock value of the latest
-             stock report, then the top customer and the top product of the last complete NOP month (these
-             two also have "name"; active customers also has "total", all customers). Each card also has "trend" (a small line: the last 6 complete NOP months,
+             stock report, then the top customer and the top product of the last complete sales month (these
+             two also have "name"; active customers also has "total", all customers). Each card also has "trend" (a small line: the last 6 complete sales months,
              oldest first; null for open orders, stock and the top cards), "ask" (the question a click on it asks
              on the Ask page) and "facts" (1-3 short chips such as '14 lines' or '2.7% of Oct 2026 sales';
              null for the cards without them)
-tables       the main ai_gold tables with their records and the dates they hold
-connections  MySQL ai_gold, the app's own database, the Qdrant collections mi_docs / mi_pdfs and Groq - only
+tables       the main ss_gold tables with their records and the dates they hold
+connections  MySQL ss_gold, the app's own database, the Qdrant collections mi_docs / mi_pdfs and Groq - only
              names and a green / red status, never a host, a port, a user name, a password or a key. Groq is
              never called: only "key set" / "not set" and the model name.
 usage        the user's own questions today, and the AI tokens of today's period against the daily limit
@@ -55,25 +55,25 @@ class Missing(Exception):
     """Something the page needs is not there (today not in the calendar, a collection never built).
     The message is safe to show."""
 
-# the main ai_gold tables on the page: (table, name, date column, what it holds)
+# the main ss_gold tables on the page: (table, name, date column, what it holds)
 MAIN_TABLES = (
     ("fact_invoice_lines", "Sales invoices", "invoice_date", "Invoice, credit and debit note lines"),
     ("fact_sales_order_lines", "Sales orders", "order_date", "Sales order lines"),
     ("fact_stock_ledger", "Stock", "report_date", "Stock reports: balances and movements"),
     ("dim_customers", "Customers", "", "The customer master"),
     ("dim_products", "Products", "", "The item master"),
-    ("dim_calendar", "Calendar", "full_date", "One row per day, with the FY and the NOP sales months"),
+    ("dim_calendar", "Calendar", "full_date", "One row per day, with the FY and the sales months"),
 )
 
 CALENDAR_SQL = """
-SELECT CURDATE(), t.nop_sales_month, t.nop_sales_period_start, t.nop_sales_period_end,
+SELECT CURDATE(), t.sales_month, t.sales_period_start, t.sales_period_end,
        t.financial_year, t.financial_year_label,
-       p.nop_sales_month, p.nop_sales_period_start, p.nop_sales_period_end,
-       pp.nop_sales_month, pp.nop_sales_period_start, pp.nop_sales_period_end,
+       p.sales_month, p.sales_period_start, p.sales_period_end,
+       pp.sales_month, pp.sales_period_start, pp.sales_period_end,
        (SELECT MIN(y.full_date) FROM dim_calendar y WHERE y.financial_year = t.financial_year AND y.date_id <> -1)
 FROM dim_calendar t
-LEFT JOIN dim_calendar p ON p.full_date = t.nop_sales_period_start - INTERVAL 1 DAY
-LEFT JOIN dim_calendar pp ON pp.full_date = p.nop_sales_period_start - INTERVAL 1 DAY
+LEFT JOIN dim_calendar p ON p.full_date = t.sales_period_start - INTERVAL 1 DAY
+LEFT JOIN dim_calendar pp ON pp.full_date = p.sales_period_start - INTERVAL 1 DAY
 WHERE t.full_date = CURDATE()"""
 
 # one sum / count per period (the periods are dates, given as parameters)
@@ -86,40 +86,40 @@ SALES_FROM = """
 FROM fact_invoice_lines f
 WHERE f.invoice_date BETWEEN %s AND %s AND f.invoice_date <= CURDATE()"""
 
-# the small line under four KPI cards: per NOP month of the last 6 complete ones, net sales, active customers,
+# the small line under four KPI cards: per sales month of the last 6 complete ones, net sales, active customers,
 # products invoiced and the FY running total at the month's end. dim_calendar has one row per DAY, so the month
 # list is DISTINCT months first (6 rows), and only then joined to the invoices - a month without a sale gives 0.
 # A month of this FY also takes the lines from the FY start (the 1st %s), so its running total is in the same
 # pass: no query per month (invoice_date has no index, a sub-query per month would read the table each time).
 TREND_SQL = """
-SELECT m.nop_sales_month, m.nop_sales_period_end,
-       ROUND(COALESCE(SUM(CASE WHEN i.invoice_date >= m.nop_sales_period_start THEN i.net_taxable_value END), 0), 2),
-       COUNT(DISTINCT CASE WHEN i.invoice_date >= m.nop_sales_period_start AND i.customer_id <> -1
+SELECT m.sales_month, m.sales_period_end,
+       ROUND(COALESCE(SUM(CASE WHEN i.invoice_date >= m.sales_period_start THEN i.net_taxable_value END), 0), 2),
+       COUNT(DISTINCT CASE WHEN i.invoice_date >= m.sales_period_start AND i.customer_id <> -1
                            THEN i.customer_id END),
-       COUNT(DISTINCT CASE WHEN i.invoice_date >= m.nop_sales_period_start AND i.product_id <> -1
+       COUNT(DISTINCT CASE WHEN i.invoice_date >= m.sales_period_start AND i.product_id <> -1
                            THEN i.product_id END),
        ROUND(COALESCE(SUM(CASE WHEN i.invoice_date >= %s THEN i.net_taxable_value END), 0), 2)
-FROM (SELECT DISTINCT nop_sales_month, nop_sales_period_start, nop_sales_period_end
+FROM (SELECT DISTINCT sales_month, sales_period_start, sales_period_end
       FROM dim_calendar
-      WHERE date_id <> -1 AND nop_sales_period_end <= %s AND nop_sales_period_end <= CURDATE()
-      ORDER BY nop_sales_period_end DESC
+      WHERE date_id <> -1 AND sales_period_end <= %s AND sales_period_end <= CURDATE()
+      ORDER BY sales_period_end DESC
       LIMIT 6) m
 LEFT JOIN fact_invoice_lines i
-       ON i.invoice_date BETWEEN LEAST(m.nop_sales_period_start, %s) AND m.nop_sales_period_end
+       ON i.invoice_date BETWEEN LEAST(m.sales_period_start, %s) AND m.sales_period_end
       AND i.invoice_date <= CURDATE()
-GROUP BY m.nop_sales_month, m.nop_sales_period_start, m.nop_sales_period_end
-ORDER BY m.nop_sales_period_end"""
+GROUP BY m.sales_month, m.sales_period_start, m.sales_period_end
+ORDER BY m.sales_period_end"""
 
 # what a click on a KPI card asks on the Ask page ({fy} = 'FY 2026-27')
 KPI_ASK = {
-    "month_sales": "Net sales of the last 6 NOP months as a line chart",
-    "fy_sales": "Net sales by NOP month of {fy} so far as a line chart",
-    "customers": "Active customers in each of the last 6 NOP months",
-    "products": "Number of products sold in each of the last 6 NOP months",
+    "month_sales": "Net sales of the last 6 sales months as a line chart",
+    "fy_sales": "Net sales by sales month of {fy} so far as a line chart",
+    "customers": "Active customers in each of the last 6 sales months",
+    "products": "Number of products sold in each of the last 6 sales months",
     "open_orders": "List the open sales orders up to today",
     "stock": "Stock value by item group on the latest stock report",
-    "top_customer": "Top 10 customers of the last NOP month by net sales",
-    "top_product": "Top 10 products of the last NOP month by net sales",
+    "top_customer": "Top 10 customers of the last sales month by net sales",
+    "top_product": "Top 10 products of the last sales month by net sales",
 }
 RECENT_QUESTIONS = 5   # the user's last questions on Home
 
@@ -140,7 +140,7 @@ WHERE m.movement_type = 'Closing balance'
   AND sl.report_date = (SELECT MAX(report_date) FROM fact_stock_ledger WHERE report_date <= CURDATE())
 GROUP BY sl.report_date"""
 
-# the customer and the product with the highest net sales in the last complete NOP month (its first and last day
+# the customer and the product with the highest net sales in the last complete sales month (its first and last day
 # are the parameters, twice) - one row each, none when the month had no sale. The dates are filtered on the
 # invoice itself, so no calendar join (dim_calendar has one row per day). Ties go to the lower id, so the card
 # does not change between two reads. A product without a description shows its item number.
@@ -249,7 +249,7 @@ def _rows(sql, params=(), max_rows=10):
 
 # ------------------------------------------------------------------ the numbers (KPI cards)
 def _calendar():
-    """Today in the data's calendar: the NOP sales month we are in, the last two complete ones and the FY."""
+    """Today in the data's calendar: the sales month we are in, the last two complete ones and the FY."""
     rows = _rows(CALENDAR_SQL)
     if not rows:
         raise Missing(NOT_IN_CALENDAR)
@@ -264,7 +264,7 @@ def _calendar():
 
 
 def _sales(cal):
-    """Net sales of the last two complete NOP months, and net sales / customers / products this FY so far and on
+    """Net sales of the last two complete sales months, and net sales / customers / products this FY so far and on
     the same dates a year before - one query, never a line after today."""
     today = cal["today"]
     fy = (cal["fy_start"], today)
@@ -288,7 +288,7 @@ def _sales(cal):
 
 
 def _trends(cal):
-    """{kpi key: [{label, value}, ...] oldest first, or None} for the last 6 complete NOP months up to the KPI's
+    """{kpi key: [{label, value}, ...] oldest first, or None} for the last 6 complete sales months up to the KPI's
     last complete month - one query, never a line after today. fy_sales is the running total of this FY at the
     end of each of those months that ends in this FY. Fewer than 2 points is no line: None."""
     if not cal["last_end"]:
@@ -305,7 +305,7 @@ def _trends(cal):
 
 
 def _top(cal):
-    """{'customer': (name, sales), 'product': (name, sales)} of the last complete NOP month - one query; a kind
+    """{'customer': (name, sales), 'product': (name, sales)} of the last complete sales month - one query; a kind
     without a sale in that month is not in it."""
     if not cal["last_start"]:
         return {}
@@ -314,7 +314,7 @@ def _top(cal):
 
 
 def _top_card(key, what, cal, top, month_sales):
-    """The 'Top customer' / 'Top product' card: who sold most in the last complete NOP month, and its share of
+    """The 'Top customer' / 'Top product' card: who sold most in the last complete sales month, and its share of
     that month's net sales."""
     month = cal["last"] or "last month"
     card = {"key": key, "label": f"Top {what} {month}", "money": True, "change": None}
@@ -323,7 +323,7 @@ def _top_card(key, what, cal, top, month_sales):
     name, value = top
     share = _number(value) * 100 / _number(month_sales) if _number(month_sales) > 0 else None
     return {**card, "name": name, "value": _number(value), "text": f"INR {_money(value)}",
-            "note": f"{_day(cal['last_start'])} to {_day(cal['last_end'])} (last complete NOP sales month)",
+            "note": f"{_day(cal['last_start'])} to {_day(cal['last_end'])} (last complete sales month)",
             "facts": [f"{share:,.1f}% of {month} sales"] if share is not None else None}
 
 
@@ -353,7 +353,7 @@ def _kpis():
     kpis = [
         {"key": "month_sales", "label": f"Net sales {cal['last'] or 'last month'}", "money": True,
          "value": _number(sales["last"]), "text": f"INR {_money(sales['last'])}",
-         "note": f"{_day(cal['last_start'])} to {_day(cal['last_end'])} (last complete NOP sales month)",
+         "note": f"{_day(cal['last_start'])} to {_day(cal['last_end'])} (last complete sales month)",
          "change": _change(sales["last"], sales["before"], cal["before"]) if covered(cal["before_start"]) else None},
         {"key": "fy_sales", "label": f"Net sales {fy_words}", "money": True,
          "value": _number(sales["fy"]), "text": f"INR {_money(sales['fy'])}", "note": fy_dates,
@@ -397,7 +397,7 @@ def _kpis():
 
 # ------------------------------------------------------------------ the tables ("Our data")
 def _tables():
-    """The main ai_gold tables that exist: records (services.table_counts, the Data page's count) and dates."""
+    """The main ss_gold tables that exist: records (services.table_counts, the Data page's count) and dates."""
     counts = {t["name"]: t["rows"] for t in services.table_counts()}
     shown = [t for t in MAIN_TABLES if t[0] in counts]
     parts = []
@@ -433,7 +433,7 @@ def _app_database():
     return "SQLite (app database)"
 
 
-def _check_ai_gold():
+def _check_ss_gold():
     warehouse.run_select("SELECT 1", max_rows=1)
     return "Reachable"
 
@@ -489,7 +489,7 @@ def _status(key, name, what, check):
 
 def _connections():
     lines = [
-        _status("ai_gold", f"MySQL {warehouse.database_name()}", "Company data (read-only)", _check_ai_gold),
+        _status("ss_gold", f"MySQL {warehouse.database_name()}", "Company data (read-only)", _check_ss_gold),
         _status("app_db", _app_database(), "The app's chats, history and users", _check_app_db),
     ]
     for key, name, what, collection in _collections():
@@ -545,7 +545,7 @@ def _part(make, failed=PART_FAILED):
     try:
         return make(), ""
     except (warehouse.WarehouseUnavailable, warehouse.QueryError) as exc:
-        log.warning("Home: the NOP data could not be read: %s", exc)
+        log.warning("Home: the SS Manufacturing data could not be read: %s", exc)
         return None, MYSQL_DOWN
     except Missing as exc:
         return None, str(exc)

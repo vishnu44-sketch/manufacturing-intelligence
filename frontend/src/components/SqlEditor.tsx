@@ -1,5 +1,5 @@
 // The SQL editor of the SQL page: CodeMirror 6 with the MySQL dialect, line numbers, undo, bracket
-// matching and autocomplete of the ai_gold tables and columns (from the schema the page loaded).
+// matching and autocomplete of the ss_gold tables and columns (from the schema the page loaded).
 // Ctrl+Enter (Cmd+Enter on a Mac) runs the query. The colours are the site's CSS variables, so the editor
 // follows the light / dark look on its own; the dark flag only tells CodeMirror's own base styles.
 // SqlPage loads this file lazily: CodeMirror is its own chunk, fetched only on the SQL page. Each editor tab

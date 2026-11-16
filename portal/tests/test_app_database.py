@@ -1,4 +1,4 @@
-"""Ask NOP's own tables in MySQL (APP_DB_NAME): Django's MySQL driver must not break warehouse.py."""
+"""Manufacturing Intelligence's own tables in MySQL (APP_DB_NAME): Django's MySQL driver must not break warehouse.py."""
 import sys
 
 import pymysql

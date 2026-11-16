@@ -26,19 +26,19 @@ CHAT_GROUPS = ("Today", "Yesterday", "Previous 7 days", "Older")  # the chat lis
 # example questions shown under the question box (a click fills the box)
 EXAMPLES = [
     "Top 5 customers by invoice value in Aug 2026?",
-    "What were net sales in each NOP sales month of FY 2026-27?",
+    "What were net sales in each sales month of FY 2026-27?",
     "How many sales orders are open and what is their value?",
     "What is the stock value as on 20-Sep-2026?",
 ]
 
-# the Data page: what each ai_gold table holds, in plain words (a new table shows with its name only)
+# the Data page: what each ss_gold table holds, in plain words (a new table shows with its name only)
 TABLE_NOTES = {
     "fact_invoice_lines": "Invoice lines and credit / debit note lines (sales)",
     "fact_sales_order_lines": "Sales order lines",
     "fact_stock_ledger": "Stock ledger = inventory: stock balances and movements (Inventory Audit Report)",
-    "dim_calendar": "Calendar: one row per day, with its financial year and NOP sales month",
+    "dim_calendar": "Calendar: one row per day, with its financial year and sales month",
     "dim_customers": "Customers",
-    "dim_fx_rates": "INR to JPY exchange rates, one per NOP sales month",
+    "dim_fx_rates": "INR to JPY exchange rates, one per sales month",
     "dim_products": "Products / items",
     "dim_sales_people": "Sales people",
     "dim_stock_movement_types": "Kinds of stock row (Purchase, COGS, transfer, balances ...)",
@@ -240,7 +240,7 @@ def excel_file(data, info_title, info_rows):
     from openpyxl.styles import Alignment, Font, PatternFill
 
     header_font = Font(bold=True, color="FFFFFF")
-    header_fill = PatternFill("solid", fgColor="C00000")  # NOP red
+    header_fill = PatternFill("solid", fgColor="C00000")  # the brand red
 
     book = Workbook()
     sheet = book.active
@@ -336,7 +336,7 @@ def table_kind(name):
 
 
 def table_counts():
-    """[{name, note, kind, rows}] of every ai_gold table, counted in one query."""
+    """[{name, note, kind, rows}] of every ss_gold table, counted in one query."""
     names = sorted(warehouse.allowed_tables(), key=lambda name: (table_kind(name)[0], name))
     # the names come from information_schema (not from a person), so they are safe in the SQL
     sql = " UNION ALL ".join(f"SELECT '{name}', COUNT(*) FROM `{name}`" for name in names)

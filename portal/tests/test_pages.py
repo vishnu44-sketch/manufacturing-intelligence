@@ -146,10 +146,10 @@ def test_sign_out(client, user):
     assert api_get(client, "api_me").status_code == 401                  # signed out again
 
 
-def test_ask_nop_uses_its_own_cookie_names(client, user):
-    """13-Oct: the main NOP project on 127.0.0.1:8080 also sets 'csrftoken' / 'sessionid' - the browser
-    shares them between ports, so Ask NOP's questions got 403 "CSRF token incorrect"."""
+def test_the_app_uses_its_own_cookie_names(client, user):
+    """13-Oct: the company project on 127.0.0.1:8080 also sets 'csrftoken' / 'sessionid' - the browser
+    shares them between ports, so Manufacturing Intelligence's questions got 403 "CSRF token incorrect"."""
     r = api_get(client, "api_csrf")
-    assert "asknop_csrftoken" in r.cookies and "csrftoken" not in r.cookies
+    assert "ask_csrftoken" in r.cookies and "csrftoken" not in r.cookies
     r = api_post(client, "api_login", {"username": "asha", "password": "Test-pass-123"})
-    assert "asknop_sessionid" in r.cookies and "sessionid" not in r.cookies
+    assert "ask_sessionid" in r.cookies and "sessionid" not in r.cookies

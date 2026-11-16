@@ -11,7 +11,7 @@ pytestmark = pytest.mark.django_db
 
 PIECES = [
     {"id": "business_rules-001", "source": "business_rules.md", "kind": "rule",
-     "heading": "Financial year (FY) - 1 April to 31 March", "text": "NOP business rule: FY text"},
+     "heading": "Financial year (FY) - 1 April to 31 March", "text": "SS Manufacturing business rule: FY text"},
     {"id": "business_rules-002", "source": "business_rules.md", "kind": "rule",
      "heading": "Stock value on a date - Closing balance rows only", "text": "Never SUM every row."},
     {"id": "data_dictionary-001", "source": "data_dictionary.md", "kind": "table",

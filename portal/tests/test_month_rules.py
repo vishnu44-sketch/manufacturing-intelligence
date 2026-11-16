@@ -20,31 +20,31 @@ from portal.tests.test_agent import TABLES, mysql, use_fake_ai  # noqa: F401
 
 pytestmark = pytest.mark.django_db  # agent.ask() saves a Question
 
-# the period list of rule 17: one row per NOP month (checked on the real data: Oct, Sep, Aug 2026)
-MONTHS = ("SELECT DISTINCT nop_sales_month, nop_sales_period_start, nop_sales_period_end FROM dim_calendar "
-          "WHERE nop_sales_period_end <= CURRENT_DATE ORDER BY nop_sales_period_end DESC LIMIT 3")
+# the period list of rule 17: one row per sales month (checked on the real data: Oct, Sep, Aug 2026)
+MONTHS = ("SELECT DISTINCT sales_month, sales_period_start, sales_period_end FROM dim_calendar "
+          "WHERE sales_period_end <= CURRENT_DATE ORDER BY sales_period_end DESC LIMIT 3")
 TOP_SQL = (f"WITH m AS ({MONTHS}) SELECT cu.customer_name, ROUND(SUM(il.net_taxable_value), 2) AS net_sales_inr, "
-           "(SELECT MIN(nop_sales_period_start) FROM m) AS period_from, (SELECT MAX(nop_sales_period_end) FROM m) "
+           "(SELECT MIN(sales_period_start) FROM m) AS period_from, (SELECT MAX(sales_period_end) FROM m) "
            "AS period_to FROM fact_invoice_lines il JOIN dim_calendar c ON c.date_id = il.invoice_date_id "
-           "JOIN m ON m.nop_sales_month = c.nop_sales_month JOIN dim_customers cu ON cu.customer_id = il.customer_id "
+           "JOIN m ON m.sales_month = c.sales_month JOIN dim_customers cu ON cu.customer_id = il.customer_id "
            "GROUP BY cu.customer_name ORDER BY net_sales_inr DESC LIMIT 1")
-TOP_ANSWER = ("In the last 3 NOP months (Aug 2026 to Oct 2026) the most valuable customer was Allied Castings Limited "
+TOP_ANSWER = ("In the last 3 sales months (Aug 2026 to Oct 2026) the most valuable customer was Allied Castings Limited "
               "with INR 63,648,019.00.")
 # the line chart: the period list LEFT JOIN that customer's sales summed per month, 0 for a month without sales
 CHART_SQL = ("```sql\n"
              f"WITH m AS ({MONTHS}),\n"
-             "s AS (SELECT c.nop_sales_month, SUM(il.net_taxable_value) AS v FROM fact_invoice_lines il\n"
+             "s AS (SELECT c.sales_month, SUM(il.net_taxable_value) AS v FROM fact_invoice_lines il\n"
              "      JOIN dim_calendar c ON c.date_id = il.invoice_date_id\n"
              "      JOIN dim_customers cu ON cu.customer_id = il.customer_id\n"
-             "      WHERE cu.customer_name LIKE '%Allied Castings%' GROUP BY c.nop_sales_month)\n"
-             "SELECT m.nop_sales_month, ROUND(COALESCE(s.v, 0), 2) AS net_sales_inr\n"
-             "FROM m LEFT JOIN s ON s.nop_sales_month = m.nop_sales_month\n"
-             "ORDER BY m.nop_sales_period_end\n```")
-CHART_ROWS = {"columns": ["nop_sales_month", "net_sales_inr"],  # the real numbers of 05-Nov
+             "      WHERE cu.customer_name LIKE '%Allied Castings%' GROUP BY c.sales_month)\n"
+             "SELECT m.sales_month, ROUND(COALESCE(s.v, 0), 2) AS net_sales_inr\n"
+             "FROM m LEFT JOIN s ON s.sales_month = m.sales_month\n"
+             "ORDER BY m.sales_period_end\n```")
+CHART_ROWS = {"columns": ["sales_month", "net_sales_inr"],  # the real numbers of 05-Nov
               "rows": [["Aug 2026", "0.00"], ["Sep 2026", "0.00"], ["Oct 2026", "63,648,019.00"]],
               "truncated": False}
-CHART_UNDERSTOOD = "Monthly net sales of the top customer of the last 3 NOP months as a line chart"
-CHART_ANSWER = ("In the last 3 NOP months (Aug 2026 to Oct 2026) Allied Castings Limited bought nothing in Aug 2026 "
+CHART_UNDERSTOOD = "Monthly net sales of the top customer of the last 3 sales months as a line chart"
+CHART_ANSWER = ("In the last 3 sales months (Aug 2026 to Oct 2026) Allied Castings Limited bought nothing in Aug 2026 "
                 "and Sep 2026 and INR 63,648,019.00 in Oct 2026.")
 
 
@@ -53,26 +53,26 @@ CHART_ANSWER = ("In the last 3 NOP months (Aug 2026 to Oct 2026) Allied Castings
 def test_rule_17_says_dim_calendar_has_one_row_per_day_and_how_to_list_periods():
     prompt = agent.SQL_SYSTEM_PROMPT
     assert "17. dim_calendar has ONE ROW PER DAY." in prompt
-    assert "A list of the last N NOP months (or months, quarters) must have one row per period" in prompt
-    assert ("SELECT DISTINCT nop_sales_month, nop_sales_period_start, nop_sales_period_end FROM dim_calendar "
-            "WHERE nop_sales_period_end <= CURRENT_DATE ORDER BY nop_sales_period_end DESC LIMIT N") in prompt
+    assert "A list of the last N sales months (or months, quarters) must have one row per period" in prompt
+    assert ("SELECT DISTINCT sales_month, sales_period_start, sales_period_end FROM dim_calendar "
+            "WHERE sales_period_end <= CURRENT_DATE ORDER BY sales_period_end DESC LIMIT N") in prompt
     assert "Never LIMIT plain dim_calendar rows to get periods" in prompt
     assert ("never JOIN fact rows to a period list with more than one row per period (it counts the sales 2-3 times)"
             in prompt)
 
 
-def test_past_months_with_no_number_are_the_last_3_complete_nop_months_and_are_named():
+def test_past_months_with_no_number_are_the_last_3_complete_sales_months_and_are_named():
     prompt = agent.SQL_SYSTEM_PROMPT
-    assert '"Past / last / recent months" with no number = the last 3 complete NOP sales months up to today' in prompt
+    assert '"Past / last / recent months" with no number = the last 3 complete sales months up to today' in prompt
     assert "period_from / period_to" in prompt
     assert 'For "past / last months" name the months used' in agent.EXPLAIN_SYSTEM_PROMPT
-    assert '"In the last 3 NOP months (Aug 2026 to Oct 2026) ..."' in agent.EXPLAIN_SYSTEM_PROMPT
+    assert '"In the last 3 sales months (Aug 2026 to Oct 2026) ..."' in agent.EXPLAIN_SYSTEM_PROMPT
 
 
 def test_a_line_chart_over_several_periods_is_one_row_per_period_with_0_for_no_sales():
     prompt = agent.SQL_SYSTEM_PROMPT
     assert ("A line chart or trend of an earlier answer over several periods (e.g. the top customer of the last 3 "
-            "NOP months) = one row per period for that same customer / item, ordered by period, with 0 for a period "
+            "sales months) = one row per period for that same customer / item, ordered by period, with 0 for a period "
             "without sales") in prompt
     assert "LEFT JOIN that customer's sales summed per period, COALESCE(..., 0)" in prompt
     # rule 16 itself is unchanged
@@ -88,10 +88,10 @@ def test_the_sql_rules_are_numbered_1_to_17_and_17_is_the_last():
 def test_the_rewrite_keeps_the_number_of_periods_and_the_customer_of_a_chart_follow_up():
     prompt = agent.REWRITE_SYSTEM_PROMPT
     assert "A chart of an answer over several periods keeps their number and the customer / item" in prompt
-    assert '("past months" with no number = the last 3 NOP months)' in prompt
-    assert '"Monthly net sales of the top customer of the last 3 NOP months as a line chart"' in prompt
+    assert '("past months" with no number = the last 3 sales months)' in prompt
+    assert '"Monthly net sales of the top customer of the last 3 sales months as a line chart"' in prompt
     # the earlier chart examples are still there
-    assert '"Net sales of the last 6 NOP months up to Oct 2026 as a line chart"' in prompt
+    assert '"Net sales of the last 6 sales months up to Oct 2026 as a line chart"' in prompt
 
 
 def test_the_new_rules_reach_langchain_and_the_mcp_server():
@@ -134,5 +134,5 @@ def test_a_line_chart_of_the_past_months_answer_gives_one_row_per_month(monkeypa
     assert sql_call[0]["content"] == agent.SQL_SYSTEM_PROMPT                         # with rule 17
     request = sql_call[-1]["content"]
     assert CHART_UNDERSTOOD in request
-    assert "Allied Castings Limited" in request and "SELECT DISTINCT nop_sales_month" in request  # the earlier answer
+    assert "Allied Castings Limited" in request and "SELECT DISTINCT sales_month" in request  # the earlier answer
     assert len(mysql.calls) == 1 and "LEFT JOIN" in mysql.calls[0].upper() and "DISTINCT" in mysql.calls[0].upper()
