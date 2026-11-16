@@ -68,7 +68,7 @@ describe('Shell: the menu (05-Nov)', () => {
     first.unmount()
 
     renderAt('/users', <Shell me={BOSS} title="Users" active="users" onSignOut={() => {}}><p>Page</p></Shell>)
-    expect(names('Administration')).toEqual(['Users', 'Documents', 'Data', 'Audit'])
+    expect(names('Administration')).toEqual(['Users', 'Documents', 'Data', 'SQL', 'Audit'])
     expect(menu().getByRole('link', { name: 'Users' })).toHaveAttribute('aria-current', 'page')
   })
 })

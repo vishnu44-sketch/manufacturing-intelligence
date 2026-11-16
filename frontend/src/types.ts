@@ -215,6 +215,34 @@ export interface DataTables {
   last_load: string
 }
 
+// the SQL page (staff): the tables of ai_gold with their columns, and the rows of one read-only query
+export interface SqlColumn {
+  name: string
+  type: string // the MySQL type, e.g. 'int', 'varchar(100)'
+}
+
+export interface SqlTable {
+  name: string
+  rows: number | null // the row count (null when it could not be counted)
+  columns: SqlColumn[]
+}
+
+export interface SqlSchema {
+  database: string
+  tables: SqlTable[]
+}
+
+export type SqlCell = string | number | boolean | null
+
+export interface SqlResult {
+  sql: string // the query that was run
+  columns: string[]
+  rows: SqlCell[][]
+  row_count: number
+  truncated: boolean // true: there were more rows than the limit (only the first ones came back)
+  secs: number
+}
+
 export interface Person {
   id: number
   username: string

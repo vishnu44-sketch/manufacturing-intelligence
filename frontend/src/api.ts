@@ -3,7 +3,8 @@
 // the app then shows its Login page. A 403 on a staff page means "no access".
 import type {
   AiChartReply, AskResponse, AuditData, AuditFilters, ChatDetail, ChatList, ChatSummary, DataTables, DocumentsData, EditResponse,
-  GraphNodeReply, GraphSearchReply, GraphSimilarReply, HistoryPage, HomeData, Me, MemoryList, MemoryReply, PeopleList, PersonReply, Rows, SavedAnswer, StreamEvent,
+  GraphNodeReply, GraphSearchReply, GraphSimilarReply, HistoryPage, HomeData, Me, MemoryList, MemoryReply, PeopleList, PersonReply, Rows, SavedAnswer, SqlResult, SqlSchema,
+  StreamEvent,
 } from './types'
 
 // this app's own cookie name (nopsite/settings.py CSRF_COOKIE_NAME), then Django's default
@@ -109,10 +110,11 @@ export function query(params: Record<string, string | number | undefined>): stri
   return text ? `?${text}` : ''
 }
 
-/** Downloads a file (the Excel of an answer) and saves it under the server's file name. A failure
- *  (e.g. MySQL is down) becomes an ApiError with the server's friendly message. */
-export async function download(url: string): Promise<void> {
-  const response = await send('GET', url, undefined, '*/*')
+/** Downloads a file (the Excel of an answer) and saves it under the server's file name. With a body it is
+ *  a POST (with the CSRF token), e.g. the Excel of a query on the SQL page. A failure (e.g. MySQL is down)
+ *  becomes an ApiError with the server's friendly message. */
+export async function download(url: string, body?: unknown): Promise<void> {
+  const response = await send(body === undefined ? 'GET' : 'POST', url, body, '*/*')
   if (!response.ok) {
     let data: unknown = null
     try {
@@ -250,6 +252,10 @@ export const api = {
     request<GraphNodeReply>('GET', `/api/graph/node${query({ type, id, fy, limit })}`),
   graphSimilar: (customerId: string, fy: string, limit?: number) =>
     request<GraphSimilarReply>('GET', `/api/graph/similar${query({ customer_id: customerId, fy, limit })}`),
+  // the SQL page (staff): the ai_gold tables and columns, one read-only SELECT, and its rows as Excel
+  sqlSchema: () => request<SqlSchema>('GET', '/api/sql/schema'),
+  sql: (sql: string) => request<SqlResult>('POST', '/api/sql', { sql }),
+  sqlExcel: (sql: string) => download('/api/sql/excel', { sql }),
   people: () => request<PeopleList>('GET', '/api/users'),
   addPerson: (fields: Record<string, string | boolean>) => request<PersonReply>('POST', '/api/users', fields),
   changePerson: (id: number, fields: Record<string, string | boolean>) =>

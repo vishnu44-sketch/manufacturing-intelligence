@@ -1,6 +1,6 @@
 // The website: the Login page until the API knows the user, then each page in the shell (dark menu on
 // the left, top bar) by its address - Home (at /, the first page), Assistant, History, Memory, Knowledge graph, and for staff Users, Documents,
-// Data and Audit (anyone else gets "no access"). Any 401 from the API brings the Login page back; signing out goes to /login.
+// Data, SQL and Audit (anyone else gets "no access"). Any 401 from the API brings the Login page back; signing out goes to /login.
 import { useCallback, useEffect, useState } from 'react'
 import { ApiError, api, setUnauthorizedHandler } from './api'
 import AskPage from './components/AskPage'
@@ -14,6 +14,7 @@ import HomePage from './components/HomePage'
 import Login from './components/Login'
 import MemoryPage from './components/MemoryPage'
 import Shell, { type MenuItem } from './components/Shell'
+import SqlPage from './components/SqlPage'
 import UsersPage from './components/UsersPage'
 import { NoAccess, NotFound } from './components/common'
 import { type Route, RouterProvider, useRouter } from './router'
@@ -21,7 +22,7 @@ import type { Me } from './types'
 
 type Auth = { state: 'loading' } | { state: 'out' } | { state: 'in'; me: Me } | { state: 'down'; message: string }
 
-const STAFF_PAGES = new Set<Route['kind']>(['users', 'documents', 'data', 'audit'])
+const STAFF_PAGES = new Set<Route['kind']>(['users', 'documents', 'data', 'sql', 'audit'])
 
 /** [title, lit menu item] of a page. */
 function pageOf(route: Route, me: Me): [string, MenuItem] {
@@ -34,6 +35,7 @@ function pageOf(route: Route, me: Me): [string, MenuItem] {
     case 'users': return ['Users', 'users']
     case 'documents': return ['Documents', 'documents']
     case 'data': return ['Data', 'data']
+    case 'sql': return ['SQL', 'sql']
     case 'audit': return ['Audit log', 'audit']
     case 'notfound': return ['Not found', '']
     default: return ['Assistant', 'ask']
@@ -50,6 +52,7 @@ function Page({ route, me }: { route: Route; me: Me }) {
     case 'users': return <UsersPage />
     case 'documents': return <DocumentsPage source={route.source} find={route.find} q={route.q} />
     case 'data': return <DataPage />
+    case 'sql': return <SqlPage />
     case 'audit':
       return <AuditPage page={route.page} user={route.user} action={route.action} from={route.from} to={route.to} q={route.q} />
     case 'notfound': return <NotFound />

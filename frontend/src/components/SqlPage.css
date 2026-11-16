@@ -1,0 +1,8 @@
+/* The SQL page (SqlPage.tsx): on a desktop the page fills the window under the top bar and does not scroll
+   itself - the table list, the editor and the result grid scroll on their own (as on the Assistant page).
+   SqlPage puts the class "page-sql" on <body> while it is open. On a phone the page scrolls as usual. */
+@media (min-width: 901px) {
+  body.page-sql .mi-shell-main { height: calc(100vh - var(--mi-shell-top)); overflow: hidden; }
+  body.page-sql .content { flex: 1; min-height: 0; padding-top: 10px; padding-bottom: 14px; }
+  body.page-sql .app-foot { display: none; }
+}
