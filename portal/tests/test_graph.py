@@ -250,8 +250,8 @@ def test_a_data_question_has_the_same_time_steps_and_tokens(monkeypatch, mysql, 
                                      "answer_ai", "other"}
     assert sum(result.step_secs.values()) == pytest.approx(result.secs, abs=0.02)
     assert [step["label"] for step in result.time_steps][:7] == [
-        "Search the PDFs", "Search the notes in Qdrant", "Pick the tables and columns", "Write the SQL (AI)",
-        "Check the SQL (guard and checks)", "Run the SQL on MySQL", "Write the answer (AI)"]
+        "Search the PDF documents (vector DB Qdrant: mi_pdfs)", "Search the SQL notes (vector DB Qdrant: mi_docs)", "Pick the tables and columns", "Write the SQL (AI)",
+        "Check the SQL (guard and checks)", "Run the SQL on MySQL (ss_gold)", "Write the answer (AI)"]
     assert (result.sql_tokens, result.answer_tokens, result.total_tokens) == (3000, 800, 3800)
     assert result.tokens_text == "Tokens used: 3,800 (SQL 3,000 + answer 800)"
     saved = Question.objects.get()
@@ -267,7 +267,7 @@ def test_a_document_question_has_the_same_time_steps_and_tokens(monkeypatch, mys
 
     assert set(result.step_secs) == {"pdf_search", "route", "wait", "answer_ai", "other"}
     assert [step["label"] for step in result.time_steps][:3] == [
-        "Search the PDFs", "Decide: data, documents or both (AI)", "Write the answer (AI)"]
+        "Search the PDF documents (vector DB Qdrant: mi_pdfs)", "Decide: data, documents or both (AI)", "Write the answer (AI)"]
     assert (result.sql_tokens, result.answer_tokens, result.total_tokens) == (300, 900, 1200)
     assert result.tokens_text == "Tokens used: 1,200 (route 300 + answer 900)"
     saved = Question.objects.get()

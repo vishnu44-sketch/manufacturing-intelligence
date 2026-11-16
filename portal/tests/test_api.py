@@ -247,7 +247,7 @@ def test_an_answered_card_has_what_the_page_shows(client, user, monkeypatch, mys
     assert card["sql"] == SQL and card["has_rows"] is True
     assert card["sources"] == [{"kind": "example", "heading": "Q: Who were the top 5 customers by invoice value in Aug 2026?"},
                                {"kind": "rule", "heading": "sales month"}]
-    assert [s["label"] for s in card["time_steps"]][:2] == ["Write the SQL (AI)", "Run the SQL on MySQL"]
+    assert [s["label"] for s in card["time_steps"]][:2] == ["Write the SQL (AI)", "Run the SQL on MySQL (ss_gold)"]
     assert card["created_text"] and card["created_at"] and card["edited"] is False
 
 

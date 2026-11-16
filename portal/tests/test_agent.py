@@ -700,8 +700,8 @@ def test_every_step_gets_its_own_time_and_is_saved(monkeypatch, mysql, user):
     assert result.question.step_secs == result.step_secs            # saved for History
     labels = [step["label"] for step in result.time_steps]
     assert "route" not in result.step_secs                         # no PDF piece close enough: no router call
-    assert labels[:7] == ["Search the PDFs", "Search the notes in Qdrant", "Pick the tables and columns", "Write the SQL (AI)",
-                          "Check the SQL (guard and checks)", "Run the SQL on MySQL", "Write the answer (AI)"]
+    assert labels[:7] == ["Search the PDF documents (vector DB Qdrant: mi_pdfs)", "Search the SQL notes (vector DB Qdrant: mi_docs)", "Pick the tables and columns", "Write the SQL (AI)",
+                          "Check the SQL (guard and checks)", "Run the SQL on MySQL (ss_gold)", "Write the answer (AI)"]
 
 
 def test_waiting_for_groq_is_its_own_step_not_the_ai_time(monkeypatch, mysql, user):
@@ -728,7 +728,7 @@ def test_the_embedding_time_is_split_from_the_qdrant_search(monkeypatch, mysql, 
     result = agent.ask("Top customers in Aug 2026?", user)
 
     assert result.step_secs["embed"] == 0.25
-    assert "Embed the question (text to numbers)" in [step["label"] for step in result.time_steps]
+    assert "Embed the question (text to numbers, on this PC)" in [step["label"] for step in result.time_steps]
 
 
 def test_a_follow_up_rewrite_is_timed_as_its_own_step(monkeypatch):
@@ -743,8 +743,8 @@ def test_the_time_box_shows_the_steps_in_order_with_the_tries():
     result = agent.AskResult(text="q", secs=60.0, tries=2, step_secs={
         "mysql": 0.8, "sql_ai": 9.0, "wait": 45.0, "embed": 0.05, "search": 0.02, "answer_ai": 3.1, "other": 2.03})
     assert [(step["label"], step["secs"], step["note"]) for step in result.time_steps] == [
-        ("Embed the question (text to numbers)", 0.05, ""), ("Search the notes in Qdrant", 0.02, ""),
-        ("Write the SQL (AI)", 9.0, "2 tries"), ("Run the SQL on MySQL", 0.8, ""),
+        ("Embed the question (text to numbers, on this PC)", 0.05, ""), ("Search the SQL notes (vector DB Qdrant: mi_docs)", 0.02, ""),
+        ("Write the SQL (AI)", 9.0, "2 tries"), ("Run the SQL on MySQL (ss_gold)", 0.8, ""),
         ("Write the answer (AI)", 3.1, ""), ("Wait for Groq's per-minute limit", 45.0, ""),
         ("Other app work", 2.03, "")]
     assert agent.AskResult(text="saved before 02-Nov", secs=12.0).time_steps == []
@@ -2320,7 +2320,7 @@ def test_a_document_question_has_its_own_time_steps(monkeypatch, mysql, user):
     assert {"pdf_search", "route", "answer_ai"} <= set(result.step_secs)
     assert not {"search", "schema", "sql_ai", "mysql"} & set(result.step_secs)
     labels = [step["label"] for step in result.time_steps]
-    assert labels[:3] == ["Search the PDFs", "Decide: data, documents or both (AI)", "Write the answer (AI)"]
+    assert labels[:3] == ["Search the PDF documents (vector DB Qdrant: mi_pdfs)", "Decide: data, documents or both (AI)", "Write the answer (AI)"]
 
 
 def test_the_router_saying_data_keeps_the_sql_path_as_before(monkeypatch, mysql, user):

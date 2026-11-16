@@ -5,7 +5,7 @@
 // - one saved answer (/q/<id>): the card with its rows; asking there continues its chat;
 // - the start screen (/new, or /ask without chats): a big heading, the question box in the middle of the
 //   page and four starter cards (AskStart.tsx). After the first question the box sits at the bottom.
-// Asking streams the answer (/api/ask/stream): the steps show as they run ("Search the notes in Qdrant …"),
+// Asking streams the answer (/api/ask/stream): the steps show as they run ("Search the SQL notes (vector DB Qdrant: mi_docs) …"),
 // then the answer grows word by word, and the finished card takes its place. When the stream cannot be
 // used (nothing comes back, e.g. a proxy), it asks the plain way (/api/ask) and shows "Thinking…".
 // History's "Ask again" lands here (/new with the question in the navigation state) and asks at once.
