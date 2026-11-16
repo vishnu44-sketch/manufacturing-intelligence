@@ -11,6 +11,8 @@
             -> check_names -> END (a typed name matches nothing: a fixed answer, no AI call) / explain
     run_sql with ONE row for a line chart / trend -> retry -> write_sql once more (one row per period);
             that try gives no better rows -> keep_first_answer (the first rows) -> explain
+    run_sql with rows that name none of the customers / products ... the question ranks ("top customers of X"
+            answered with X's total) -> retry once the same way, keep_first_answer when that try is no better
 
 A question about the data AND the documents ('both': "top 3 export customers ... and what are the payment terms
 for export customers?") takes the data path with every rule as it is; explain then also gets the closest PDF
@@ -126,7 +128,9 @@ class AskState(TypedDict, total=False):
     year_check_used: bool     # a quarter / month number grouped over all years is sent back once
     today_check_used: bool    # a period not over yet, counted past today, is sent back once
     one_row_retry_used: bool  # a line chart / trend question with only 1 row is sent back once
-    first_answer: dict        # the 1-row answer kept while that retry runs ({} = none): its try, SQL, data, notes
+    entity_check_used: bool   # a ranking of customers / products ... whose rows name none of them is sent back once
+    first_answer: dict        # the answer kept while one of those two retries runs ({} = none): its try, SQL, data,
+                              # notes, and for the ranking check the thing ranked ("entity")
     not_found: str            # the fixed answer when a typed name matches nothing
 
 
@@ -341,14 +345,25 @@ def run_sql(state):
                         "problem": agent.UNKNOWN_VALUES_PROBLEM.format(wrong="; ".join(wrong))}
     except warehouse.QueryError as exc:
         return {**update, "problem": f"MySQL returned an error: {exc}"}
-    if (not state["one_row_retry_used"] and state["attempt"] < agent.MAX_TRIES and len(data["rows"]) == 1
-            and several_periods_chart_request(f"{result.text} {result.understood_as}")):
+    question = f"{result.text} {result.understood_as}"
+    first = {"attempt": state["attempt"], "sql": cleaned, "data": data, "missing": state["missing"],
+             "notes": list(result.notes)}
+    if (not state["one_row_retry_used"] and not state["first_answer"] and state["attempt"] < agent.MAX_TRIES
+            and len(data["rows"]) == 1 and several_periods_chart_request(question)):
         # a line chart needs one row per period: sent back once; the 1-row answer is kept in case that try
         # gives nothing better (keep_first_answer) - an answered question never becomes an error
         return {**update, "one_row_retry_used": True, "schema_not_needed": True,
-                "problem": ONE_ROW_LINE_CHART_PROBLEM,
-                "first_answer": {"attempt": state["attempt"], "sql": cleaned, "data": data,
-                                 "missing": state["missing"], "notes": list(result.notes)}}
+                "problem": ONE_ROW_LINE_CHART_PROBLEM, "first_answer": first}
+    if (not state["entity_check_used"] and not state["first_answer"] and state["attempt"] < agent.MAX_TRIES
+            and not agent.found_nothing(data["rows"])):
+        # 16-Nov: "Top customers of Coolant pump ..." got the product's total over all its customers, with no
+        # customer column, and the answer called it "the top customer". Sent back once, the first answer kept
+        # in case that try gives nothing better (keep_first_answer)
+        missing = agent.missing_entity(question, data["columns"])
+        if missing:
+            return {**update, "entity_check_used": True,
+                    "problem": agent.entity_problem(missing[0], missing[1], data["columns"]),
+                    "first_answer": {**first, "entity": missing[0]}}
     _keep_rows(result, cleaned, data, state["missing"])
     return update
 
@@ -366,10 +381,12 @@ def _keep_rows(result, cleaned, data, missing):
 
 
 def keep_first_answer(state):
-    """The line chart retry gave no better rows (again 1 row, no rows, NO_SQL / NO_DATA, or a query that failed):
-    the first 1-row answer is kept and explained as it was. Its tries and tokens still count both SQL calls."""
+    """The line chart retry or the ranking retry gave no better rows (again 1 row / again no column of the thing
+    ranked, no rows, NO_SQL / NO_DATA, or a query that failed): the first answer is kept and explained as it was.
+    Its tries and tokens still count both SQL calls."""
     result, first = state["result"], state["first_answer"]
-    log.info("Line chart retry gave no better rows - the first answer is kept")
+    log.info("%s retry gave no better rows - the first answer is kept",
+             "Ranking" if first.get("entity") else "Line chart")
     result.answer, result.notes = "", list(first["notes"])
     _keep_rows(result, first["sql"], first["data"], first["missing"])
     return {"problem": ""}
@@ -516,10 +533,19 @@ def _both(label, state):
 
 
 def _first_kept(state):
-    """The line chart retry ran (a try after the 1-row one): anything but rows of its own keeps the first answer
-    (it is never sent back again)."""
+    """The line chart or ranking retry ran (a try after the first answer): anything but better rows of its own
+    keeps the first answer (it is never sent back again)."""
     first = state["first_answer"]
     return bool(first) and state["attempt"] > first["attempt"]
+
+
+def _no_better_rows(state):
+    """The retry's rows are no better than the first answer: for the ranking check, no rows or still no column
+    of the thing ranked; for the line chart, fewer than 2 rows."""
+    result, entity = state["result"], state["first_answer"].get("entity")
+    if entity:
+        return agent.found_nothing(result.rows) or not agent.shows_entity(entity, result.columns)
+    return len(result.rows) < 2
 
 
 def after_write_sql(state):
@@ -539,7 +565,7 @@ def after_check_sql(state):
 
 
 def after_run_sql(state):
-    if _first_kept(state) and (state["problem"] or len(state["result"].rows) < 2):
+    if _first_kept(state) and (state["problem"] or _no_better_rows(state)):
         return "keep the first answer"
     if state["problem"]:
         return retry_or_fail(state)
@@ -599,7 +625,7 @@ def start_state(result, context=(), user=None):
         "route": "data", "pdf_hits": [], "hits": [],
         "retries": [], "attempt": 0, "problem": "", "missing": "", "last_sql": "", "schema_note": "",
         "not_found": "", "schema_not_needed": False, "name_check_used": False, "profit_switched": False,
-        "chart_retry_used": False, "one_row_retry_used": False, "first_answer": {},
+        "chart_retry_used": False, "one_row_retry_used": False, "entity_check_used": False, "first_answer": {},
         "values_checked": False, "year_check_used": False, "today_check_used": False,
     }
 
