@@ -18,7 +18,10 @@ describe('AskStart: the start screen', () => {
     expect(box).toHaveAttribute('placeholder', 'Ask about sales, customers, orders, stock or documents…')
     expect(screen.queryByText(/MySQL ai_gold/)).not.toBeInTheDocument()   // 12-Nov: "remove this, no need"
     expect(within(start).getByRole('button', { name: 'Ask' })).toBeInTheDocument()
+    expect(box).toHaveAttribute('rows', '2')                                       // the start screen keeps its big box
     expect(document.querySelector('.composer')).toBeNull()
+    expect(document.querySelector('.conv-head')).toBeNull()                        // no "New chat" head row (16-Nov)
+    expect(screen.queryByRole('button', { name: 'Options for this chat' })).not.toBeInTheDocument()
     const cards = within(within(start).getByRole('list', { name: 'Starter questions' })).getAllByRole('button')
     expect(cards.map((c) => c.textContent)).toEqual([
       expect.stringMatching(/^Sales/), expect.stringMatching(/^Customers/),
@@ -48,8 +51,8 @@ describe('AskStart: the start screen', () => {
     const box = await screen.findByPlaceholderText('Ask about sales, customers, orders, stock or documents…')
     expect(box.closest('.composer')).not.toBeNull()
     expect(screen.queryByText('What would you like to know?')).not.toBeInTheDocument()
-    // 12-Nov: the same box as on the start screen - no "NOP data" text, no "MySQL ai_gold" label
-    expect(box).toHaveAttribute('rows', '2')
+    // 12-Nov: no "NOP data" text, no "MySQL ai_gold" label; 16-Nov: one row under a conversation (it grows with the text)
+    expect(box).toHaveAttribute('rows', '1')
     expect(screen.queryByText(/MySQL ai_gold/)).not.toBeInTheDocument()
     expect(screen.queryByPlaceholderText(/NOP data/)).not.toBeInTheDocument()
     // one short line under it; the longer tips sit behind the (i)

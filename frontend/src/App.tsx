@@ -115,8 +115,9 @@ function Site() {
   if (route.kind === 'login') return null // on its way to / (Home)
   const [title, active] = pageOf(route, auth.me)
   return (
-    // Home has no top bar: its banner shows the greeting and the clock
-    <Shell me={auth.me} title={title} active={active} onSignOut={signOut} header={route.kind !== 'home'}>
+    // Home has no title row (its banner shows the greeting and the clock), nor has the Assistant (16-Nov: the
+    // conversation gets the room; the browser tab shows the open chat's title)
+    <Shell me={auth.me} title={title} active={active} onSignOut={signOut} header={route.kind !== 'home' && active !== 'ask'}>
       <Page route={route} me={auth.me} />
     </Shell>
   )
