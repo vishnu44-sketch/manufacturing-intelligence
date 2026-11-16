@@ -784,6 +784,87 @@ GROUP BY tm.nop_sales_month, tm.nop_sales_period_start, tm.so_far_to;
 Why: this month is not over yet, so it counts only from its first day up to TODAY (CURDATE()) - never to the month's last day: data dated after today must not be counted. The answer says "so far" with both dates, e.g. "In NOP sales month Nov 2026 so far (21-Oct-2026 to 27-Oct-2026) net sales were ...". For a top customer, a product or a split, keep the same dates (invoice_date BETWEEN period_from AND period_to).
 Expected: (asked on 27-Oct-2026) Nov 2026, 21-Oct-2026 to 27-Oct-2026: net sales so far 827,149,042.00 (the whole month in the test data, to 20-Nov-2026, would be 3,869,959,327.00 - wrong).
 
+## Q: Who are our new customers this month so far?
+
+Also asked as: new customers this month; who is our new customer in this month; first-time buyers this month; how many new customers did we get this month; the biggest new customer this month; new customers month to date.
+
+```sql
+WITH this_month AS (
+  SELECT nop_sales_month, nop_sales_period_start, LEAST(nop_sales_period_end, CURDATE()) AS so_far_to
+  FROM dim_calendar
+  WHERE full_date = CURDATE()
+),
+first_invoice AS (
+  SELECT il.customer_id, MIN(il.invoice_date) AS first_invoice_date
+  FROM fact_invoice_lines il
+  WHERE il.customer_id <> -1
+  GROUP BY il.customer_id
+),
+month_sales AS (
+  SELECT il.customer_id, SUM(il.net_taxable_value) AS sales_inr
+  FROM fact_invoice_lines il
+  JOIN this_month tm ON il.invoice_date BETWEEN tm.nop_sales_period_start AND tm.so_far_to
+  GROUP BY il.customer_id
+)
+SELECT tm.nop_sales_month AS nop_month,
+       tm.nop_sales_period_start AS period_from,
+       tm.so_far_to AS period_to,
+       cu.customer_name,
+       fi.first_invoice_date,
+       ROUND(ms.sales_inr, 2) AS sales_so_far_inr,
+       COUNT(*) OVER () AS new_customers,
+       (SELECT MIN(d.invoice_date) FROM fact_invoice_lines d) AS invoice_history_starts
+FROM this_month tm
+JOIN first_invoice fi ON fi.first_invoice_date BETWEEN tm.nop_sales_period_start AND tm.so_far_to
+JOIN month_sales ms ON ms.customer_id = fi.customer_id
+JOIN dim_customers cu ON cu.customer_id = fi.customer_id
+ORDER BY ms.sales_inr DESC, cu.customer_name;
+```
+
+Why: this month is not over yet, so the month counts only up to TODAY (LEAST(nop_sales_period_end, CURDATE())) - invoices dated after today must not be counted, neither as a first invoice nor as sales. A new customer = the customer's FIRST invoice line in the data falls in the period (see "How many new customers did we get in FY 2026-27"); the Unknown customer (-1) is not a customer. One row per new customer, the biggest sales first, with the count of all of them in new_customers (COUNT(*) OVER (), so it is right even when only the first 500 rows are shown). The answer says "so far" with both dates and that "first" is checked against all invoices since invoice_history_starts.
+Expected: (asked on 16-Nov-2026) Nov 2026 so far, 21-Oct-2026 to 16-Nov-2026: 967 new customers; the biggest Sunrise Precision Components Ltd INR 10,301,300.00, then Lotus Automation Pvt. Ltd. INR 8,103,125.00 and Agni Machine Tools Pvt. Ltd. INR 6,412,752.50 (counting the whole month to 20-Nov-2026 would give 1,088 - wrong, those days are still to come).
+
+## Q: Who were our new customers last month?
+
+Also asked as: new customers in the previous month; first-time buyers last month; how many new customers did we get last month; the biggest new customer last month.
+
+```sql
+WITH last_month AS (
+  SELECT p.nop_sales_month, p.nop_sales_period_start, p.nop_sales_period_end
+  FROM dim_calendar t
+  JOIN dim_calendar p ON p.full_date = t.nop_sales_period_start - INTERVAL 1 DAY
+  WHERE t.full_date = CURDATE()
+),
+first_invoice AS (
+  SELECT il.customer_id, MIN(il.invoice_date) AS first_invoice_date
+  FROM fact_invoice_lines il
+  WHERE il.customer_id <> -1
+  GROUP BY il.customer_id
+),
+month_sales AS (
+  SELECT il.customer_id, SUM(il.net_taxable_value) AS sales_inr
+  FROM fact_invoice_lines il
+  JOIN last_month lm ON il.invoice_date BETWEEN lm.nop_sales_period_start AND lm.nop_sales_period_end
+  GROUP BY il.customer_id
+)
+SELECT lm.nop_sales_month AS nop_month,
+       lm.nop_sales_period_start AS period_from,
+       lm.nop_sales_period_end AS period_to,
+       cu.customer_name,
+       fi.first_invoice_date,
+       ROUND(ms.sales_inr, 2) AS sales_inr,
+       COUNT(*) OVER () AS new_customers,
+       (SELECT MIN(d.invoice_date) FROM fact_invoice_lines d) AS invoice_history_starts
+FROM last_month lm
+JOIN first_invoice fi ON fi.first_invoice_date BETWEEN lm.nop_sales_period_start AND lm.nop_sales_period_end
+JOIN month_sales ms ON ms.customer_id = fi.customer_id
+JOIN dim_customers cu ON cu.customer_id = fi.customer_id
+ORDER BY ms.sales_inr DESC, cu.customer_name;
+```
+
+Why: "last month" is the NOP sales month before today's one, worked out from CURDATE() in dim_calendar (as in "What were last month's sales"). It is over, so its whole period counts. A new customer = the customer's FIRST invoice line in the data falls in that month; one row per new customer, the biggest first, with the count of all of them in new_customers.
+Expected: (asked on 16-Nov-2026) Oct 2026, 21-Sep-2026 to 20-Oct-2026: 1,403 new customers; the biggest Allied Castings Limited INR 63,648,019.00, then Crescent Motors (Pvt) Ltd INR 46,500,692.00 and Supreme Machine Tools Pvt. Ltd. INR 39,841,730.50.
+
 ## Q: Show net sales month by month from Jan 2026 to Mar 2027.
 
 Also asked as: monthly sales from Jan 2026 to Mar 2027; month by month sales between two months; month-wise net sales from Apr 2026 to Sep 2026 after credit and debit notes; monthly sales trend from one month to another; sales of each month in a range of months.
