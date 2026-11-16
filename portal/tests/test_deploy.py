@@ -125,6 +125,8 @@ def test_compose_runs_mysql_with_a_volume_and_the_app_waits_for_it():
     assert compose.count("MYSQL_HOST: ${DOCKER_MYSQL_HOST:-mysql}") == 2            # the website and the MCP server
     assert '"127.0.0.1:${MI_MYSQL_PORT:-3307}:3306"' in compose                     # this PC only
     assert 'profiles: ["load"]' in compose and '"loader/load_gold.py"' in compose   # the one-off data load
+    assert "- ./inputdata_batches:/app/inputdata_batches:ro" in compose                # the batch, no -v needed
+    assert "AI_GOLD_DATABASE: ${AI_GOLD_DATABASE:-ss_gold}" in compose and "ai_gold" not in compose
     # the schemas and users: a setup service on every start (12-Nov: a first-start-only script failed once and
     # MySQL then ran for good without them); the website, the MCP server and the loader wait for it
     assert '  mysql-setup:\n    image: mysql:8.4' in compose and "docker-entrypoint-initdb.d" not in compose
@@ -142,4 +144,5 @@ def test_the_mysql_setup_script_gives_only_the_needed_rights_and_may_run_again()
     assert text.count("IF NOT EXISTS") == 4 and "DROP " not in text                 # safe on every start
     assert '-p"$MYSQL_ROOT_PASSWORD' not in text                                    # no password on a command line
     assert "s/[\\]/&&/g" in text                                                    # the sed that failed on 12-Nov
+    assert 'GOLD="${AI_GOLD_DATABASE:-ss_gold}"' in text and "ai_gold" not in text  # 16-Nov: the POC's own database
     assert "*.sh text eol=lf" in (REPO / ".gitattributes").read_text(encoding="utf-8")

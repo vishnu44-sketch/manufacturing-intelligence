@@ -5,12 +5,13 @@
 # Production: set CLOUDFLARE_TUNNEL_TOKEN (the company's fixed tunnel).
 # Branch docker-mysql: MySQL runs here too (service "mysql", data kept in the mysql_data volume), so the PC needs
 # only Docker. First start: set DOCKER_MYSQL_ROOT_PASSWORD in .env, then load the data once:
-#   docker compose --profile load run --rm loader
+#   docker compose --profile load run --rm loader                                     (the base: inputdata/)
+#   docker compose --profile load run --rm loader --batch inputdata_batches/batch_001   (then the batch)
 # Another MySQL server instead: set DOCKER_MYSQL_HOST (and that server's users) - see DEPLOY.md.
 name: manufacturing-intelligence
 
 services:
-  # MySQL 8.4 for the data (ai_gold) and the app's own schema (chats, history, users). The data files live in the
+  # MySQL 8.4 for the data (ss_gold) and the app's own schema (chats, history, users). The data files live in the
   # mysql_data volume, so they stay over restarts, updates and "docker compose down" (only "down -v" deletes them).
   mysql:
     image: mysql:8.4.6
@@ -41,7 +42,7 @@ services:
         condition: service_healthy
     environment:
       MYSQL_ROOT_PASSWORD: ${DOCKER_MYSQL_ROOT_PASSWORD:?set DOCKER_MYSQL_ROOT_PASSWORD in .env}
-      AI_GOLD_DATABASE: ${AI_GOLD_DATABASE:-ai_gold}
+      AI_GOLD_DATABASE: ${AI_GOLD_DATABASE:-ss_gold}
       APP_DB_NAME: ${APP_DB_NAME:-}
       APP_DB_USER: ${APP_DB_USER:-}
       APP_DB_PASSWORD: ${APP_DB_PASSWORD:-}
@@ -51,8 +52,10 @@ services:
     volumes:
       - ./docker/mysql-setup:/setup:ro
 
-  # one-off: fills ai_gold from inputdata/ (not in git - copy the folder next to this file first)
+  # one-off: fills ss_gold from inputdata/, or merges one batch folder of inputdata_batches/ into it
+  # (both not in git - copy the folders next to this file first)
   #   docker compose --profile load run --rm loader
+  #   docker compose --profile load run --rm loader --batch inputdata_batches/batch_001
   loader:
     profiles: ["load"]
     build: .
@@ -70,6 +73,7 @@ services:
     volumes:
       - ./loader:/app/loader:ro
       - ./inputdata:/app/inputdata:ro
+      - ./inputdata_batches:/app/inputdata_batches:ro
 
   qdrant:
     image: qdrant/qdrant:v1.19.2

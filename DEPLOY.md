@@ -77,11 +77,16 @@ The compose file runs MySQL 8.4 itself (service `mysql`), so the PC needs only D
 ### First start on a new PC (e.g. the office computer)
 
 1. Install Docker Desktop and Git. `git clone` the repo, `git checkout docker-mysql`.
-2. Copy by hand (they are not in git): `.env` and the folder `inputdata/`. In `.env` add
-   `DOCKER_MYSQL_ROOT_PASSWORD=<a long random value>`; `QDRANT_API_KEY` and `DJANGO_SECRET_KEY` must be set.
+2. Copy by hand (they are not in git): `.env` and the folders `inputdata/` and `inputdata_batches/batch_001/`.
+   In `.env` add `DOCKER_MYSQL_ROOT_PASSWORD=<a long random value>`; `QDRANT_API_KEY` and `DJANGO_SECRET_KEY`
+   must be set, and the data database and its read-only user must be `AI_GOLD_DATABASE=ss_gold` and
+   `AI_DB_USER=ss_ai_reader` (with `AI_DB_PASSWORD`).
 3. `docker compose up -d --build` - builds the image, starts MySQL, Qdrant, the website and the MCP server.
    The first start takes a few minutes (the search indexes are built once).
-4. Load the data once: `docker compose --profile load run --rm loader` (fills `ai_gold` from `inputdata/`).
+4. Load the data once: `docker compose --profile load run --rm loader` (fills `ss_gold` from `inputdata/`),
+   then the batch: `docker compose --profile load run --rm loader --batch inputdata_batches/batch_001`.
+   Then build the search indexes again: `docker compose exec mi-web python manage.py ingest_docs` and
+   `docker compose exec mi-web python manage.py ingest_pdfs`.
 5. Make the first sign-in: `docker compose exec mi-web python manage.py createsuperuser`.
 6. Open http://127.0.0.1:8094.
 
@@ -89,7 +94,7 @@ Later: `docker compose up -d` starts everything again; after a `git pull`, `dock
 
 ### Backup and restore (the chats, history and users)
 
-`ai_gold` can always be made again with the loader; the app's schema cannot. Back it up before updates:
+`ss_gold` can always be made again with the loader; the app's schema cannot. Back it up before updates:
 
     docker compose exec mysql sh -c 'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysqldump -uroot --single-transaction --databases "$APP_DB_NAME" > /backups/app_$(date +%Y%m%d_%H%M).sql'
 

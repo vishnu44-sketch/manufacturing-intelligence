@@ -1,6 +1,6 @@
 #!/bin/sh
 # Runs on EVERY "docker compose up" (service mysql-setup), after MySQL answers, and may run any number of times:
-#   - the data schema (AI_GOLD_DATABASE, default ai_gold) - filled later by the loader service
+#   - the data schema (AI_GOLD_DATABASE, default ss_gold) - filled later by the loader service
 #   - the app's own schema (APP_DB_NAME: chats, history, users) with its user (all rights there, nowhere else)
 #   - the read-only AI user (SELECT on the data schema only)
 # Nothing existing is dropped or emptied. The passwords are set again each time, so a password changed in .env
@@ -8,7 +8,7 @@
 # 'localhost' for MySQL; the MySQL port is only open inside the compose network (and on 127.0.0.1 of this PC).
 set -e
 
-GOLD="${AI_GOLD_DATABASE:-ai_gold}"
+GOLD="${AI_GOLD_DATABASE:-ss_gold}"
 HOST="${MYSQL_SETUP_HOST:-mysql}"
 
 # a value inside a single-quoted SQL string: each \ and each ' doubled
