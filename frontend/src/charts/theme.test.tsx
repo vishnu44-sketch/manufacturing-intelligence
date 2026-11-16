@@ -114,18 +114,26 @@ describe('the Knowledge graph option in each theme', () => {
   const build = (theme: 'light' | 'dark') =>
     buildGraphOption(data, readColours(theme), { center: 'customer:a' }) as Option
 
-  it('labels, legend, tooltip and rings follow the theme; the node type colours stay', () => {
+  it('label cards, pills, legend, tooltip and the middle node follow the theme; the node type colours stay', () => {
     const light = build('light')
     const dark = build('dark')
-    const ink = readColours('dark').ink
-    expect(dark.series[0].label.color).toBe(ink)
-    expect(dark.series[0].label.color).not.toBe(light.series[0].label.color)
+    const [lightColours, darkColours] = [readColours('light'), readColours('dark')]
+    // the label card: the card's colour, the name in the heading colour, the fact line muted
+    expect(light.series[0].label.backgroundColor).toBe('#fff')
+    expect(dark.series[0].label.backgroundColor).toBe(darkColours.surface)
+    expect(dark.series[0].label.rich.name.color).toBe(darkColours.head)
+    expect(dark.series[0].label.rich.name.color).not.toBe(light.series[0].label.rich.name.color)
+    expect(dark.series[0].label.rich.fact.color).toBe(darkColours.muted)
+    expect(dark.series[0].edgeLabel.backgroundColor).toBe(darkColours.surface)  // the pill on a link
     expect(dark.legend[0].textStyle.color).not.toBe(light.legend[0].textStyle.color)
-    expect(dark.tooltip.backgroundColor).toBe(readColours('dark').surface)
+    expect(dark.tooltip.backgroundColor).toBe(darkColours.surface)
     expect(light.tooltip.backgroundColor).toBe('#fff')
-    expect(dark.series[0].select.itemStyle.borderColor).toBe(ink)             // the selected ring: light on dark
-    expect(light.series[0].data[0].itemStyle.borderColor).toBe('#fff')         // the middle node's ring
-    expect(dark.series[0].data[0].itemStyle.borderColor).toBe(ink)
+    expect(dark.series[0].select.label.borderColor).toBe(darkColours.series[0])  // the selected node: the app's blue
+    expect(light.series[0].select.label.borderColor).toBe(lightColours.series[0])
+    // the middle node's circle is the app's blue (lighter on dark); the other circles keep their type's colour
+    expect(light.series[0].data[0].symbol).toContain(encodeURIComponent(lightColours.series[0]))
+    expect(dark.series[0].data[0].symbol).toContain(encodeURIComponent(darkColours.series[0]))
+    expect(dark.series[0].data[1].symbol).toBe(light.series[0].data[1].symbol)
     expect(dark.series[0].lineStyle.opacity).toBeGreaterThan(light.series[0].lineStyle.opacity)
     expect(dark.series[0].categories).toEqual(light.series[0].categories)
   })
