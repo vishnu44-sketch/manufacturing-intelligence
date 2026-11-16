@@ -344,8 +344,17 @@ def _edge(source, target, kind, amount=None, quantity=None, invoices=None, **ext
 
 
 def _ask(kind, label, when):
-    """A question for the Ask page about this node ("Top products bought by Aurora ... in FY 2026-27 so far")."""
-    period_words = f" in {when['label']}" if when and when.get("fy") else ""
+    """A question for the Ask page about this node ("Top products bought by Aurora ... in FY 2026-27 so far").
+    It always names the period the graph counted, so the Assistant counts the same lines: a FY keeps its label
+    ("in FY 2025-26", or "in FY 2026-27 so far" - the label of a running FY already ends in "so far"), and
+    all data says "up to today" - 16-Nov: with no period the Assistant also counted the invoices dated after
+    today. The document question stays without a period."""
+    if when and when.get("fy"):
+        period_words = f" in {when['label']}"
+    elif when:
+        period_words = " up to today"
+    else:
+        period_words = ""
     return {
         "customer": f"Top products bought by {label}{period_words}",
         "product": f"Top customers of {label}{period_words}",

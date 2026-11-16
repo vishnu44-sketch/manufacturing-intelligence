@@ -24,7 +24,8 @@ ask(question, user) works step by step:
                A guard refusal or a MySQL error goes back to the AI to fix: 3 tries in total.
                A query that adds every name matched with LIKE into one number is sent back once
                too (summed_name_matches), so each matching customer / product / person gets its row,
-               and so is a period not over yet that is counted past today (periods_not_over).
+               and so is a period not over yet that is counted past today (periods_not_over), and rows that
+               name none of the customers / products ... the question ranks (missing_entity).
 4. explain   - Groq call #2: the question + the SQL + the first 50 rows -> 2 to 5 plain sentences
                that use only numbers found in the rows.
 5. save      - a Question row (status ok / docs / nodata / refused / error) for the History page, with the Groq
@@ -44,6 +45,7 @@ MAIN_RESTING_SECS new questions start with the backup. A per-MINUTE limit still 
 """
 import datetime
 import decimal
+import difflib
 import logging
 import os
 import re
@@ -283,6 +285,7 @@ Rules:
 - If a column labels rows (e.g. highlight = 'Highest growth', 'Biggest decline') or a "Highest / lowest" line is given below the rows, use those to name the highest / lowest / biggest items - never work them out yourself from the rows.
 - A column with the same value on every row (e.g. new_customers, lost_customers) is a summary figure for the whole result: mention it once.
 - A result of ONE row is a summary: give every number in it, in plain words (e.g. "4,097 finished goods were in stock and 872 other items"); never write a column name like finished_goods_in_stock = 0.
+- Never say a number belongs to something the rows do not name: if the question asks for the top customer (or product, sales person, state ...) but no column names one, say the rows do not name it and give what they do show (e.g. the product's total over all its customers).
 - A '-' or empty value in a column means the value is not given (e.g. export rows have no state): say "no ... given", never use '-' as if it were a name.
 - A group named 'Not given', 'Not classified' or 'Unknown' is part of the data: always mention it with its amount (it is often the biggest). If it is the top row of a "which ... is the highest" question, say so and also name the top real group.
 - If there are no rows, say exactly what had no data: name the filters and, when "Periods used by the query" is given, the period with its dates - e.g. "There were no sales to customers in Japan in NOP sales month Sep 2026 (21-Aug-2026 to 20-Sep-2026)." If a value is 0 or empty, say so plainly.
@@ -1626,6 +1629,155 @@ def name_search_notes(result, allowed):
         log.info("Name check after an empty result failed: %s", exc)
         return "", []
     return " ".join(missing), notes
+
+
+# ------------------------------------------------------------------ a ranking without the thing it ranks
+# 16-Nov (office PC): the Knowledge graph's "Top customers of Coolant pump GX-664-1B 0.75kW (415V 50Hz)" got a query
+# that only added up the product's sales over ALL its 422 customers - no customer column at all - and the answer
+# called that total "the top customer". A question that asks for a ranking or a list of customers, products, sales
+# people, states or countries whose rows have no column of that kind is sent back once (lc/graph.run_sql); the
+# first answer is kept when the next try is no better. Kept narrow on purpose, so a good query is never sent back.
+ENTITY_WORDS = {  # what a question can rank or list -> its words in the question (after the typo fix below)
+    "customer": r"customers?|clients?|buyers?|purchasers?|accounts?",
+    "product": r"products?|items?|pumps?|models?|parts?|skus?|materials?|goods",
+    "sales person": (r"sales[\s-]*(?:persons?|people|men|man|reps?|representatives?|executives?|employees?|staff|team)"
+                     r"|salespersons?|salespeople|salesm[ae]n|reps|representatives?|employees?|executives?"),
+    "state": r"states?|regions?|territor(?:y|ies)|zones?|cities|city",
+    "country": r"countries|country|nations?|markets?",
+}
+ENTITY_COLUMNS = {  # what is ranked -> a part of the column names that show it (docs/data_dictionary.md: customer_name,
+    # customer_code, product_description, product_code, sales_person_name, state, place_of_supply_state, country,
+    # country_segment, territory ...; the rest are aliases the AI likes to write)
+    "customer": re.compile(r"customer|^cust_|_cust_|client|buyer|purchaser|party|company|account|billing_name"),
+    "product": re.compile(r"product|item|part|sku|material|model|pump|descr|goods"),
+    "sales person": re.compile(r"sales_?person|sales_?people|salesm[ae]n|person|(?:^|_)reps?(?:_|$)|employee|executive|"
+                               r"staff|seller"),
+    "state": re.compile(r"state|place_of_supply|region|territor|zone|city|location|area"),
+    "country": re.compile(r"countr|nation|market|region|territor|segment|iso"),
+}
+ENTITY_TABLES = {  # what is ranked -> (its plural, the column to list it by) for the problem text
+    "customer": ("customers", "dim_customers.customer_name"),
+    "product": ("products", "dim_products.product_description"),
+    "sales person": ("sales people", "dim_sales_people.sales_person_name"),
+    "state": ("states", "dim_customers.state or fact_invoice_lines.place_of_supply_state"),
+    "country": ("countries", "dim_customers.country or fact_invoice_lines.country"),
+}
+ENTITY_PROBLEM = ('the question asks for a ranking / list of {plural} ("{phrase}"), but the result has no {what} '
+                  "column (it only has: {columns}) - one total over all {plural} is not an answer. List one row per "
+                  "{what} ({column}) with its own value (e.g. net sales and quantity), ORDER BY that value DESC "
+                  "(LIMIT n when the question gives a number), filtered on the product / customer / period of the "
+                  "question.")
+_ANY_NAME_COLUMN = re.compile(r"^(?:name|names|label|labels|entity|display_name|full_name)$")  # could be anything
+_COUNT_COLUMN = re.compile(r"count(?!r)|cnt|^num_|^n_|number_of|no_of|distinct")  # customer_count is no customer column
+_ALL_ENTITIES = "|".join(ENTITY_WORDS.values())
+# a word between "top" and the thing ranked ("top 5 export customers"); "of", "for", "by" ... end the phrase,
+# so "highest sales of customer Allied" ranks nothing
+_FILL = (r"(?!(?:of|for|to|from|in|into|by|with|on|at|and|or|than|per|is|was|are|were|be|been|did|does|do|has|had|"
+         r"have|who|which|that|this|these|those|it|its|their|when|where|whose|as|vs|versus|compared)\b)[\w&'-]+")
+# after the thing ranked: another thing is ranked ("top customer groups", "top pump customers") or it is a count /
+# a share ("top 5 customers' share", "customer count")
+_NOT_THE_THING = (rf"(?![\s-]*(?:'s?|’s?)?\s*(?:groups?|types?|segments?|categor(?:y|ies)|class(?:es)?|codes?|counts?|"
+                  rf"numbers?|base|growth|share|combined|together|altogether|orders?|invoices?|lines?)\b)"
+                  rf"(?![\s-]+(?:{_ALL_ENTITIES})\b)")
+_RANK = "top\\d*|best|biggest|largest|highest|leading|major|key|main|most|least|bottom|worst|lowest|smallest"
+_ASKS_FOR = {  # what -> the ways a question asks for a ranking / list of it
+    what: re.compile(
+        rf"\b(?P<rank>{_RANK})(?P<fill>(?:[\s-]+{_FILL}){{0,3}}?)[\s-]+(?:{words})\b{_NOT_THE_THING}"
+        rf"|\b(?:which|what)(?:\s+of)?(?:\s+(?:the|our|my|all))?(?:\s+{_FILL}){{0,2}}?\s+(?:{words})\b{_NOT_THE_THING}"
+        rf"|\b(?:list|show|display|give|get|find|identify|rank|ranking|compare)(?:\s+(?:me|us))?"
+        rf"(?:\s+(?:of|all|the|our|my|every|each))*(?:\s+{_FILL}){{0,2}}?\s+(?P<listed>{words})\b{_NOT_THE_THING}"
+        rf"|\b(?:{words})[\s-]*(?:wise|ranked|ranking|rankings|league)\b"
+        rf"|\b(?:for\s+)?(?:each|every)\s+(?:{words})\b{_NOT_THE_THING}"
+        rf"|\b(?:by|across|among)\s+(?:all\s+)?(?:the\s+)?(?:{words})(?=\s*(?:$|[?.,;!)]|(?:and|in|for|during|over|"
+        rf"from|of|with|between|since|this|last|till|until|up|to)\b))",
+        re.I)
+    for what, words in ENTITY_WORDS.items()
+}
+_ASKS_FOR["customer"] = re.compile(
+    _ASKS_FOR["customer"].pattern + r"|\bwho(?:\s+all)?(?:\s+(?:has|have|had|did|do|does))?\s+(?:bought|buys?|buying|"
+    r"purchased|purchases?|purchasing|ordered|orders?|ordering|spent|spends?|spending)\b|\bto\s+whom\b", re.I)
+_ASKS_FOR["sales person"] = re.compile(
+    _ASKS_FOR["sales person"].pattern + r"|\bwho(?:\s+all)?(?:\s+(?:has|have|had|did|do|does))?\s+(?:sold|sells?|"
+    r"selling|booked|books|closed|achieved)\b", re.I)
+_ASKS_FOR["product"] = re.compile(  # "what was best-selling in Oct" (no thing named: a product)
+    _ASKS_FOR["product"].pattern + r"|\bwhat(?:\s+(?:is|was|were|are))?\s+(?:the\s+)?(?:best|top|most|fastest)[\s-]*"
+    r"(?:selling|sold|ordered|popular)"
+    r"(?:\s+(?:one|ones))?(?=\s*(?:$|[?.,;!)]|(?:in|of|for|during|this|last|over|from|between|to|at|by|among|across|"
+    r"with)\b))", re.I)
+# just before the words: a count or a share of them ("how many top customers", "share of top 5 ..."), or the numbers
+# are about them, already known from the chat ("Monthly net sales of the top customer of the last 3 NOP months as
+# a line chart") - not a list asked for
+_COUNT_BEFORE = re.compile(r"(?:how\s+many|number\s+of|count\s+of|\bno\.?\s+of|share\s+of|average\s+of|%\s+of|"
+                           r"percent(?:age)?\s+of|\bof|\bfor|\bto|\bfrom)\s+(?:the\s+|our\s+|all\s+|my\s+|its\s+|"
+                           r"their\s+|these\s+|those\s+|that\s+)?$", re.I)
+# "most" / "least" rank only with one of these words ("most sold products", "least profitable customers")
+_MOST_WHAT = re.compile(r"\b(?:sold|selling|ordered|bought|purchased|valuable|profitable|popular|important|frequent|"
+                        r"loyal|active|regular|successful|productive)\b", re.I)
+_TYPO_TARGETS = ("customer", "customers", "product", "products", "country", "countries")
+_KNOWN_TYPOS = {"costumer": "customer", "costumers": "customers"}
+_NOT_TYPOS = {"custom", "customs", "counter", "counters", "county", "counties", "producer", "producers", "produce",
+              "produced", "production", "productive", "consumer", "consumers", "computer", "computers"}
+
+
+def _fix_typo(match):
+    """One word of the question, "custmer" / "prodcuts" / "contry" written as the word it is meant to be."""
+    word = match.group(0)
+    low = word.lower()
+    if low in _KNOWN_TYPOS:
+        return _KNOWN_TYPOS[low]
+    if len(low) < 6 or low in _NOT_TYPOS or low in _TYPO_TARGETS:
+        return word
+    for target in _TYPO_TARGETS:
+        if low[:2] == target[:2] and difflib.SequenceMatcher(None, low, target).ratio() >= 0.84:
+            return target
+    return word
+
+
+def ranked_entities(text):
+    """The things the question asks a ranking or a list of, as (what, the words that ask for it), first asked
+    first: "Top customers of Coolant pump ..." -> [("customer", "Top customers")]. Typos like "custmer" count.
+    A name used only as a filter ("sales of Allied Castings", "Coolant pump sales in Oct") and a count ("how many
+    customers", "the most customers") are not a ranking."""
+    text = re.sub(r"[A-Za-z]+", _fix_typo, text or "")
+    found = []
+    for what, pattern in _ASKS_FOR.items():
+        for match in pattern.finditer(text):
+            if match.group("rank") and match.group("rank").lower() in ("most", "least") \
+                    and not _MOST_WHAT.search(match.group("fill")):
+                continue  # "the most customers", "who bought the most coolant pumps": a count / an amount
+            listed = match.group("listed")
+            if listed and not re.search(r"(?:s|people|men|staff|goods)$", listed, re.I) \
+                    and not re.match(r"[\s-]*(?:names|list)\b", text[match.end():], re.I):
+                continue  # "show customer Allied Castings' sales": one customer, a filter
+            if _COUNT_BEFORE.search(text[:match.start()]):
+                continue
+            found.append((match.start(), what, match.group(0).strip()))
+            break
+    return [(what, phrase) for _start, what, phrase in sorted(found)]
+
+
+def shows_entity(what, columns):
+    """True when a result column shows the thing ranked (a customer / product / ... column, not a count of it)."""
+    names = [str(column).lower() for column in columns]
+    return any(_ANY_NAME_COLUMN.match(name) or (ENTITY_COLUMNS[what].search(name) and not _COUNT_COLUMN.search(name))
+               for name in names)
+
+
+def missing_entity(text, columns):
+    """(what, the words that ask for it) of the first thing the question ranks or lists that no result column
+    shows, or None. 16-Nov: "Top customers of Coolant pump ..." answered with product_description, net_sales_inr,
+    net_quantity, matches, data_from, data_to -> ("customer", "Top customers")."""
+    for what, phrase in ranked_entities(text):
+        if not shows_entity(what, columns):
+            return what, phrase
+    return None
+
+
+def entity_problem(what, phrase, columns):
+    """The ENTITY_PROBLEM text for the retry."""
+    plural, column = ENTITY_TABLES[what]
+    return ENTITY_PROBLEM.format(plural=plural, phrase=phrase, what=what, column=column,
+                                 columns=", ".join(str(name) for name in columns))
 
 
 UNKNOWN_VALUES_PROBLEM = ("the query found no data because it filters on values the data does not have: {wrong}. "

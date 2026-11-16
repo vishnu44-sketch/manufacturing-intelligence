@@ -551,6 +551,33 @@ def test_a_finished_fy_is_not_so_far_and_a_strange_fy_is_refused(signed_in, mysq
     assert r.status_code == 400 and "not in the calendar" in r.json()["detail"]
 
 
+def test_the_ask_question_names_the_period_the_graph_counted(signed_in, mysql):
+    """16-Nov: with "All data up to today" the question had no period, so the Assistant also counted the
+    invoices dated after today. Now all data says "up to today", a FY keeps its label."""
+    body = get(signed_in, "api_graph_node", type="customer", id=str(AURORA)).json()        # all data
+    assert body["node"]["ask"] == "Top products bought by Aurora Hydraulics Private Limited up to today"
+    body = get(signed_in, "api_graph_node", type="product", id="45").json()
+    assert body["node"]["ask"].startswith("Top customers of ") and body["node"]["ask"].endswith(" up to today")
+    body = get(signed_in, "api_graph_node", type="document", id="product_catalogue.pdf#2").json()
+    assert body["node"]["ask"] == "What does the Product Catalogue say?"                  # a page has no period
+
+
+def test_the_ask_text_of_every_kind_and_period():
+    all_data = {"fy": None, "label": "All data up to today", "so_far": True}
+    past = {"fy": "2526", "label": "FY 2025-26", "so_far": False}
+    running = {"fy": "2627", "label": "FY 2026-27 so far", "so_far": True}
+    starts = {
+        "customer": "Top products bought by X", "product": "Top customers of X", "category": "Top customers for X",
+        "sales_person": "Top customers handled by X", "state": "Top customers in X", "sale_type": "Top X customers",
+    }
+    for kind, start in starts.items():
+        assert kg._ask(kind, "X", all_data) == f"{start} up to today"
+        assert kg._ask(kind, "X", past) == f"{start} in FY 2025-26"
+        assert kg._ask(kind, "X", running) == f"{start} in FY 2026-27 so far"                # never "so far so far"
+    for when in (all_data, past, running):
+        assert kg._ask("document", "Price List, page 1", when) == "What does the Price List, page 1 say?"
+
+
 def test_the_neighbour_limit(signed_in, mysql):
     get(signed_in, "api_graph_node", type="customer", id=str(AURORA))
     links = next(params for sql, params in mysql.calls if "AS edge" in sql)
