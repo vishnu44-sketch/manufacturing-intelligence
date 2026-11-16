@@ -11,6 +11,7 @@ No AI call and no tokens. Every run is written to the audit log by the views.
 schema()     {"database", "tables": [{name, rows, columns: [{name, type}]}]} - tables A to Z, kept CACHE_SECONDS
 run(sql)     {sql, columns, headers, rows, row_count, truncated, max_rows, secs} of one checked SELECT,
              or SqlProblem with the HTTP status and a plain message
+saved_fields(data, creating)  the checked fields of a saved query (models.SavedQuery) - only text, never run
 """
 import datetime
 import decimal
@@ -23,6 +24,7 @@ import sqlglot
 from sqlglot import exp
 
 from . import services
+from .models import SavedQuery
 from .rag import agent, warehouse
 from .rag.sql_guard import GuardError, check_sql, strip_fences
 
@@ -188,3 +190,36 @@ def _text(value):
     if isinstance(value, (bytes, bytearray)):
         return bytes(value).decode("utf-8", "replace")
     return str(value)
+
+
+# ------------------------------------------------------------------ saved queries (only text)
+def saved_fields(data, creating):
+    """The fields of a saved query posted as JSON ({name, sql, shared}), checked as text only: the SQL is never
+    run and never checked by the guard here - that happens only when someone presses Run. creating = a new query
+    (name and SQL needed); else only the fields that were sent. -> {name?, sql?, shared?} or SqlProblem(400).
+    The name is trimmed (spaces tidied); the SQL is kept as typed."""
+    fields = {}
+    if creating or "name" in data:
+        name = data.get("name")
+        if not isinstance(name, str):
+            raise SqlProblem(400, "Give the query a name.")
+        name = " ".join(name.split())
+        if not name:
+            raise SqlProblem(400, "Give the query a name.")
+        if len(name) > SavedQuery.MAX_NAME_CHARS:
+            raise SqlProblem(400, f"Please keep the name to {SavedQuery.MAX_NAME_CHARS} characters or fewer.")
+        fields["name"] = name
+    if creating or "sql" in data:
+        sql = data.get("sql")
+        if not isinstance(sql, str) or not sql.strip():
+            raise SqlProblem(400, "Type the SQL to save first.")
+        if len(sql) > MAX_SQL_CHARS:
+            raise SqlProblem(400, f"Please keep the SQL under {MAX_SQL_CHARS:,} characters.")
+        fields["sql"] = sql
+    if "shared" in data:
+        if not isinstance(data["shared"], bool):
+            raise SqlProblem(400, "shared must be true or false.")
+        fields["shared"] = data["shared"]
+    elif creating:
+        fields["shared"] = False
+    return fields

@@ -3,7 +3,7 @@
 // the app then shows its Login page. A 403 on a staff page means "no access".
 import type {
   AiChartReply, AskResponse, AuditData, AuditFilters, ChatDetail, ChatList, ChatSummary, DataTables, DocumentsData, EditResponse,
-  GraphNodeReply, GraphSearchReply, GraphSimilarReply, HistoryPage, HomeData, Me, MemoryList, MemoryReply, PeopleList, PersonReply, Rows, SavedAnswer, SqlResult, SqlSchema,
+  GraphNodeReply, GraphSearchReply, GraphSimilarReply, HistoryPage, HomeData, Me, MemoryList, MemoryReply, PeopleList, PersonReply, Rows, SavedAnswer, SqlResult, SqlSavedList, SqlSavedQuery, SqlSchema,
   StreamEvent,
 } from './types'
 
@@ -256,6 +256,13 @@ export const api = {
   sqlSchema: () => request<SqlSchema>('GET', '/api/sql/schema'),
   sql: (sql: string) => request<SqlResult>('POST', '/api/sql', { sql }),
   sqlExcel: (sql: string) => download('/api/sql/excel', { sql }),
+  // the saved queries: mine and the ones other administrators shared; only the owner can change one
+  sqlSaved: () => request<SqlSavedList>('GET', '/api/sql/saved'),
+  sqlSave: (fields: { name: string; sql: string; shared?: boolean }) =>
+    request<{ query: SqlSavedQuery }>('POST', '/api/sql/saved', fields),
+  sqlChangeSaved: (id: number, fields: { name?: string; sql?: string; shared?: boolean }) =>
+    request<{ query: SqlSavedQuery }>('POST', `/api/sql/saved/${id}`, fields),
+  sqlDeleteSaved: (id: number) => request<{ deleted: number }>('POST', `/api/sql/saved/${id}/delete`, {}),
   people: () => request<PeopleList>('GET', '/api/users'),
   addPerson: (fields: Record<string, string | boolean>) => request<PersonReply>('POST', '/api/users', fields),
   changePerson: (id: number, fields: Record<string, string | boolean>) =>

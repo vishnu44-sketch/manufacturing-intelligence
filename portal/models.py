@@ -138,6 +138,31 @@ class UserMemory(models.Model):
         return self.text[:80]
 
 
+class SavedQuery(models.Model):
+    """One SQL an administrator saved on the SQL page (like a saved script in MySQL Workbench), kept in the app's
+    own database - never in ai_gold. Only text: saving never runs the SQL and never checks it; it is checked by the
+    SQL guard and run read-only only when someone presses Run. Only the owner changes or deletes it; when shared,
+    the other administrators see it too (and can "Save as" their own copy). The SQL is at most
+    sql_page.MAX_SQL_CHARS (20,000) characters - checked by the views."""
+
+    MAX_NAME_CHARS = 120
+    MAX_PER_USER = 200  # saved queries one person can keep
+
+    owner = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="saved_queries")
+    name = models.CharField(max_length=MAX_NAME_CHARS)  # unique per owner, whatever the case (checked by the views)
+    sql = models.TextField()
+    shared = models.BooleanField(default=False)          # True: the other administrators see it under "Shared"
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-updated_at", "-pk"]  # the latest change first
+        constraints = [models.UniqueConstraint(fields=["owner", "name"], name="saved_query_name_per_owner")]
+
+    def __str__(self):
+        return self.name
+
+
 class AuditLog(models.Model):
     """One line of the audit log: who did what and when (sign-ins, people, chats, memories, Excel files,
     MCP calls) - written only by portal/audit.py, read by staff on the Audit page. Read-only: the app
@@ -172,6 +197,10 @@ class AuditLog(models.Model):
         ("mcp_get_schema", "MCP: schema read"),
         ("sql_run", "SQL page: query run"),
         ("sql_excel", "SQL page: Excel downloaded"),
+        ("sql_saved", "SQL page: query saved"),
+        ("sql_saved_changed", "SQL page: saved query changed"),
+        ("sql_saved_shared", "SQL page: saved query shared / made private"),
+        ("sql_saved_deleted", "SQL page: saved query deleted"),
     ]
     USER_AGENT_CHARS = 200
 
