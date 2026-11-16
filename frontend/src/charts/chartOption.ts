@@ -13,6 +13,7 @@ export type Colours = {
   series: string[]; ink: string; muted: string; line: string; low: string; high: string; up: string; down: string; total: string
   surface: string // the card a chart sits on: the tooltip's box, the thin line between slices, a dark PNG's background
   box: string // the Knowledge graph's drawing box (the 3D scene behind the balls)
+  head: string // a heading: the name on a Knowledge graph label card
 }
 
 /** The theme now: <html data-theme="dark"> is dark, anything else light (the menu's switch sets the attribute). */
@@ -70,6 +71,7 @@ export function readColours(theme: ThemeName = themeName()): Colours {
     total: dark ? '#5B6878' : token('--head', '#32353A'),
     surface: hex(SURFACE_NAMES, dark ? '#171D2B' : '#fff'),
     box: hex(BOX_NAMES, dark ? '#1C2333' : '#F8F9FB'),
+    head: token('--head', dark ? '#F1F4F9' : '#32353A'),
   }
 }
 

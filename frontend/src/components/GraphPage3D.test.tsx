@@ -1,4 +1,8 @@
-// Knowledge graph, the 3D view (05-Nov): the switch and its memory, WebGL missing, the same colours as 2D, a click
+// Knowledge graph, the 3D view (05-Nov): the switch and its memory, WebGL missing, the look (16-Nov: a disc with
+// its type's icon for each node, all one size by how many there are, the middle one bigger; a label card on every
+// node - full up to 15 around the middle one, short above that, full on hover / select; the first places keep the
+// cards clear of each other, the layout's forces grow with the count; pills on the hovered or selected node's
+// links, thin light lines, the three zoom buttons), a click
 // selects (on the middle node: back), two quick clicks go in, the balls can be dragged, the wheel zooms only near
 // the nodes, Fit (the first picture back: each ball glides to where it was when the layout first settled, the
 // middle one pinned at the centre, nothing laid out again), full screen, Similar customers keeps the nodes in place,
@@ -6,15 +10,17 @@
 // the tests check what it is given; the frames of Fit's move are run by hand (handFrames).
 import { act, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import { Group, type Sprite } from 'three'
+import { cutName, factLine } from '../charts/graphLook'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { type FakeForceGraph, graphs, lastGraph } from '../test/fakeForceGraph'
 import { readColours } from '../charts/chartOption'
+import { FULL_CARDS, MIDDLE_DISC, type Placing, SHORT_NAME, discSize, layoutUnit, placeNodes, startDistance } from '../charts/Graph3D'
 import { charts, lastChart } from '../test/fakeEcharts'
 import { fakeFetch } from '../test/fakeFetch'
 import { renderAt } from '../test/render'
 import type { GraphEdge, GraphNode, GraphNodeReply, GraphSimilarReply } from '../types'
 import GraphPage, { NO_WEBGL } from './GraphPage'
-import { TYPE_COLOURS } from './graphData'
+import { TYPE_COLOURS, forgetGraphPage } from './graphData'
 
 vi.mock('../charts/echarts', () => import('../test/fakeEcharts'))
 vi.mock('../charts/echartsGraph', () => ({}))
@@ -66,8 +72,9 @@ const AURORA_ONLY = ['customer:3680', 'product:45', 'sales_person:4', 'state:Tam
 const MOTOR_ONLY = ['product:45', 'customer:3680', 'category:Hydraulic motors', 'document:product_catalogue.pdf#2']
 
 let webgl = true
+let textWidth = 60 // px: how wide the canvas measures every text (a card's lines)
 // a 2D canvas that draws nothing (the names and rings are drawn on small canvases)
-const paint = new Proxy({ measureText: () => ({ width: 60 }) } as Record<string, unknown>, {
+const paint = new Proxy({ measureText: () => ({ width: textWidth }) } as Record<string, unknown>, {
   get: (target, name) => (name in target ? target[name as string] : () => {}),
   set: () => true,
 })
@@ -75,6 +82,7 @@ let clock = 100000 // Date.now in these tests: each click moves it on by hand
 
 beforeEach(() => {
   webgl = true
+  textWidth = 60
   clock = 100000
   // jsdom has no canvas: a WebGL context only when the test says the browser has one
   vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockImplementation(((kind: string) =>
@@ -132,7 +140,8 @@ const FIRST: Record<string, Spot> = { [MOTOR.id]: [40, -20, 10], [PRIYA.id]: [-3
 const LOPSIDED: Record<string, Spot> = { [AURORA.id]: [-300, 50, 0], [MOTOR.id]: [60, -20, 10], [PRIYA.id]: [90, 15, -5],
   [TAMIL.id]: [70, 25, 20] }
 const CENTRE = { x: 0, y: 0, z: 0 }
-const START = { x: 0, y: 0, z: 90 + 40 * Math.sqrt(4) }                      // straight in front, for 4 nodes
+const HIGH = 580 - 28                                                          // the drawing's height (less the legend)
+const START = { x: 0, y: 0, z: startDistance(3, HIGH) }                        // straight in front, for 3 around the middle
 
 async function drawAurora() {
   fireEvent.change(screen.getByRole('combobox', { name: 'Search' }), { target: { value: 'Aurora' } })
@@ -145,6 +154,54 @@ async function into3d() {
   fireEvent.click(screen.getByRole('button', { name: '3D view' }))
   await waitFor(() => expect(lastGraph()?.ids()).toEqual(AURORA_ONLY))
   return lastGraph()
+}
+
+/** count pumps (and nothing else) around Aurora, the first one the biggest. */
+function pumpsAround(count: number): GraphNode[] {
+  return Array.from({ length: count }, (_, i) => node('product', `9${i}`, `Trochoid pump TP-${i}`, (count - i) * 1e6))
+}
+
+/** Aurora with these nodes around it, in 3D; view.unmount() leaves the page. */
+async function into3dWith(around: GraphNode[]) {
+  fakeFetch({ ...REPLIES, '/api/graph/node?type=customer&id=3680&limit=25': { body: { ...AURORA_REPLY,
+    neighbours: around, edges: around.map((one) => edge(AURORA.id, one.id, 'BOUGHT', 500)) } } })
+  const view = renderAt('/graph', <GraphPage />)
+  await drawAurora()
+  fireEvent.click(screen.getByRole('button', { name: '3D view' }))
+  await waitFor(() => expect(lastGraph()?.ids()).toHaveLength(around.length + 1))
+  return { graph: lastGraph(), view }
+}
+
+/** Leaves the page and forgets it (as between two tests): the next into3dWith starts afresh. */
+function leave(view: { unmount: () => void }) {
+  view.unmount()
+  forgetGraphPage()
+  window.localStorage.clear()
+  window.history.replaceState(null, '', '/')
+}
+
+const FOCAL = HIGH /(2 * Math.tan((50 * Math.PI) / 360)) // px per graph unit, at a distance of 1 (the camera's fov: 50)
+
+/** Where the camera (straight in front of the middle) shows a node: px from the middle (y up), its disc's radius in
+ *  px, and px per graph unit at its depth. */
+function seen(graph: FakeForceGraph, item: { x: number; y: number; z: number; r: number }) {
+  const k = FOCAL / (graph.cam.position.z - item.z)
+  return { x: item.x * k, y: item.y * k, r: item.r * k, k }
+}
+
+const cardsOf = (group: Group) => group.children.filter((child) => child.userData.kind === 'card') as Sprite[]
+
+/** True when no node's disc and shown card cover another's on the screen (the camera straight in front). */
+function clearOfEachOther(graph: FakeForceGraph, made: Map<string, Group>): boolean {
+  const boxes = [...made].map(([id, group]) => {
+    const { x, y, r, k } = seen(graph, graph.node(id))
+    const card = cardsOf(group).find((one) => one.visible)!
+    const top = y - card.userData.below * k - 5 // the card hangs 5 px under its point
+    const half = Math.max(r, card.userData.width / 2)
+    return { left: x - half, right: x + half, top: y + r, bottom: top - card.userData.height }
+  })
+  return boxes.every((a, i) => boxes.slice(i + 1).every((b) => a.right <= b.left + 0.5 || b.right <= a.left + 0.5
+    || a.top <= b.bottom + 0.5 || b.top <= a.bottom + 0.5))
 }
 
 describe('GraphPage 3D view', () => {
@@ -163,13 +220,19 @@ describe('GraphPage 3D view', () => {
     expect(graph.props.enableNodeDrag).toBe(true)                               // a ball can be dragged
     expect(graph.dragOnData[0]).toBe(true)                                      // (on before the data is drawn)
     expect(graph.props.backgroundColor).toBe('#F8F9FB')                         // the light box (bg-muted)
-    // the colours of 2D: a node's type, a link its source's colour
+    // the colours of 2D for a node's type; the links are thin, light lines in the theme's muted colour
     expect(graph.props.nodeColor(graph.node(AURORA.id))).toBe(TYPE_COLOURS.customer)
     expect(graph.props.nodeColor(graph.node(MOTOR.id))).toBe(TYPE_COLOURS.product)
     expect(graph.data.links).toHaveLength(3)
-    expect(graph.data.links.every((l: { colour: string }) => l.colour === TYPE_COLOURS.customer)).toBe(true)
+    for (const link of graph.data.links) {
+      expect(graph.props.linkColor(link)).toBe(readColours('light').muted)
+      expect(graph.props.linkDirectionalArrowColor(link)).toBe(readColours('light').muted)
+      expect(graph.props.linkWidth(link)).toBeGreaterThan(0)
+      expect(graph.props.linkWidth(link)).toBeLessThan(1)                       // thin
+    }
+    expect(graph.props.nodeThreeObjectExtend).toBeUndefined()                   // our own discs, not the library's balls
     expect(graph.node(AURORA.id)).toMatchObject({ fx: 0, fy: 0, fz: 0 })      // the middle node at the centre
-    expect(graph.node(AURORA.id).r).toBeGreaterThan(graph.node(MOTOR.id).r)  // sized by net sales, as in 2D
+    expect(graph.node(AURORA.id).r).toBeGreaterThan(graph.node(MOTOR.id).r)  // the middle node bigger
     expect(graph.props.nodeLabel(graph.node(MOTOR.id))).toContain('Hydraulic motor HM-346-1B') // the hover tooltip
     expect(screen.getByText('Customer')).toBeInTheDocument()                    // the legend
 
@@ -189,7 +252,7 @@ describe('GraphPage 3D view', () => {
     expect(window.localStorage.getItem('mi.graphView')).toBeNull()
   })
 
-  it('names the middle node and rings the middle and the selected node; the ring follows the selection', async () => {
+  it('cards the middle node and rings the middle and the selected node; the ring follows the selection', async () => {
     fakeFetch(REPLIES)
     renderAt('/graph', <GraphPage />)
     await drawAurora()
@@ -199,20 +262,344 @@ describe('GraphPage 3D view', () => {
 
     const aurora = made(AURORA.id)
     expect(aurora).toBeInstanceOf(Group)
-    expect(shown(aurora)).toEqual([true, true, true])                           // its name, the white ring, the dark ring
-    const label = aurora.children[0] as Sprite
-    expect(label.position.y).toBe(graph.node(AURORA.id).r)                      // just above the ball
+    expect(aurora.renderOrder).toBe(20)                                         // drawn after the links
+    expect(shown(aurora)).toEqual([true, true, true, true])                     // its disc, its card, the soft ring, the dark ring
+    expect(aurora.children.map((child) => child.userData.kind)).toEqual(['icon', 'card', 'ring', 'ring'])
+    const label = aurora.children[1] as Sprite
+    expect(label.position.y).toBeLessThan(-graph.node(AURORA.id).r)             // under the disc and its soft ring
     expect(label.scale.y).toBeGreaterThan(0)
+    expect(label.material.sizeAttenuation).toBe(false)                          // the same size on the screen at any zoom
+    // turned: "under" follows the camera's own up (here the camera lies on its side: its up is the graph's -x)
+    const below = label.userData.below as number
+    label.onBeforeRender(null as never, null as never, { quaternion: { x: 0, y: 0, z: Math.SQRT1_2, w: Math.SQRT1_2 } } as never,
+      null as never, null as never, null as never)
+    expect(label.position.x).toBeCloseTo(below)
+    expect(label.position.y).toBeCloseTo(0)
 
     const motor = made(MOTOR.id)
     graph.click(MOTOR.id)                                                       // select the motor
     await within(screen.getByRole('complementary', { name: 'Node details' })).findByText('INR 90,00,000.00')
-    await waitFor(() => expect(shown(aurora)).toEqual([true, true, false]))     // the dark ring moved ...
-    expect(aurora.children[2].layers.isEnabled(0)).toBe(false)                  // (hidden: no hover or click on it)
-    expect(shown(motor)).toEqual([true, true])                                  // ... to the motor (name + ring)
+    await waitFor(() => expect(shown(aurora)).toEqual([true, true, true, false])) // the dark ring moved ...
+    expect(aurora.children[3].layers.isEnabled(0)).toBe(false)                  // (hidden: no hover or click on it)
+    expect(shown(motor)).toEqual([true, true, true])                            // ... to the motor (disc, card, ring)
   })
 
-  it('the dark theme changes the scene\'s background, tags and rings; the balls and the first picture stay', async () => {
+  it('every node is a disc with the icon of its type; the middle one is bigger and blue with a soft ring', async () => {
+    fakeFetch(REPLIES)
+    renderAt('/graph', <GraphPage />)
+    await drawAurora()
+    const graph = await into3d()
+    const light = readColours('light')
+    const made = new Map(AURORA_ONLY.map((id) => [id, graph.props.nodeThreeObject(graph.node(id)) as Group]))
+    for (const id of AURORA_ONLY) {
+      const item = graph.node(id)
+      const icon = made.get(id)!.children[0] as Sprite
+      expect(icon.userData).toMatchObject({ kind: 'icon', type: item.node.type })
+      expect(icon.userData.colour).toBe(id === AURORA.id ? light.series[0] : TYPE_COLOURS[item.node.type as GraphNode['type']])
+      expect(icon.visible).toBe(true)
+      expect([icon.scale.x, icon.scale.y]).toEqual([item.r * 2, item.r * 2])    // as big as the node
+      expect(icon.material.depthTest).toBe(false)                               // drawn over the links
+    }
+    const types = AURORA_ONLY.map((id) => (made.get(id)!.children[0] as Sprite).userData.type)
+    expect(types).toEqual(['customer', 'product', 'sales_person', 'state'])
+    // the middle node: a MIDDLE_DISC px disc in the first picture (1 px there = layoutUnit), the others discSize
+    expect(graph.node(AURORA.id).r).toBeCloseTo((MIDDLE_DISC / 2) * layoutUnit(3))
+    expect(MIDDLE_DISC).toBeGreaterThan(discSize(3))
+    const halo = made.get(AURORA.id)!.children[2] as Sprite
+    expect(halo.userData.kind).toBe('ring')
+    expect(halo.scale.x).toBeGreaterThan(graph.node(AURORA.id).r * 2)           // around the disc
+    expect(made.get(MOTOR.id)!.children.map((child) => child.userData.kind)).toEqual(['icon', 'card'])
+  })
+
+  it('every disc around the middle one is the same size, by how many there are (5 / 20 / 35); the middle one bigger', async () => {
+    const sizes: number[] = []
+    for (const count of [5, 20, 35]) {
+      const { graph, view } = await into3dWith(pumpsAround(count))
+      const ids: string[] = graph.ids()
+      expect(graph.cam.position.z).toBeCloseTo(startDistance(count, HIGH))      // the camera of the first picture
+      const outer = ids.filter((id) => id !== AURORA.id).map((id) => seen(graph, graph.node(id)).r)
+      // the same on the screen (a disc nearer the camera is drawn a little smaller), not by amount: big pumps too
+      for (const r of outer) expect(r).toBeCloseTo(discSize(count) / 2)
+      expect(seen(graph, graph.node(AURORA.id)).r).toBeCloseTo(MIDDLE_DISC / 2)
+      const depths = new Set(ids.map((id) => Math.round(graph.node(id).z)))
+      expect(depths.size).toBeGreaterThan(2)                                    // at different depths: it is 3D
+      for (const id of ids) {
+        const icon = (graph.props.nodeThreeObject(graph.node(id)) as Group).children[0] as Sprite
+        expect(icon.scale.x).toBeCloseTo(graph.node(id).r * 2)                  // the disc as big as the node
+      }
+      sizes.push(outer[0])
+      leave(view)
+    }
+    expect(sizes[0]).toBeGreaterThan(sizes[1])                                 // fewer nodes, bigger discs
+    expect(sizes[1]).toBeGreaterThan(sizes[2])
+    expect([discSize(1), discSize(10), discSize(11), discSize(25), discSize(26), discSize(40)]).toEqual([40, 40, 32, 32, 26, 26])
+    expect(MIDDLE_DISC).toBeGreaterThan(discSize(1))
+  })
+
+  it('a card on every node: name and fact line up to 15 around the middle one, all clear of each other', async () => {
+    const pumps = pumpsAround(FULL_CARDS)
+    const { graph } = await into3dWith(pumps)
+    const ids: string[] = graph.ids()
+    const made = new Map(ids.map((id) => [id, graph.props.nodeThreeObject(graph.node(id)) as Group]))
+    for (const id of ids) {
+      const cards = cardsOf(made.get(id)!)
+      expect(cards).toHaveLength(1)                                             // one card, shown
+      expect(cards[0].visible).toBe(true)
+      const item = graph.node(id).node as GraphNode
+      expect(cards[0].userData).toMatchObject({ short: false, name: cutName(item.label, 26), fact: factLine(item) })
+    }
+    expect(cardsOf(made.get(AURORA.id)!)[0].userData.name).toBe('Aurora Hydraulics Private…')
+    expect(factLine(pumps[0])).toMatch(/^INR /)
+    expect(clearOfEachOther(graph, made)).toBe(true)                            // the first picture: no card covers another
+    graph.hover(pumps[3].id)                                                    // the mouse over one: the same card
+    expect(cardsOf(made.get(pumps[3].id)!)).toHaveLength(1)
+  })
+
+  it('more than 15: a short card (the name only) on each, the full one on hover or select; the middle one always full', async () => {
+    const pumps = pumpsAround(20)
+    const { graph } = await into3dWith(pumps)
+    const ids: string[] = graph.ids()
+    const made = new Map(ids.map((id) => [id, graph.props.nodeThreeObject(graph.node(id)) as Group]))
+    const middle = cardsOf(made.get(AURORA.id)!)
+    expect(middle).toHaveLength(1)
+    expect(middle[0].userData).toMatchObject({ short: false, fact: factLine(AURORA) })
+    for (const pump of pumps) {
+      const cards = cardsOf(made.get(pump.id)!)
+      expect(cards).toHaveLength(1)                                             // the full one is made only when needed
+      expect(cards[0].visible).toBe(true)
+      expect(cards[0].userData).toMatchObject({ short: true, name: cutName(pump.label, SHORT_NAME), fact: '' })
+    }
+    expect(cutName(pumps[0].label, SHORT_NAME)).toBe('Trochoid pump…')
+    expect(clearOfEachOther(graph, made)).toBe(true)
+
+    const shown = (id: string) => cardsOf(made.get(id)!).filter((card) => card.visible).map((card) => card.userData.short)
+    const [one, two] = pumps
+    graph.hover(one.id)                                                         // the mouse over one: its full card
+    expect(shown(one.id)).toEqual([false])
+    const full = cardsOf(made.get(one.id)!).find((card) => !card.userData.short)!
+    expect(full.userData).toMatchObject({ name: one.label, fact: factLine(one) })
+    graph.hover(two.id)                                                         // on to the next: the first is short again
+    expect(shown(one.id)).toEqual([true])
+    expect(full.layers.isEnabled(0)).toBe(false)                                // (hidden: no hover or click on it)
+    expect(shown(two.id)).toEqual([false])
+    graph.hover(null)
+    expect(shown(two.id)).toEqual([true])
+    expect(cardsOf(made.get(one.id)!)).toContain(full)                          // kept for the next time
+
+    graph.click(one.id)                                                         // selected: full without the mouse
+    await waitFor(() => expect(shown(one.id)).toEqual([false]))
+    expect(cardsOf(made.get(one.id)!)).toContain(full)                          // the same one, not made again
+    clock += 1000
+    graph.click(two.id)
+    await waitFor(() => expect(shown(one.id)).toEqual([true]))
+    expect(shown(two.id)).toEqual([false])
+    expect(shown(AURORA.id)).toEqual([false])                                   // the middle one: always the full card
+
+    // leaving 3D frees every card (the short and the full ones), disc and ring
+    const sprites = [...made.values()].flatMap((group) => group.children) as Sprite[]
+    expect(sprites.length).toBeGreaterThan(2 * 21)
+    const freed = sprites.flatMap((sprite) => [vi.spyOn(sprite.material, 'dispose'), vi.spyOn(sprite.material.map!, 'dispose')])
+    fireEvent.click(screen.getByRole('button', { name: '2D view' }))
+    await waitFor(() => expect(graph.destroyed).toBe(true))
+    for (const spy of freed) expect(spy).toHaveBeenCalled()
+    for (const group of made.values()) expect(group.children).toHaveLength(0)
+  })
+
+  it('full cards that do not fit the drawing clear of each other: short ones, though 15 or fewer', async () => {
+    textWidth = 500                                                             // very long lines
+    const { graph } = await into3dWith(pumpsAround(12))
+    const made = new Map((graph.ids() as string[]).map((id) => [id, graph.props.nodeThreeObject(graph.node(id)) as Group]))
+    for (const [id, group] of made) expect(cardsOf(group)[0].userData.short).toBe(id !== AURORA.id)
+  })
+
+  it('more nodes, more room: longer links, a stronger push; Fit brings back the first picture of the new places', async () => {
+    const lengths: number[] = []
+    const pushes: number[] = []
+    for (const count of [5, 20, 35]) {
+      const { graph, view } = await into3dWith(pumpsAround(count))
+      const links = graph.data.links
+      // each link as long as its two ends' places are apart (the layout holds them there)
+      for (const link of links) {
+        const [a, b] = [graph.node(link.source), graph.node(link.target)]
+        expect(graph.linkLength(link)).toBeCloseTo(Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z))
+      }
+      lengths.push(links.reduce((sum: number, link: unknown) => sum + graph.linkLength(link), 0) / links.length)
+      pushes.push(-graph.forces.charge.strength.mock.lastCall[0])
+      expect(graph.forces.charge.distanceMax).toHaveBeenCalled()                // a short-range push
+      expect(graph.forces.home).toBeTypeOf('function')                          // each ball pulled to its own place
+      expect(graph.forces.center).toBeUndefined()                               // (the middle node is pinned instead)
+      leave(view)
+    }
+    expect(lengths[1]).toBeGreaterThan(lengths[0])
+    expect(lengths[2]).toBeGreaterThan(lengths[1])
+    expect(pushes[1]).toBeGreaterThan(pushes[0])
+    expect(pushes[2]).toBeGreaterThan(pushes[1])
+
+    // Fit: the first picture is where the balls were spread out when the layout first settled
+    const { graph } = await into3dWith(pumpsAround(20))
+    const ids: string[] = graph.ids()
+    const first = new Map(ids.map((id) => [id, at(graph.node(id))]))
+    graph.settle()
+    const start = { ...graph.cam.position }
+    ids.forEach((id, i) => Object.assign(graph.node(id), { x: i, y: -i, z: 2 * i }))   // all moved about
+    graph.cam.position = { x: 300, y: 0, z: 10 }
+    const frames = handFrames()
+    fireEvent.click(screen.getByRole('button', { name: 'Fit' }))
+    frames.finish()
+    for (const id of ids) at(graph.node(id)).forEach((value, i) => expect(value).toBeCloseTo(first.get(id)![i], 9))
+    expect(graph.cam.position).toEqual(start)
+
+    // a ball dropped somewhere: its link as long as its new place asks
+    const pump = graph.node(ids[1])
+    Object.assign(pump, { x: 200, y: 50, z: 0 })
+    graph.props.onNodeDragEnd(pump, { x: 0, y: 0, z: 0 })
+    const link = graph.data.links.find((l: { edge: GraphEdge }) => l.edge.target === pump.id)
+    expect(graph.linkLength(link)).toBeCloseTo(Math.hypot(200, 50))
+  })
+
+  it('the first places keep every card clear of the others, up to 30 nodes on a laptop-sized drawing', () => {
+    // cards as wide as real names: 7 px a letter (bold 12 px), full up to 15 nodes, short above
+    for (const count of [5, 10, 15, 20, 25, 30]) {
+      const short = count > FULL_CARDS
+      const disc = discSize(count)
+      const items: Placing[] = [{ fixed: true, x: 0, y: 0, room: { side: 101, up: 34, down: 84 } }] // the middle node
+      for (let i = 0; i < count; i++) {
+        const letters = Math.min(short ? SHORT_NAME : 26, 9 + ((i * 7) % 20))
+        const room = { side: Math.max(disc / 2, (letters * 7 + 20) / 2), up: disc / 2, down: disc / 2 + 5 + (short ? 24 : 40) }
+        items.push({ fixed: false, x: 0, y: 0, room })
+      }
+      expect(placeNodes(items, 800, HIGH)).toBe(0)
+      for (const [i, a] of items.entries()) {
+        expect(Math.abs(a.x) + a.room.side).toBeLessThanOrEqual(400)            // inside the drawing
+        expect(a.y + a.room.up).toBeLessThanOrEqual(HIGH / 2)
+        expect(a.room.down - a.y).toBeLessThanOrEqual(HIGH / 2)
+        for (const b of items.slice(i + 1)) {
+          const apart = Math.abs(a.x - b.x) >= a.room.side + b.room.side
+            || a.y - a.room.down >= b.y + b.room.up || b.y - b.room.down >= a.y + a.room.up
+          expect(apart).toBe(true)
+        }
+      }
+    }
+  })
+
+  it('link pills name only the links of the hovered or the selected node, in the middle of each link', async () => {
+    fakeFetch(REPLIES)
+    renderAt('/graph', <GraphPage />)
+    await drawAurora()
+    const graph = await into3d()
+    place(graph, FIRST)
+    const holder = graph.stage.children.find((child) => child instanceof Group) as Group
+    expect(holder.renderOrder).toBe(30)                                         // over the links and the nodes
+    const words = () => holder.children.map((pill) => pill.userData.text).sort()
+    expect(words()).toEqual([])                                                 // none at first: never all at once
+
+    graph.hover(MOTOR.id)
+    expect(words()).toEqual(['Bought'])                                         // its one link, in plain words
+    const pill = holder.children[0] as Sprite
+    expect(pill.position.toArray()).toEqual([20, -10, 5])                       // half-way between Aurora and the motor
+    expect(pill.material.sizeAttenuation).toBe(false)
+    Object.assign(graph.node(MOTOR.id), { x: 100, y: 40, z: -20 })              // the motor is dragged: the pill follows
+    graph.moveLinks()
+    expect(pill.position.toArray()).toEqual([50, 20, -10])
+    expect(graph.props.linkPositionUpdate({}, { start: CENTRE, end: CENTRE }, graph.data.links[0])).toBe(false) // the line is the library's
+    graph.moveLinks()
+
+    graph.hover(AURORA.id)                                                      // the middle node: all three of its links
+    expect(words()).toEqual(['Bought', 'Handled by', 'In state'])
+    expect(holder.children).toContain(pill)
+    const freed = vi.spyOn(pill.material, 'dispose')
+    graph.hover(null)
+    expect(words()).toEqual([])
+    expect(freed).toHaveBeenCalled()                                            // a pill taken away is freed
+
+    graph.click(PRIYA.id)                                                       // selected: named without the mouse
+    await waitFor(() => expect(words()).toEqual(['Handled by']))
+    graph.hover(TAMIL.id)
+    expect(words()).toEqual(['Handled by', 'In state'])
+    graph.hover(null)
+    expect(words()).toEqual(['Handled by'])
+  })
+
+  it('the zoom buttons: + and - move the camera towards and away from the centre, reset does what Fit does', async () => {
+    fakeFetch(REPLIES)
+    renderAt('/graph', <GraphPage />)
+    await drawAurora()
+    const graph = await into3d()
+    place(graph, FIRST)
+    graph.settle()
+    const zoomIn = screen.getByRole('button', { name: 'Zoom in' })
+    const zoomOut = screen.getByRole('button', { name: 'Zoom out' })
+    const reset = screen.getByRole('button', { name: 'Reset the view' })
+    const picture = screen.getByRole('img', { name: /Drawn in 3D/ })
+    for (const button of [zoomIn, zoomOut, reset]) {
+      expect(picture.parentElement).toContainElement(button)                    // inside the 3D box ...
+      expect(picture).not.toContainElement(button)                              // ... beside the picture, not in it
+    }
+    expect(screen.getByRole('button', { name: 'Fit' })).toBeInTheDocument()     // Fit and Download PNG stay
+    expect(screen.getByRole('button', { name: 'Download PNG' })).toBeInTheDocument()
+    const drawn = graph.dragOnData.length
+
+    expect(graph.cam.position).toEqual(START)
+    fireEvent.click(zoomIn)                                                     // 22% closer, in one short move
+    expect(graph.cameraPosition).toHaveBeenLastCalledWith({ x: 0, y: 0, z: START.z * 0.78 }, CENTRE, 250)
+    fireEvent.click(zoomOut)                                                    // and back
+    expect(graph.cam.position.z).toBeCloseTo(START.z)
+    fireEvent.click(zoomOut)
+    expect(graph.cam.position.z).toBeCloseTo(START.z / 0.78)
+
+    graph.cam.position = { x: 110, y: 20, z: 0 }                                // turned, and moved with a right-drag:
+    graph.cam.lookAt = { x: 10, y: 20, z: 0 }                                   // towards the point it turns around
+    fireEvent.click(zoomIn)
+    expect(graph.cam.position.x).toBeCloseTo(10 + 100 * 0.78)
+    expect(graph.cam).toMatchObject({ position: { y: 20, z: 0 }, lookAt: { x: 10, y: 20, z: 0 } })
+
+    graph.cam.position = { x: 10, y: 20, z: 32 }                                // the limits: not closer than 30 ...
+    fireEvent.click(zoomIn)
+    expect(graph.cam.position.z).toBeCloseTo(30)
+    fireEvent.click(zoomIn)
+    expect(graph.cam.position.z).toBeCloseTo(30)
+    graph.cam.position = { x: 10, y: 20, z: 2900 }                              // ... not further than 3000
+    fireEvent.click(zoomOut)
+    expect(graph.cam.position.z).toBeCloseTo(3000)
+    expect(graph.dragOnData.length).toBe(drawn)                                 // the graph is not given again
+    expect(graph.d3ReheatSimulation).not.toHaveBeenCalled()
+
+    place(graph, LOPSIDED, [AURORA.id])                                         // reset: the first picture back, as Fit
+    const frames = handFrames()
+    fireEvent.click(reset)
+    expect(graph.cameraPosition).toHaveBeenLastCalledWith(START, CENTRE, 800)
+    expect(graph.cam).toMatchObject({ position: START, lookAt: CENTRE })
+    frames.finish()
+    expect(graph.node(AURORA.id)).toMatchObject({ ...CENTRE, fx: 0, fy: 0, fz: 0 })
+    for (const [id, spot] of Object.entries(FIRST)) expect(at(graph.node(id))).toEqual(spot)
+  })
+
+  it('leaving 3D frees every disc, card, ring and pill', async () => {
+    fakeFetch(REPLIES)
+    renderAt('/graph', <GraphPage />)
+    await drawAurora()
+    const graph = await into3d()
+    const groups = AURORA_ONLY.map((id) => graph.props.nodeThreeObject(graph.node(id)) as Group)
+    const holder = graph.stage.children.find((child) => child instanceof Group) as Group
+    graph.hover(MOTOR.id)
+    const sprites = [...groups.flatMap((group) => group.children), ...holder.children] as Sprite[]
+    expect(sprites).toHaveLength(4 + 4 + 2 + 1)                                 // 4 discs, 4 cards, Aurora's 2 rings, 1 pill
+    const freed = sprites.flatMap((sprite) => [vi.spyOn(sprite.material, 'dispose'), vi.spyOn(sprite.material.map!, 'dispose')])
+
+    // the same node drawn again by the library (another middle node and back): the first pictures are freed
+    const again = graph.props.nodeThreeObject(graph.node(PRIYA.id)) as Group
+    expect(groups[2].children).toHaveLength(0)
+    const more = again.children.map((sprite) => vi.spyOn((sprite as Sprite).material, 'dispose'))
+    expect(more).toHaveLength(2)
+
+    fireEvent.click(screen.getByRole('button', { name: '2D view' }))
+    await waitFor(() => expect(graph.destroyed).toBe(true))
+    for (const spy of [...freed, ...more]) expect(spy).toHaveBeenCalled()       // pictures and materials freed
+    for (const group of [...groups, again, holder]) expect(group.children).toHaveLength(0)
+    expect(graph.stage.children).not.toContain(holder)
+  })
+
+  it('the dark theme changes the scene\'s background, discs, cards, rings, pills and lines; the balls and the first picture stay', async () => {
     fakeFetch(REPLIES)
     renderAt('/graph', <GraphPage />)
     await drawAurora()
@@ -222,9 +609,13 @@ describe('GraphPage 3D view', () => {
     const light = readColours('light')
     const dark = readColours('dark')
     expect(graph.props.backgroundColor).toBe(light.box)
-    const aurora = graph.props.nodeThreeObject(graph.node(AURORA.id)) as Group  // its name, the middle ring, the selected ring
+    const aurora = graph.props.nodeThreeObject(graph.node(AURORA.id)) as Group  // its disc, its card, the soft ring, the selected ring
     const motor = graph.props.nodeThreeObject(graph.node(MOTOR.id)) as Group
-    const [label, middle, ring] = aurora.children
+    const [icon, label, middle, ring] = aurora.children
+    const holder = graph.stage.children.find((child) => child instanceof Group) as Group
+    graph.hover(PRIYA.id)                                                       // a pill on Priya's link
+    const [pill] = holder.children
+    expect(graph.props.linkColor(graph.data.links[0])).toBe(light.muted)
     const motorNode = graph.node(MOTOR.id)
     Object.assign(motorNode, { x: 12, y: -30, z: 7 })                           // dragged somewhere
     const drawn = graph.dragOnData.length                                       // how often the graph got its data
@@ -243,12 +634,19 @@ describe('GraphPage 3D view', () => {
     expect(graph.node(MOTOR.id)).toBe(motorNode)
     expect(motorNode).toMatchObject({ x: 12, y: -30, z: 7 })                    // the ball stays where it was
     expect(graph.node(AURORA.id)).toMatchObject({ fx: 0, fy: 0, fz: 0 })
-    // the name tag and both rings were painted again (new sprites in the same group), and show as before
-    expect(aurora.children).toHaveLength(3)
-    for (const old of [label, middle, ring]) expect(aurora.children).not.toContain(old)
-    expect(aurora.children.map((child) => child.visible)).toEqual([true, true, true])
-    expect(motor.children.map((child) => child.visible)).toEqual([true])
-    expect((aurora.children[0] as Sprite).userData.text).toBe((label as Sprite).userData.text)
+    // the disc, the card and both rings were painted again (new sprites in the same group), and show as before
+    expect(aurora.children).toHaveLength(4)
+    for (const old of [icon, label, middle, ring]) expect(aurora.children).not.toContain(old)
+    expect(aurora.children.map((child) => child.visible)).toEqual([true, true, true, true])
+    expect(aurora.children.map((child) => child.userData.kind)).toEqual(['icon', 'card', 'ring', 'ring'])
+    expect(aurora.children[0].userData.colour).toBe(dark.series[0])             // the middle node: the dark theme's blue
+    expect(motor.children.map((child) => child.visible)).toEqual([true, true])
+    expect((aurora.children[1] as Sprite).userData.text).toBe((label as Sprite).userData.text)
+    expect(holder.children).toHaveLength(1)                                     // the pill too
+    expect(holder.children).not.toContain(pill)
+    expect(holder.children[0].userData.text).toBe('Handled by')
+    expect(graph.props.linkColor(graph.data.links[0])).toBe(dark.muted)         // the lines in the dark theme's colour
+    expect(dark.muted).not.toBe(light.muted)
 
     // Fit still brings back the first picture kept before the theme changed
     const frames = handFrames()
@@ -358,10 +756,11 @@ describe('GraphPage 3D view', () => {
     const graph = await into3d()
     expect(graph.props.height).toBe(580 - 28)                                   // the 2D height, less the legend row
     expect(graph.cameraPosition).toHaveBeenLastCalledWith(START, CENTRE, 800)   // where a new centre starts
+    const moves = graph.cameraPosition.mock.calls.length
     place(graph, FIRST)
-    graph.settle()                                                              // the first layout settles: kept, fitted once
-    expect(graph.zoomToFit).toHaveBeenCalledTimes(1)
-    graph.zoomToFit.mockClear()
+    graph.settle()                                                              // the first layout settles: kept
+    expect(graph.zoomToFit).not.toHaveBeenCalled()                              // (the camera framed the places already)
+    expect(graph.cameraPosition.mock.calls.length).toBe(moves)
 
     place(graph, LOPSIDED, [AURORA.id, PRIYA.id])                               // dragged about ...
     graph.settle()                                                              // ... and settled again: not kept
@@ -522,7 +921,7 @@ describe('GraphPage 3D view', () => {
     expect(motor).toMatchObject({ x: 12, y: -30, z: 7 })                        // ... in the same place
     expect(graph.cameraPosition.mock.calls.length).toBe(moves)                  // the camera stays
     const buysLike = graph.data.links.find((l: { edge: GraphEdge }) => l.edge.type === 'BUYS_LIKE')
-    expect(buysLike).toMatchObject({ colour: TYPE_COLOURS.customer, width: 0 }) // a thin line, as 2D's dashed one
+    expect(buysLike).toMatchObject({ width: 0 })                                // the thinnest line, as 2D's dashed one
 
     place(graph, { 'customer:12': [-20, -25, 15], [PRIYA.id]: [-50, 10, 0] })   // the layout settles with the new one
     graph.settle()

@@ -1,11 +1,14 @@
 // Knowledge graph: a search hit draws its neighbourhood (ECharts is a fake - jsdom has no canvas - so the tests
 // check the option it gets), a click fills the side panel, a double-click merges the node's neighbours in, Similar
-// customers, the FY filter asks again, Reset, the 150-node cap, the option itself, and friendly errors.
+// customers, the FY filter asks again, Reset, the 150-node cap, the option itself (circles with an icon, label
+// cards, pills on the links, the rings), the zoom buttons, and friendly errors.
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import App from '../App'
 import { readColours } from '../charts/chartOption'
-import { buildGraphOption, edgeWidth, MAX_SIZE, MIN_SIZE, nodeSize } from '../charts/graphOption'
+import { hiddenCards } from '../charts/graphLayout'
+import { buildGraphOption, cardModeFor, edgeWidth, FULL_CARDS, MAX_SIZE, MIN_SIZE, nodeSize, nodeSizeFor, PILL_LINKS, textWidth } from '../charts/graphOption'
+import { TYPE_ICONS } from '../charts/graphLook'
 import { parseRoute } from '../router'
 import { charts, lastChart } from '../test/fakeEcharts'
 import { fakeFetch } from '../test/fakeFetch'
@@ -116,7 +119,14 @@ describe('GraphPage', () => {
     expect(fetch.mock.calls.some(([url]) => String(url).includes('q=A&') || String(url).endsWith('q=A'))).toBe(false)
 
     const series = chart.option!.series[0]
-    expect(series.layout).toBe('force')
+    expect(series.layout).toBe('none')                                           // on a ring: nothing wobbles
+    expect([series.data[0].x, series.data[0].y]).toEqual([0, 0])                // Aurora in the middle
+    expect(series.label.formatter({ data: { id: 'customer:3680' } }))            // its card: the name and two facts
+      .toBe('{big|Aurora Hydraulics Private Limited}\n{fact|INR 2.9 Cr}\n{fact|Chennai, Tamil Nadu · Local Customer}')
+    expect(series.label.formatter({ data: { id: 'product:45' } })).toBe('{name|Hydraulic motor HM-346-1B}\n{fact|INR 90 L}')
+    expect(series.edgeLabel.show).toBe(true)                                     // few links: a pill on each
+    expect((series.links as { kind: string }[]).map((link) => series.edgeLabel.formatter({ data: link })))
+      .toEqual(['Bought', 'Handled by', 'In state'])
     expect(nodeIds()).toEqual(['customer:3680', 'product:45', 'sales_person:4', 'state:Tamil Nadu'])
     expect(series.links).toHaveLength(3)
     expect(chart.option!.legend[0].data).toEqual(['Customer', 'Product', 'Sales person', 'State / country'])
@@ -257,7 +267,7 @@ describe('the graph data and option', () => {
     expect(again.graph.nodes[0].amount).toBe(29088275)                          // a copy without numbers keeps them
   })
 
-  it('sizes nodes by net sales, edges by amount, and labels the big nodes', () => {
+  it('sizes nodes by net sales (3D), edges by amount; in 2D every node around the middle one the same, with a card', () => {
     expect(nodeSize(AURORA, 29088275, 1000)).toBe(MAX_SIZE)
     expect(nodeSize(node('customer', '1', 'Small', 1000), 29088275, 1000)).toBe(MIN_SIZE)
     const middle = nodeSize(MOTOR, 1e10, 1e6)                                  // 10 lakh .. 1,000 crore: in between
@@ -270,10 +280,15 @@ describe('the graph data and option', () => {
 
     const nodes = Array.from({ length: 20 }, (_, i) => node('customer', String(i), `C${i}`, (i + 1) * 1000))
     const option = buildGraphOption({ nodes, edges: [] }, readColours(), { center: 'customer:0' }) as any
-    const labelled = option.series[0].data.filter((n: any) => n.label.show).map((n: any) => n.id)
-    expect(labelled).toHaveLength(13)                                           // the 12 biggest + the centre
-    expect(labelled).toContain('customer:0')
-    expect(option.series[0].emphasis.label.show).toBe(true)                     // the hovered one too
+    const drawn = option.series[0].data
+    expect(option.series[0].label.show).toBe(true)                              // every node carries its label card
+    expect(drawn.every((n: any) => n.label?.show !== false)).toBe(true)
+    expect(option.series[0].label.formatter({ data: { id: 'customer:19' } })).toBe('{name|C19}')   // 19 around: compact
+    expect(option.series[0].emphasis.label.formatter({ data: { id: 'customer:19' } })).toBe('{name|C19}\n{fact|INR 20 K}')
+    expect(drawn[0].symbolSize).toBeGreaterThan(drawn[19].symbolSize)           // the middle node is the biggest ...
+    expect(drawn[19].symbolSize).toBe(drawn[1].symbolSize)                      // ... the others all the same, whatever their amount
+    expect(drawn[1].symbolSize).toBeGreaterThanOrEqual(26)                      // with room for the icon
+    expect(option.series[0].emphasis.label.show).toBe(true)                     // the hovered one always shows its card
     expect(option.tooltip.formatter({ dataType: 'node', data: { id: 'customer:19' } })).toContain('20,000.00')
 
     const withEdge = buildGraphOption({ nodes: [AURORA, MOTOR], edges: [edge(AURORA.id, MOTOR.id, 'BOUGHT', 1250000)] },
@@ -283,6 +298,347 @@ describe('the graph data and option', () => {
     expect(tip).toContain('12,50,000.00')
     const colours = withEdge.series[0].categories.map((c: any) => c.itemStyle.color)
     expect(colours).not.toContain('#DC2626')                                    // no red, no yellow
+  })
+})
+
+describe('the 2D look (15-Nov): circles with an icon, label cards, pills, rings', () => {
+  // Aurora with `count` products around it (and so `count` links)
+  const products = (count: number) => Array.from({ length: count }, (_, i) =>
+    node('product', String(i), `Hydraulic motor HM-${300 + i}-1B`, 9000000 / (i + 1), { sub: `FG${i}` }))
+  const around = (count: number) => {
+    const nodes = products(count)
+    return { nodes: [AURORA, ...nodes], edges: nodes.map((p, i) => edge(AURORA.id, p.id, 'BOUGHT', 1250000 / (i + 1))) }
+  }
+  const build = (count: number, view = {}) =>
+    buildGraphOption(around(count), readColours(), { center: AURORA.id, width: 1100, height: 760, ...view }) as any
+  // the SVG picture of a node's circle, as text
+  const picture = (symbol: string) => decodeURIComponent(symbol.slice(symbol.indexOf(',') + 1))
+
+  it('a node is a circle in its type colour with its white icon; the middle one is the app blue with a soft ring', () => {
+    const option = buildGraphOption({ nodes: [AURORA, MOTOR, PRIYA, TAMIL, CATALOGUE], edges: [] }, readColours(), { center: AURORA.id }) as any
+    const [aurora, motor, priya, tamil, page] = option.series[0].data
+    expect(motor.symbol.startsWith('image://data:image/svg+xml')).toBe(true)
+    expect(picture(motor.symbol)).toContain('fill="#16A34A"')                       // a product: green
+    expect(picture(motor.symbol)).toContain(`fill="#fff" d="${TYPE_ICONS.product}"`) // its box, in white
+    expect(picture(priya.symbol)).toContain(TYPE_ICONS.sales_person)
+    expect(picture(tamil.symbol)).toContain(TYPE_ICONS.state)
+    expect(picture(page.symbol)).toContain(TYPE_ICONS.document)
+    expect(picture(aurora.symbol)).toContain(`fill="${readColours().series[0]}"`)   // the middle node: the app's blue
+    expect(picture(aurora.symbol)).toContain('fill-opacity="0.2"')                  // with the soft ring
+    expect(picture(aurora.symbol)).toContain(TYPE_ICONS.customer)
+    expect(picture(motor.symbol)).not.toContain('fill-opacity')
+    expect(aurora.symbolSize).toBeGreaterThan(motor.symbolSize)
+  })
+
+  it('a label card has the name in bold (cut when long) and the fact line; in the card, heading and muted colours', () => {
+    const long = node('product', '9', 'Gear pump GP-2200 series with a very long description', 4500000)
+    const option = buildGraphOption({ nodes: [AURORA, long, CATALOGUE, SIMILAR.similar[0]], edges: [] }, readColours(), { center: AURORA.id }) as any
+    const { label } = option.series[0]
+    const card = (id: string) => label.formatter({ data: { id } })
+    expect(card(long.id)).toBe('{name|Gear pump GP-2200 series…}\n{fact|INR 45 L}')
+    expect(card(CATALOGUE.id)).toBe('{name|Product Catalogue, page 2}\n{fact|product_catalogue.pdf}')   // no amount: its file
+    expect(card('customer:12')).toBe('{name|Twin Buyer Ltd}\n{fact|INR 900}')
+    expect(label.position).toBe('bottom')
+    expect(label.backgroundColor).toBe(readColours().surface)
+    expect(label.borderRadius).toBeGreaterThan(0)
+    expect(label.shadowBlur).toBeGreaterThan(0)
+    expect(label.rich.name).toMatchObject({ fontWeight: 600, color: readColours().head })
+    expect(label.rich.big.fontWeight).toBe(700)
+    expect(label.rich.fact.color).toBe(readColours().muted)
+    const braces = node('product', '8', 'Odd {name} here', 100)                                       // { } would start a style
+    expect((buildGraphOption({ nodes: [braces], edges: [] }, readColours()) as any).series[0].label.formatter({ data: { id: braces.id } }))
+      .toBe('{name|Odd (name) here}\n{fact|INR 100}')
+  })
+
+  it('the links are thin straight grey lines with a rounded pill that names them', () => {
+    const series = build(3).series[0]
+    expect(series.lineStyle).toMatchObject({ curveness: 0, color: readColours().muted })
+    expect(series.links.every((l: any) => l.lineStyle.width <= 2.4)).toBe(true)
+    expect(series.edgeLabel).toMatchObject({ show: true, backgroundColor: readColours().surface, opacity: 1 })
+    expect(series.edgeLabel.borderRadius).toBeGreaterThan(6)
+    expect(series.edgeLabel.formatter({ data: { kind: 'BUYS_AS' } })).toBe('Buys as')
+    expect(series.edgeLabel.formatter({ data: { kind: 'BUYS_LIKE' } })).toBe('Buys like')
+    expect(series.edgeLabel.formatter({ data: { kind: 'COVERED_BY' } })).toBe('Covered by')
+  })
+
+  it(`with more than ${PILL_LINKS} links only the hovered and the selected node's links show their pill`, () => {
+    expect(build(PILL_LINKS).series[0].edgeLabel.show).toBe(true)
+    const many = build(PILL_LINKS + 1, { selected: 'product:3' }).series[0]
+    expect(many.edgeLabel.show).toBe(false)
+    expect(many.emphasis).toMatchObject({ focus: 'adjacency', edgeLabel: { show: true } })   // under the pointer
+    const withPill = many.links.filter((l: any) => l.label?.show).map((l: any) => l.target)
+    expect(withPill).toEqual(['product:3'])                                                    // the selected node's link
+    const middle = build(PILL_LINKS + 1, { selected: AURORA.id }).series[0]
+    expect(middle.links.every((l: any) => l.label?.show)).toBe(true)                           // the middle one: all its links
+    expect(build(PILL_LINKS + 1).series[0].links.some((l: any) => l.label)).toBe(false)
+  })
+
+  // the box each node fills on the screen: its circle and its card under it (the sizes the layout works with)
+  function boxes(option: any) {
+    const series = option.series[0]
+    return series.data.map((n: any) => {
+      const lines = String(series.label.formatter({ data: { id: n.id } })).split('\n').map((line) => line.replace(/^\{\w+\|/, '').replace(/\}$/, ''))
+      const width = Math.max(n.symbolSize, ...lines.map((line) => line.length * 6.2 + 20))
+      return { id: n.id, left: n.x - width / 2, right: n.x + width / 2, top: n.y - n.symbolSize / 2,
+        bottom: n.y + n.symbolSize / 2 + 6 + lines.length * 14 + 10 }
+    })
+  }
+  const touching = (all: ReturnType<typeof boxes>) => all.flatMap((a: any, i: number) => all.slice(i + 1)
+    .filter((b: any) => a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom).map((b: any) => `${a.id} / ${b.id}`))
+
+  it.each([1, 3, 8, 12, 20, 30])('%i nodes sit evenly on rings around the middle and no card lies on another', (count) => {
+    const option = build(count)
+    const series = option.series[0]
+    expect(series.layout).toBe('none')
+    expect([series.data[0].x, series.data[0].y]).toEqual([0, 0])
+    expect(touching(boxes(option))).toEqual([])
+    expect(series.data.every((n: any) => n.label?.show !== false)).toBe(true)        // and every card is shown
+    // a ring is an ellipse as wide as the box allows: each node's distance from the middle, as the ring's height
+    const aspect = Math.min(1.7, (1100 - 24) / (760 - 52))
+    const far: number[] = series.data.slice(1).map((n: any) => Math.hypot(n.x / aspect, n.y)).sort((a: number, b: number) => a - b)
+    const rings = far.filter((d, i) => i === 0 || d - far[i - 1] > 10).length
+    expect(rings).toBeLessThanOrEqual(4)
+    if (count <= 8) {
+      expect(rings).toBe(1)                                                          // few nodes: one ring, evenly spaced
+      const angles: number[] = series.data.slice(1).map((n: any) => Math.atan2(n.y, n.x / aspect)).sort((a: number, b: number) => a - b)
+      angles.slice(1).forEach((angle, i) => expect(angle - angles[i]).toBeCloseTo((2 * Math.PI) / count, 1))
+    }
+    if (count === 30) expect(rings).toBeGreaterThan(1)                               // many nodes: more than one ring
+  })
+
+  it('draws the rings at their own size in the middle of the box, smaller only when they do not fit', () => {
+    const big = build(8).series[0]
+    const xs = big.data.map((n: any) => n.x)
+    const ys = big.data.map((n: any) => n.y)
+    expect(big.width).toBeCloseTo(Math.max(...xs) - Math.min(...xs), 0)              // 1 px of the layout = 1 px on the screen
+    expect(big.height).toBeCloseTo(Math.max(...ys) - Math.min(...ys), 0)
+    expect(big.left).toBeGreaterThan(12)
+    expect(big.top).toBeGreaterThan(40)                                              // under the legend
+    const small = build(30, { width: 520, height: 420 }).series[0]
+    const wide = Math.max(...small.data.map((n: any) => n.x)) - Math.min(...small.data.map((n: any) => n.x))
+    expect(small.width).toBeLessThan(wide)                                           // scaled down to fit
+    expect(small.left + small.width).toBeLessThanOrEqual(520)
+    expect(small.top + small.height).toBeLessThanOrEqual(420)
+    const out = small.data.filter((n: any) => n.label?.show === false)
+    expect(out.length).toBeGreaterThan(0)                                            // there cards would lie on each other: some are left out
+    expect(small.data[0].label?.show).not.toBe(false)                                // never the middle node's
+    const zoomed = build(30, { width: 520, height: 420, zoom: 4 }).series[0]         // zoomed in: they have room again
+    expect(zoomed.zoom).toBe(4)
+    expect(zoomed.data.filter((n: any) => n.label?.show === false).length).toBeLessThan(out.length)
+  })
+
+  it('hiddenCards leaves out the later card of two that lie on each other, and none at normal size', () => {
+    const blocks = [{ id: 'a', dot: 30, width: 100, height: 36 }, { id: 'b', dot: 30, width: 100, height: 36 }]
+    const spots = new Map<string, [number, number]>([['a', [0, 0]], ['b', [200, 0]]])
+    expect([...hiddenCards(blocks, spots, 1)]).toEqual([])
+    expect([...hiddenCards(blocks, spots, 0.3)]).toEqual(['b'])
+  })
+
+  it('nodes already drawn keep their place; new ones (Similar customers) take free places on the rings', () => {
+    const first = build(8)
+    const kept = new Map<string, [number, number]>(first.series[0].data.map((n: any) => [n.id, [n.x, n.y]]))
+    const twins = [node('customer', '12', 'Twin Buyer Ltd', 900), node('customer', '13', 'Other Buyer Ltd', 800)]
+    const data = { nodes: [...around(8).nodes, ...twins], edges: [...around(8).edges, ...twins.map((t) => edge(AURORA.id, t.id, 'BUYS_LIKE'))] }
+    const option = buildGraphOption(data, readColours(), { center: AURORA.id, width: 1100, height: 760, positions: kept }) as any
+    const drawn = option.series[0].data
+    for (const n of drawn.slice(0, 9)) expect([n.x, n.y], n.id).toEqual(kept.get(n.id))
+    expect(touching(boxes(option))).toEqual([])
+    expect(option.series[0].links.find((l: any) => l.kind === 'BUYS_LIKE').lineStyle.type).toBe('dashed')
+  })
+
+  it('a phone shows a short name on each node that has room (the whole card when tapped), on a ring that fits', () => {
+    const series = build(8, { narrow: true, width: 360, height: 440 }).series[0]
+    expect(series.data.every((n: any) => n.label?.show !== false)).toBe(true)          // 8 around: every name fits
+    expect(series.label.formatter({ data: { id: 'product:0' } })).toBe('{name|Hydraulic m…}')
+    expect(series.select.label.show).toBe(true)
+    expect(series.select.label.formatter({ data: { id: 'product:0' } })).toBe('{name|Hydraulic m…}\n{fact|INR 90 L}')
+    expect(series.left + series.width).toBeLessThanOrEqual(360)
+    // 30 around on a phone: no room for every name - the last way out, the smaller amounts show theirs when tapped
+    const crowded = build(30, { narrow: true, width: 360, height: 440 }).series[0]
+    const out = crowded.data.filter((n: any) => n.label?.show === false).map((n: any) => n.id)
+    expect(out.length).toBeGreaterThan(0)
+    expect(out.length).toBeLessThan(30)
+    expect(out).not.toContain(AURORA.id)                                               // never the middle node's
+    expect(crowded.data.filter((n: any) => n.symbolSize !== 30).map((n: any) => n.id)).toEqual([AURORA.id])
+  })
+})
+
+describe('the 2D sizes and names (16-Nov: "all same size, dynamic depending how many we have, and names on all")', () => {
+  // Aurora with `count` nodes around it: products, and a document page and a similar customer among them
+  const mixed = (count: number) => {
+    const nodes: GraphNode[] = Array.from({ length: count }, (_, i) =>
+      node('product', String(i), `Hydraulic motor HM-${300 + i}-1B`, 9000000 / (i + 1), { sub: `FG${i}` }))
+    if (count >= 5) nodes.splice(1, 2, CATALOGUE, SIMILAR.similar[0])
+    const edges = nodes.map((n, i) => edge(AURORA.id, n.id, n.type === 'document' ? 'COVERED_BY' : n.type === 'customer' ? 'BUYS_LIKE' : 'BOUGHT', 1000 / (i + 1)))
+    return { nodes: [AURORA, ...nodes], edges }
+  }
+  const build = (count: number, view = {}) =>
+    buildGraphOption(mixed(count), readColours(), { center: AURORA.id, width: 1000, height: 580, ...view }) as any
+  const text = (line: string) => line.replace(/^\{\w+\|/, '').replace(/\}$/, '')
+
+  it.each([[5, 44], [10, 44], [11, 36], [20, 36], [25, 36], [26, 30], [35, 30]])(
+    '%i nodes around the middle: every one is %i px, a document and a similar customer too; the middle one clearly bigger',
+    (count, size) => {
+      expect(nodeSizeFor(count)).toBe(size)
+      const data = build(count).series[0].data
+      expect(new Set(data.slice(1).map((n: any) => n.symbolSize))).toEqual(new Set([size]))
+      // the middle node's circle (its picture without the soft ring around it) is at least 1.4 times as big
+      expect((data[0].symbolSize * 25) / 32).toBeGreaterThan(size * 1.4)
+    })
+
+  it('a phone: medium circles up to 10 nodes, small above; the size never follows the amount', () => {
+    expect([nodeSizeFor(8, true), nodeSizeFor(11, true)]).toEqual([36, 30])
+    const data = build(8, { narrow: true, width: 360, height: 440 }).series[0].data
+    expect(new Set(data.slice(1).map((n: any) => n.symbolSize))).toEqual(new Set([36]))
+  })
+
+  it(`up to ${FULL_CARDS} nodes a full card (name and fact line); more: the short name, the rest under the pointer`, () => {
+    expect([cardModeFor(FULL_CARDS), cardModeFor(FULL_CARDS + 1), cardModeFor(3, true)]).toEqual(['full', 'compact', 'compact'])
+    const full = build(FULL_CARDS).series[0]
+    for (const n of full.data) expect(full.label.formatter({ data: n }), n.id).toContain('\n{fact|')
+    expect(full.label.formatter({ data: { id: 'product:0' } })).toBe('{name|Hydraulic motor H…}\n{fact|INR 90 L}')
+    expect(build(10).series[0].label.formatter({ data: { id: 'product:0' } })).toBe('{name|Hydraulic motor HM-300-1B}\n{fact|INR 90 L}')
+
+    const compact = build(FULL_CARDS + 1).series[0]
+    const card = (id: string) => compact.label.formatter({ data: { id } })
+    for (const n of compact.data.slice(1)) {
+      expect(card(n.id), n.id).not.toContain('{fact|')                                 // the name only ...
+      expect(text(card(n.id)).length, n.id).toBeLessThanOrEqual(16)                   // ... short
+    }
+    expect(card('product:0')).toBe('{name|Hydraulic motor…}')
+    expect(card(CATALOGUE.id)).toBe('{name|Product Catalog…}')
+    expect(card(AURORA.id)).toContain('{fact|INR 2.9 Cr}')                            // the middle node keeps its whole card
+    // under the pointer and when selected: the whole card, the amount in it
+    expect(compact.emphasis.label.formatter({ data: { id: 'product:0' } })).toBe('{name|Hydraulic motor…}\n{fact|INR 90 L}')
+    expect(compact.select.label.formatter({ data: { id: 'product:0' } })).toBe('{name|Hydraulic motor…}\n{fact|INR 90 L}')
+    // the amount is never lost: the tooltip has it as the app writes it
+    const option = build(30)
+    expect(option.tooltip.formatter({ dataType: 'node', data: { id: 'product:29' } })).toContain('3,00,000.00')
+    expect(option.tooltip.formatter({ dataType: 'node', data: { id: 'product:29' } })).toContain('Hydraulic motor HM-329-1B')
+  })
+
+  // where each card and circle is on the screen: the option's x / y scaled into its frame (ECharts fits the box
+  // around the nodes' centres into left / top / width / height), the cards' size as the option measures it
+  function onScreen(option: any) {
+    const series = option.series[0]
+    const xs = series.data.map((n: any) => n.x)
+    const ys = series.data.map((n: any) => n.y)
+    const [minX, maxX, minY, maxY] = [Math.min(...xs), Math.max(...xs), Math.min(...ys), Math.max(...ys)]
+    const scale = maxX > minX ? series.width / (maxX - minX) : maxY > minY ? series.height / (maxY - minY) : 1
+    const { rich } = series.label
+    return series.data.map((n: any) => {
+      const [x, y] = [(n.x - minX) * scale, (n.y - minY) * scale]
+      const lines = String(series.label.formatter({ data: n })).split('\n')
+      const style = (line: string) => rich[line.slice(1, line.indexOf('|'))]
+      const width = Math.max(...lines.map((line) => textWidth(text(line), style(line).fontSize, style(line).fontWeight >= 600))) + 20
+      const height = lines.reduce((sum, line) => sum + style(line).lineHeight, 0) + 12
+      const top = y + n.symbolSize / 2 + 6
+      return { id: n.id, circle: [x - n.symbolSize / 2, y - n.symbolSize / 2, x + n.symbolSize / 2, y + n.symbolSize / 2],
+        card: [x - width / 2, top, x + width / 2, top + height] }
+    })
+  }
+  const lies = (a: number[], b: number[]) => a[0] < b[2] && b[0] < a[2] && a[1] < b[3] && b[1] < a[3]
+
+  it.each([...Array.from({ length: 30 }, (_, i) => i + 1), 35])('%i nodes in a 1000 x 580 box: a name on each, no card on another', (count) => {
+    const option = build(count)
+    const series = option.series[0]
+    expect(series.data.filter((n: any) => n.label?.show === false).map((n: any) => n.id)).toEqual([])
+    const all = onScreen(option)
+    const clash = all.flatMap((a: any, i: number) => all.flatMap((b: any, j: number) => [
+      ...(j > i && lies(a.card, b.card) ? [`${a.id} card / ${b.id} card`] : []),
+      ...(j !== i && lies(a.card, b.circle) ? [`${a.id} card / ${b.id} circle`] : []),
+    ]))
+    expect(clash).toEqual([])
+    expect(series.left + series.width).toBeLessThanOrEqual(1000)                       // and it is in the box
+    expect(series.top + series.height).toBeLessThanOrEqual(580)
+  })
+
+  it('a card is left out only from 40 nodes on (the last way out): up to 39 every node keeps its name', () => {
+    for (const count of [36, 37, 38, 39]) {
+      expect(build(count).series[0].data.filter((n: any) => n.label?.show === false).map((n: any) => n.id), `${count}`).toEqual([])
+    }
+  })
+})
+
+describe('GraphChart zoom buttons (15-Nov): +, - and reset at the top right of the graph box', () => {
+  // Aurora with 16 products: more links than get a pill each
+  const pumps = Array.from({ length: 16 }, (_, i) => node('product', String(100 + i), `Pump ${i}`, 1000 * (i + 1)))
+  const manyLinks = () => replies({
+    [AURORA_URL]: { body: { ...AURORA_REPLY, neighbours: pumps, edges: pumps.map((p) => edge(AURORA.id, p.id, 'BOUGHT', 500)), groups: [] } },
+    '/api/graph/node?type=product&id=103&limit=25': { body: { ...MOTOR_REPLY, node: pumps[3], neighbours: [AURORA],
+      edges: [edge(AURORA.id, pumps[3].id, 'BOUGHT', 500)], groups: [] } },
+  })
+
+  it('Zoom in and Zoom out ask ECharts to zoom around the middle; they are not inside the picture', async () => {
+    fakeFetch(replies())
+    renderAt('/graph', <GraphPage />)
+    const chart = await drawAurora()
+    const picture = screen.getByRole('img', { name: /Knowledge graph around/ })
+    const zoomIn = screen.getByRole('button', { name: 'Zoom in' })
+    expect(picture.contains(zoomIn)).toBe(false)                                    // role="img" would hide it
+    expect(picture.parentElement!.contains(zoomIn)).toBe(true)                      // but in the same box
+    chart.dispatchAction.mockClear()
+
+    fireEvent.click(zoomIn)
+    expect(chart.dispatchAction).toHaveBeenLastCalledWith(expect.objectContaining({ type: 'graphRoam', seriesIndex: 0, zoom: 1.25 }))
+    fireEvent.click(screen.getByRole('button', { name: 'Zoom out' }))
+    expect(chart.dispatchAction).toHaveBeenLastCalledWith(expect.objectContaining({ type: 'graphRoam', seriesIndex: 0, zoom: 0.8 }))
+  })
+
+  it('Reset the view does what Fit does: a new option at normal zoom, the dots where they are', async () => {
+    fakeFetch(replies())
+    renderAt('/graph', <GraphPage />)
+    const chart = await drawAurora()
+    const spots: [number, number][] = [[5, 5], [300, 20], [20, 250], [-200, 40]]
+    const ids = nodeIds()
+    Object.assign(chart, {
+      getModel: () => ({ getSeriesByIndex: () => ({ getData: () => ({
+        each: (fn: (i: number) => void) => ids.forEach((_, i) => fn(i)), getItemLayout: (i: number) => spots[i], getId: (i: number) => ids[i],
+      }) }) }),
+      getOption: () => ({ series: [{ zoom: 2, center: [40, 50] }] }),                // the user zoomed and moved
+    })
+    const before = chart.option
+
+    fireEvent.click(screen.getByRole('button', { name: 'Reset the view' }))
+    const series = chart.option!.series[0]
+    expect(chart.option).not.toBe(before)
+    expect(series.zoom).toBeUndefined()
+    expect(series.center).toBeUndefined()
+    expect(series.data.map((n: { x: number; y: number }) => [n.x, n.y])).toEqual(spots)
+  })
+
+  it('with many links a click draws the selected node\'s pills and keeps the zoom and the place', async () => {
+    fakeFetch(manyLinks())
+    renderAt('/graph', <GraphPage />)
+    const chart = await drawAurora()
+    expect(chart.option!.series[0].edgeLabel.show).toBe(false)                      // 16 links: no pill on each
+    Object.assign(chart, { getOption: () => ({ series: [{ zoom: 1.5, center: [10, 20] }] }) })
+    const before = chart.option!.series[0].data.map((n: { x: number; y: number }) => [n.x, n.y])
+
+    handler('click')({ dataType: 'node', data: { id: 'product:103' } })
+    await waitFor(() => expect(chart.option!.series[0].links.filter((l: any) => l.label?.show).map((l: any) => l.target)).toEqual(['product:103']))
+    const series = chart.option!.series[0]
+    expect(series.zoom).toBe(1.5)                                                    // the view stays as the user left it
+    expect(series.center).toEqual([10, 20])
+    expect(series.data.map((n: { x: number; y: number }) => [n.x, n.y])).toEqual(before)
+  })
+
+  it('after a zoom the option is built again only when cards were left out or the graph got smaller', async () => {
+    fakeFetch(replies())
+    renderAt('/graph', <GraphPage />)
+    const chart = await drawAurora()
+    const before = chart.option
+    let zoom = 1.6
+    Object.assign(chart, { getOption: () => ({ series: [{ zoom }] }) })
+
+    handler('graphroam')({})                                                        // zoomed in, every card shown: nothing to do
+    await new Promise((done) => setTimeout(done, 260))
+    expect(chart.option).toBe(before)
+
+    zoom = 0.5                                                                      // zoomed out: cards may lie on each other
+    handler('graphroam')({})
+    await waitFor(() => expect(chart.option).not.toBe(before))
+    expect(chart.option!.series[0].zoom).toBe(0.5)
   })
 })
 
