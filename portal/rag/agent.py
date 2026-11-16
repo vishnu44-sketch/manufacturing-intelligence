@@ -1409,6 +1409,52 @@ def parts_without_year(sql):
     return next((name for name in grouped if name in PART_OF_YEAR_COLUMNS), None)
 
 
+CALENDAR_PERIOD_COLUMNS = ("nop_sales_month", "month_year", "nop_sales_period_start", "nop_sales_period_end",
+                           "nop_sales_period_no", "nop_sales_year", "financial_year", "financial_year_label",
+                           "fiscal_quarter", "fiscal_period", "calendar_quarter", "calendar_year", "month_no",
+                           "week_of_year")
+CALENDAR_LIMIT_PROBLEM = ("dim_calendar has ONE ROW PER DAY: LIMIT {limit} on its rows gives {limit} DAYS (all in the "
+                          "same month), not {limit} periods, and a join to that list counts the sales {limit} times. "
+                          "Build the period list with SELECT DISTINCT {column}, ... (or GROUP BY the period) and then "
+                          "ORDER BY ... DESC LIMIT {limit}, e.g. SELECT DISTINCT nop_sales_month, nop_sales_period_start, "
+                          "nop_sales_period_end FROM dim_calendar WHERE nop_sales_period_end <= CURRENT_DATE "
+                          "ORDER BY nop_sales_period_end DESC LIMIT {limit}.")
+
+
+MAX_PERIOD_LIST = 120  # a LIMIT above this is no "last n periods" list (e.g. the guard's LIMIT 500)
+
+
+def calendar_limit_periods(sql):
+    """(the period column, the limit) when a SELECT of the SQL (also a WITH part or a subquery) takes LIMIT n > 1
+    of plain dim_calendar rows - no DISTINCT, no GROUP BY - and lists a period column; else None.
+    05-Nov and 16-Nov: "the last 3 / 6 months" became LIMIT 3 / 6 of dim_calendar (one row per DAY): 3 / 6 days
+    of one month, and the sales joined to that list were counted 3 / 6 times (Oct 2026 shown as 14.2 billion
+    instead of 2.37). LIMIT 1 (one row, e.g. "the last complete month" as a value) is fine."""
+    try:
+        tree = sqlglot.parse_one(sql, read="mysql")
+    except (sqlglot.errors.ParseError, sqlglot.errors.TokenError):
+        return None
+    for select in tree.find_all(exp.Select):
+        limit = select.args.get("limit")
+        if limit is None or select.args.get("distinct") or select.args.get("group"):
+            continue
+        amount = limit.args.get("expression")
+        if not (isinstance(amount, exp.Literal) and amount.is_int and 1 < int(amount.this) <= MAX_PERIOD_LIST):
+            continue  # LIMIT 1 is one value; the SQL guard's own cap (LIMIT 500) is no period list
+        if any(item.find(exp.AggFunc) for item in select.expressions):
+            continue  # SUM / COUNT ... of the rows: one total, not a list of periods
+        source = select.args.get("from_") or select.args.get("from")  # "from_" in sqlglot 30
+        tables = [source.this] if source is not None else []
+        tables += [join.this for join in select.args.get("joins") or []]
+        if not any(isinstance(table, exp.Table) and table.name.lower() == "dim_calendar" for table in tables):
+            continue
+        listed = [column.name.lower() for item in select.expressions for column in item.find_all(exp.Column)]
+        column = next((name for name in listed if name in CALENDAR_PERIOD_COLUMNS), None)
+        if column:
+            return column, int(amount.this)
+    return None
+
+
 MONTH_TEXT_COLUMNS = ("nop_sales_month", "month_year", "rate_month", "nop_sales_month_name", "month_name", "month_short")
 MONTH_RANGE_PROBLEM = ("{column} is text like 'Oct 2026', so BETWEEN / < / > compares it alphabetically, not by date "
                        "('Jan 2026' to 'Mar 2027' gives only Jan 2026, Jan 2027, Jul 2026, Jun 2026, Mar 2026, "
