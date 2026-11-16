@@ -3,8 +3,8 @@
    src/tailwind.css, light and dark); this file has no colours of its own but the drawer's shadow. */
 .mi-shell { --mi-shell-top: 56px; display: flex; flex-direction: column; min-height: 100vh; }
 
-/* the top bar stays at the top of the window */
-.mi-shell-top { position: sticky; top: 0; z-index: 20; flex: none; height: var(--mi-shell-top); }
+/* the top bar stays above every page's own layers (the graph's search card is z-20, its list z-30; dialogs and menus are z-50) */
+.mi-shell-top { position: sticky; top: 0; z-index: 40; flex: none; height: var(--mi-shell-top); }
 
 .mi-shell-body { display: flex; flex: 1; min-width: 0; }
 
@@ -41,12 +41,12 @@
 /* Phone: the menu is a drawer that slides in from the left under the top bar (the ☰ button opens it);
    the menu is always the full one there, so the « button is not shown. */
 @media (max-width: 767.98px) {
-  .mi-shell-menu { position: fixed; top: var(--mi-shell-top); left: 0; bottom: 0; height: auto; z-index: 19;
+  .mi-shell-menu { position: fixed; top: var(--mi-shell-top); left: 0; bottom: 0; height: auto; z-index: 39;
     width: min(280px, 84vw); transform: translateX(-105%); visibility: hidden;
     transition: transform .22s ease, visibility .22s ease; }
   .mi-shell-drawer-open .mi-shell-menu { transform: none; visibility: visible;
     box-shadow: 16px 0 36px -18px rgb(0 0 0 / .45); }
-  .mi-shell-backdrop { position: fixed; inset: var(--mi-shell-top) 0 0 0; z-index: 18; background: rgb(0 0 0 / .45); }
+  .mi-shell-backdrop { position: fixed; inset: var(--mi-shell-top) 0 0 0; z-index: 38; background: rgb(0 0 0 / .45); }
   .mi-shell-slim-toggle { display: none; }
   .mi-shell-title { padding: 14px 12px 0; }
 }

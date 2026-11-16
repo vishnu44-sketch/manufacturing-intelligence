@@ -15,7 +15,7 @@ from portal.rag import store
 
 DOCS_DIR = Path(__file__).resolve().parents[2] / "docs"
 
-# the 40 example chunks of docs/sql_examples.md (read once, no model needed)
+# the 42 example chunks of docs/sql_examples.md (read once, no model needed)
 EXAMPLES = [c for c in load_docs(DOCS_DIR) if c["kind"] == "example"]
 
 
@@ -72,8 +72,8 @@ def test_docs_folder_gives_the_expected_chunks():
     assert len({c["id"] for c in chunks}) == len(chunks)  # ids are unique
     assert load_docs(DOCS_DIR) == chunks  # same files -> same chunks every time
 
-    # 40 examples, each with its SQL and its expected result
-    assert len(EXAMPLES) == 40
+    # 42 examples (16-Nov: new customers this month so far and last month), each with its SQL and its expected result
+    assert len(EXAMPLES) == 42
     for c in EXAMPLES:
         assert c["heading"].startswith("Q: ")
         assert "```sql" in c["text"] and "\nExpected: " in c["text"]
