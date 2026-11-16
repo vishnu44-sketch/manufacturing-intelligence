@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import AuditLog, Conversation, Question
+from .models import AuditLog, Conversation, Question, SavedQuery
 
 # titles on the Django admin pages
 admin.site.site_header = "NOP Intelligence - admin"
@@ -19,6 +19,24 @@ class ConversationAdmin(admin.ModelAdmin):
     list_display = ("updated_at", "user", "title", "archived", "deleted_at")
     list_filter = ("archived", "user")
     search_fields = ("title",)
+
+
+@admin.register(SavedQuery)
+class SavedQueryAdmin(admin.ModelAdmin):
+    """The SQL page's saved queries in the admin: read-only - they are changed only by their owner on the SQL page."""
+    list_display = ("updated_at", "owner", "name", "shared")
+    list_filter = ("shared", "owner")
+    search_fields = ("name", "sql")
+    readonly_fields = [field.name for field in SavedQuery._meta.fields]
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
 
 
 @admin.register(AuditLog)

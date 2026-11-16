@@ -31,6 +31,9 @@
 @source "./components/HomeKpiCards.tsx";
 @source "./components/SqlPage.tsx";
 @source "./components/SqlEditor.tsx";
+@source "./components/SqlTabs.tsx";
+@source "./components/SqlSaved.tsx";
+@source "./components/SqlSaveDialog.tsx";
 
 /* The shadcn/ui colour names, set to the brand (the --brand, --ink ... variables of styles/app.css :root).
    "inline": the utilities use these values directly, no new global CSS variables are made (shadcn's own

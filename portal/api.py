@@ -4,7 +4,8 @@ The rules: a session sign-in (Django's own), a CSRF token on every POST (and any
 method), and a user only reaches his own chats, questions and memories (anyone else's are 'not found'; staff
 as before: a chat is private, a saved question may be opened). Users, Documents, Data and the SQL page are for
 staff only (403), and so is the Audit log (read-only: there is no way to change or delete a line).
-The SQL page (sql_page.py) runs only one checked SELECT on ai_gold, as the read-only MySQL user.
+The SQL page (sql_page.py) runs only one checked SELECT on ai_gold, as the read-only MySQL user; its saved
+queries are only text in the app's own database (only the owner changes one; shared ones are seen by staff).
 Who did what is written to the audit log (audit.py): sign-ins, people, chat and memory actions, Excel
 downloads - never a password. The Knowledge graph (every user, GET only) reads the NOP data live and
 read-only, with no AI call (knowledge_graph.py); so does the Home page (home.py). It never answers with a redirect or an HTML page: without a
@@ -20,6 +21,7 @@ from django import forms
 from django.contrib.auth import authenticate, get_user_model, login, logout, update_session_auth_hash
 from django.contrib.auth.forms import SetPasswordForm, UserCreationForm, UsernameField
 from django.core.paginator import Paginator
+from django.db import IntegrityError, transaction
 from django.db.models import Q
 from django.http import Http404, HttpResponse, JsonResponse, StreamingHttpResponse
 from django.middleware.csrf import CsrfViewMiddleware, get_token
@@ -32,7 +34,7 @@ from django.views.decorators.cache import never_cache
 from django.views.decorators.csrf import csrf_exempt
 
 from . import audit, charts, home, knowledge_graph, services, sql_page, user_memory
-from .models import AuditLog, Question, UserMemory
+from .models import AuditLog, Question, SavedQuery, UserMemory
 from .rag import agent, warehouse
 from .usage import ai_usage
 
@@ -667,6 +669,136 @@ def sql_excel(request):
     response["Content-Disposition"] = f'attachment; filename="{name}"'
     _sql_audit(request, "sql_excel", sql, outcome="ok", rows=len(data["rows"]), secs=secs)
     return response
+
+
+# ------------------------------------------------------------------ SQL page: saved queries (staff)
+# Saved queries are only text in the app's own database: saving never runs the SQL and never checks it.
+# Only the owner changes or deletes one; a shared one is seen by the other administrators (read-only for them).
+def _owner_name(user):
+    """The owner as the page shows him: the first name, else the sign-in name."""
+    return (user.first_name or "").strip() or user.get_username()
+
+
+def _saved_query(query, user):
+    """One saved query for the SQL page (mine = the signed-in user owns it)."""
+    return {"id": query.pk, "name": query.name, "sql": query.sql, "shared": query.shared,
+            "owner": query.owner.get_username(), "owner_name": _owner_name(query.owner),
+            "updated_at": timezone.localtime(query.updated_at).isoformat(), "updated_text": _when(query.updated_at),
+            "mine": query.owner_id == user.pk}
+
+
+def _staff_owner():
+    """The saved queries whose owner is an administrator now (a shared query of a former admin is not listed)."""
+    return Q(owner__is_staff=True) | Q(owner__is_superuser=True)
+
+
+def _seen_query(user, query_id):
+    """A saved query this administrator can see: his own, or a shared one of another administrator. Anything else
+    (missing, or someone's private query) is 'not found' - a private query is never even shown to exist."""
+    queries = SavedQuery.objects.select_related("owner").filter(
+        Q(owner=user) | (Q(shared=True) & _staff_owner()))
+    return get_object_or_404(queries, pk=query_id)
+
+
+def _name_taken(user, name, query_id=None):
+    """True when this user already has another saved query with this name, whatever the case."""
+    return user.saved_queries.filter(name__iexact=name).exclude(pk=query_id).exists()
+
+
+def _taken_message(name):
+    return f'You already have a saved query named "{name}" - pick another name.'
+
+
+def _store(query):
+    """Save the query; False when the database says the name is taken (two saves at the same moment)."""
+    try:
+        with transaction.atomic():
+            query.save()
+    except IntegrityError:
+        return False
+    return True
+
+
+@api_view(["GET", "POST"], staff_only=True)
+def sql_saved(request):
+    """GET: {"mine": the user's own saved queries, "shared": the other administrators' shared ones}, each the
+    latest change first. POST {name, sql, shared?}: save a new one (201 {"query": ...}) - only text, never run
+    and never checked by the guard; 400 when the name is empty / too long / already used by this user (whatever
+    the case), the SQL is empty / too long, or the user already keeps SavedQuery.MAX_PER_USER."""
+    user = request.user
+    if request.method == "GET":
+        mine = SavedQuery.objects.select_related("owner").filter(owner=user)
+        shared = SavedQuery.objects.select_related("owner").filter(shared=True).filter(_staff_owner()).exclude(owner=user)
+        return JsonResponse({"mine": [_saved_query(q, user) for q in mine.order_by("-updated_at", "-pk")],
+                             "shared": [_saved_query(q, user) for q in shared.order_by("-updated_at", "-pk")]})
+    data = _body(request)
+    if data is None:
+        return _error(400, 'Send the query as a JSON object: {"name": "...", "sql": "SELECT ..."}.')
+    try:
+        fields = sql_page.saved_fields(data, creating=True)
+    except sql_page.SqlProblem as problem:
+        return _error(problem.status, str(problem))
+    if user.saved_queries.count() >= SavedQuery.MAX_PER_USER:
+        return _error(400, f"You can keep at most {SavedQuery.MAX_PER_USER} saved queries - "
+                           "delete some you no longer need first.")
+    if _name_taken(user, fields["name"]):
+        return _error(400, _taken_message(fields["name"]))
+    query = SavedQuery(owner=user, **fields)
+    if not _store(query):
+        return _error(400, _taken_message(fields["name"]))
+    audit.record(request, "sql_saved", query.name, id=query.pk, shared=query.shared,
+                 sql=query.sql[:audit.TEXT_CHARS])
+    return JsonResponse({"query": _saved_query(query, user)}, status=201)
+
+
+@api_view(["POST"], staff_only=True)
+def sql_saved_change(request, query_id):
+    """{name?, sql?, shared?} -> 200 {"query": ...}: only the owner (anyone else 403 - "Save as" makes his own
+    copy). The same text checks as a new query; one audit line for a change of the name / SQL and one for
+    shared / private (nothing is written when nothing changed)."""
+    query = _seen_query(request.user, query_id)
+    if query.owner_id != request.user.pk:
+        return _error(403, f"Only {_owner_name(query.owner)} can change this query - "
+                           "use Save as to keep your own copy.")
+    data = _body(request)
+    if data is None:
+        return _error(400, 'Send the changes as a JSON object: {"name": "...", "sql": "...", "shared": true}.')
+    try:
+        fields = sql_page.saved_fields(data, creating=False)
+    except sql_page.SqlProblem as problem:
+        return _error(problem.status, str(problem))
+    if not fields:
+        return _error(400, "Send the name, the SQL or shared to change.")
+    if "name" in fields and _name_taken(request.user, fields["name"], query.pk):
+        return _error(400, _taken_message(fields["name"]))
+    old_name = query.name
+    renamed = fields.get("name", query.name) != query.name
+    new_sql = fields.get("sql", query.sql) != query.sql
+    reshared = fields.get("shared", query.shared) != query.shared
+    if renamed or new_sql or reshared:
+        for name, value in fields.items():
+            setattr(query, name, value)
+        if not _store(query):
+            return _error(400, _taken_message(query.name))
+    if renamed or new_sql:
+        extra = {"old_name": old_name} if renamed else {}
+        audit.record(request, "sql_saved_changed", query.name, id=query.pk, shared=query.shared,
+                     sql=query.sql[:audit.TEXT_CHARS], **extra)
+    if reshared:
+        audit.record(request, "sql_saved_shared", query.name, id=query.pk, shared=query.shared)
+    return JsonResponse({"query": _saved_query(query, request.user)})
+
+
+@api_view(["POST"], staff_only=True)
+def sql_saved_delete(request, query_id):
+    """Delete a saved query: only the owner (anyone else 403) -> {"deleted": id}."""
+    query = _seen_query(request.user, query_id)
+    if query.owner_id != request.user.pk:
+        return _error(403, f"Only {_owner_name(query.owner)} can delete this query.")
+    number, name, shared = query.pk, query.name, query.shared
+    query.delete()
+    audit.record(request, "sql_saved_deleted", name, id=number, shared=shared)
+    return JsonResponse({"deleted": number})
 
 
 # ------------------------------------------------------------------ Users (staff)

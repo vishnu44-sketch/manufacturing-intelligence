@@ -2,7 +2,8 @@
 // matching and autocomplete of the ai_gold tables and columns (from the schema the page loaded).
 // Ctrl+Enter (Cmd+Enter on a Mac) runs the query. The colours are the site's CSS variables, so the editor
 // follows the light / dark look on its own; the dark flag only tells CodeMirror's own base styles.
-// SqlPage loads this file lazily: CodeMirror is its own chunk, fetched only on the SQL page.
+// SqlPage loads this file lazily: CodeMirror is its own chunk, fetched only on the SQL page. Each editor tab
+// of the page has its own editor (its own text, cursor and undo); the hidden ones wait in the page.
 import { autocompletion, closeBrackets, closeBracketsKeymap, completionKeymap } from '@codemirror/autocomplete'
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands'
 import { MySQL, type SQLNamespace, sql } from '@codemirror/lang-sql'
@@ -32,6 +33,8 @@ export interface SqlEditorProps {
   tables: SqlTable[]
   onChange: (text: string) => void
   onRun: () => void
+  /** false while the editor's tab is hidden: when it is shown again the editor measures itself again */
+  active?: boolean
   ref?: Ref<SqlEditorHandle>
 }
 
@@ -88,7 +91,7 @@ const colours = HighlightStyle.define([
 
 const language = (tables: SqlTable[]) => sql({ dialect: MySQL, schema: schemaOf(tables), upperCaseKeywords: true })
 
-export default function SqlEditor({ initialText, tables, onChange, onRun, ref }: SqlEditorProps) {
+export default function SqlEditor({ initialText, tables, onChange, onRun, active = true, ref }: SqlEditorProps) {
   const box = useRef<HTMLDivElement>(null)
   const view = useRef<EditorView | null>(null)
   const [theme] = useTheme()
@@ -146,6 +149,11 @@ export default function SqlEditor({ initialText, tables, onChange, onRun, ref }:
   useEffect(() => {
     view.current?.dispatch({ effects: parts.current.dark.reconfigure(EditorView.darkTheme.of(theme === 'dark')) })
   }, [theme])
+
+  // a tab shown again: its editor was hidden (no size), so it measures its lines again
+  useEffect(() => {
+    if (active) view.current?.requestMeasure()
+  }, [active])
 
   useImperativeHandle(ref, () => ({
     insert(text: string) {

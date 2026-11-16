@@ -243,6 +243,24 @@ export interface SqlResult {
   secs: number
 }
 
+// a saved query of the SQL page (like a saved script in MySQL Workbench): private, or shared with all admins
+export interface SqlSavedQuery {
+  id: number
+  name: string
+  sql: string
+  shared: boolean // true: every administrator sees it (only its owner can change it)
+  owner: string // the owner's username
+  owner_name: string
+  updated_at: string // ISO time of the last change
+  updated_text: string // e.g. "2 hours ago"
+  mine: boolean // true: the signed-in user owns it
+}
+
+export interface SqlSavedList {
+  mine: SqlSavedQuery[]
+  shared: SqlSavedQuery[] // the queries other administrators shared
+}
+
 export interface Person {
   id: number
   username: string

@@ -1,52 +1,45 @@
-// SQL (staff): a small MySQL Workbench inside the app. On the left the tables of ai_gold with their row
-// counts and, opened with the arrow, their columns and types (a search box filters them; a click puts the
-// name into the editor at the cursor; the play icon runs "SELECT * ... LIMIT 100" of the table). On the right
-// the SQL editor (CodeMirror, loaded only on this page) with Run (Ctrl+Enter; with text selected only the
-// selection runs), Clear, Excel and the last 10 queries ("Recent"), and under it the result grid with
-// "123 rows · 0.12 s", or the API's message in a red box. The server only runs read-only SELECTs (max 500
-// rows, 30 s) and writes every query to the Audit log. The editor text is kept for this browser tab
-// (sessionStorage), the Recent list and the panel sizes in this browser (localStorage).
-import { ChevronRight, Database, Eraser, FileSpreadsheet, History, Play, Search, Table2 } from 'lucide-react'
+// SQL (staff): a small MySQL Workbench inside the app. On the left the saved queries (mine, and the ones
+// other admins shared; SqlSaved.tsx) above the tables of ai_gold with their row counts and, opened with the
+// arrow, their columns and types (a search box filters them; a click puts the name into the editor at the
+// cursor; the play icon runs "SELECT * ... LIMIT 100" of the table). On the right the editor tabs (SqlTabs.tsx,
+// several queries open at once, each with its own text and its own last result), the SQL editor (CodeMirror,
+// loaded only on this page) with Run (Ctrl+Enter; with text selected only the selection runs), Save (Ctrl+S),
+// Save as, Open / Download a .sql file, Clear, Excel and the last 10 queries ("Recent"), and under it the
+// result grid with "123 rows · 0.12 s", or the API's message in a red box. The server only runs read-only
+// SELECTs (max 500 rows, 30 s) and writes every query to the Audit log. The open tabs (sqlTabs.ts), the
+// Recent list and the panel sizes are kept in this browser (localStorage).
+import { ChevronRight, Database, Download, Eraser, FileSpreadsheet, FileUp, History, Play, Save, SaveAll, Search, Table2 } from 'lucide-react'
 import {
-  type KeyboardEvent, type PointerEvent, Suspense, lazy, useEffect, useMemo, useRef, useState,
+  type ChangeEvent, type KeyboardEvent, type PointerEvent, Suspense, lazy, memo, useEffect, useMemo, useRef, useState,
 } from 'react'
+import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import { ApiError, AuthError, api, problemText } from '../api'
-import type { SqlCell, SqlResult, SqlSchema, SqlTable } from '../types'
+import type { SqlCell, SqlResult, SqlSavedList, SqlSavedQuery, SqlSchema, SqlTable } from '../types'
 import { Dots, NoAccess, plural } from './common'
 import type { SqlEditorHandle } from './SqlEditor'
+import { type SaveRequest, SqlSaveDialog } from './SqlSaveDialog'
+import { type SavedActions, SqlSaved } from './SqlSaved'
+import { SqlTabs } from './SqlTabs'
+import { type SqlTab, type TabsState, isBlank, isDirty, keepTabs, newTab, readTabs, savedTab, sqlFileName } from './sqlTabModel'
 import { Button } from './ui/button'
 import { Input } from './ui/input'
 import { Popover, PopoverContent, PopoverTrigger } from './ui/popover'
 import { Spinner } from './ui/spinner'
+import { Toaster } from './ui/sonner'
 import './SqlPage.css'
 
 const SqlEditor = lazy(() => import('./SqlEditor'))
 
-const TEXT_KEY = 'mi.sqlText' // sessionStorage: the editor text (a reload keeps it)
 const RECENT_KEY = 'mi.sqlRecent' // localStorage: the last queries run, newest first
-const SIZES_KEY = 'mi.sqlSizes' // localStorage: the width of the table list and the height of the editor
+const SIZES_KEY = 'mi.sqlSizes' // localStorage: the width of the left panel and the height of the editor
 const RECENT_MAX = 10
+const FILE_MAX = 200 * 1024 // the biggest .sql file "Open .sql file" takes (bytes)
 const NO_TABLES: SqlTable[] = []
 const MAC = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent)
 const RUN_KEYS = MAC ? '⌘+Enter' : 'Ctrl+Enter'
-
-function readText(): string {
-  try {
-    return window.sessionStorage.getItem(TEXT_KEY) ?? ''
-  } catch {
-    return ''
-  }
-}
-
-function keepText(text: string) {
-  try {
-    if (text) window.sessionStorage.setItem(TEXT_KEY, text)
-    else window.sessionStorage.removeItem(TEXT_KEY)
-  } catch {
-    // storage blocked: the text is lost on a reload, nothing else changes
-  }
-}
+const SAVE_KEYS = MAC ? '⌘+S' : 'Ctrl+S'
+const SAVE_AS_KEYS = MAC ? '⌘+Shift+S' : 'Ctrl+Shift+S'
 
 function readRecent(): string[] {
   try {
@@ -137,7 +130,7 @@ export function filterTables(tables: SqlTable[], find: string): { table: SqlTabl
 
 const TREE_BUTTON = 'rounded-md focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-ring'
 
-function SchemaTree({ schema, error, onInsert, onPreview }:
+function SchemaTreeView({ schema, error, onInsert, onPreview }:
   { schema: SqlSchema | null; error: string; onInsert: (name: string) => void; onPreview: (table: string) => void }) {
   const [find, setFind] = useState('')
   const [dbOpen, setDbOpen] = useState(true)
@@ -229,6 +222,9 @@ function SchemaTree({ schema, error, onInsert, onPreview }:
   )
 }
 
+// memo: typing in the editor does not draw the tree again
+const SchemaTree = memo(SchemaTreeView)
+
 const NUMBER = /^-?\d+(\.\d+)?(e[+-]?\d+)?$/i
 
 /** Which columns hold only numbers (right-aligned): every value that is not NULL is a number. */
@@ -251,7 +247,7 @@ function cellText(cell: SqlCell): string {
   return JSON.stringify(cell)
 }
 
-function ResultGrid({ result }: { result: SqlResult }) {
+function ResultGridView({ result }: { result: SqlResult }) {
   const numeric = useMemo(() => numericColumns(result), [result])
   const head = 'sticky top-0 z-10 border-b border-border bg-muted px-3 py-1.5 font-semibold whitespace-nowrap text-heading'
   return (
@@ -289,16 +285,46 @@ function ResultGrid({ result }: { result: SqlResult }) {
   )
 }
 
+// memo: typing in the editor does not draw the rows again
+const ResultGrid = memo(ResultGridView)
+
+/** The last result of one tab (not kept over a reload). */
+interface TabOutput { result: SqlResult | null; error: string }
+const NO_OUTPUT: TabOutput = { result: null, error: '' }
+
+/** Why Save is off for someone else's shared query. */
+const readOnlyNote = (tab: SqlTab) =>
+  `Only ${tab.ownerName || 'its owner'} can change this query - use Save as to keep your own copy`
+
+/** The list with this query in place of the old one (or added to its group when it is new). */
+function withQuery(list: SqlSavedList, query: SqlSavedQuery): SqlSavedList {
+  const drop = (group: SqlSavedQuery[]) => group.filter((q) => q.id !== query.id)
+  return query.mine
+    ? { mine: [...drop(list.mine), query], shared: drop(list.shared) }
+    : { mine: drop(list.mine), shared: [...drop(list.shared), query] }
+}
+
+/** Saves a text as a file (the browser's own download). */
+function saveFile(text: string, name: string) {
+  const link = document.createElement('a')
+  link.href = URL.createObjectURL(new Blob([text], { type: 'application/sql' }))
+  link.download = name
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+  window.setTimeout(() => URL.revokeObjectURL(link.href), 1000)
+}
+
 export default function SqlPage() {
-  const editor = useRef<SqlEditorHandle>(null)
+  const handles = useRef(new Map<string, SqlEditorHandle>()) // the editor of each tab
   const column = useRef<HTMLDivElement>(null)
+  const fileBox = useRef<HTMLInputElement>(null)
   const [schema, setSchema] = useState<SqlSchema | null>(null)
   const [schemaError, setSchemaError] = useState('')
   const [forbidden, setForbidden] = useState(false)
-  const [initialText] = useState(readText)
-  const [result, setResult] = useState<SqlResult | null>(null)
-  const [error, setError] = useState('')
-  const [running, setRunning] = useState(false)
+  const [{ tabs, active }, setTabsState] = useState<TabsState>(readTabs)
+  const [outputs, setOutputs] = useState<Record<string, TabOutput>>({})
+  const [runningTab, setRunningTab] = useState<string | null>(null)
   const busy = useRef(false) // a second Ctrl+Enter before the first answer does nothing
   const [excelBusy, setExcelBusy] = useState(false)
   const [excelError, setExcelError] = useState('')
@@ -306,6 +332,18 @@ export default function SqlPage() {
   const [recentOpen, setRecentOpen] = useState(false)
   const [sizes, setSizes] = useState(readSizes)
   const sizesNow = useRef(sizes) // the sizes right now (a drag changes them before the page is drawn again)
+  const [saved, setSaved] = useState<SqlSavedList | null>(null)
+  const [savedError, setSavedError] = useState('')
+  const [saveAsk, setSaveAsk] = useState<(SaveRequest & { tabId: string }) | null>(null)
+  const [saveBusy, setSaveBusy] = useState(false)
+  const [saveError, setSaveError] = useState('')
+  const saving = useRef(false) // one Save at a time
+
+  const tab = tabs.find((t) => t.id === active) ?? tabs[0]
+  const output = outputs[tab.id] ?? NO_OUTPUT
+  const readOnly = tab.savedId !== null && !tab.mine
+  const activeNow = useRef(tab.id) // the shown tab right now (for the callbacks made once)
+  activeNow.current = tab.id
 
   // on a desktop the page fills the window and does not scroll itself (SqlPage.css)
   useEffect(() => {
@@ -322,8 +360,28 @@ export default function SqlPage() {
         if (err instanceof ApiError && err.status === 403) setForbidden(true)
         else setSchemaError(problemText(err, 'The tables could not be loaded.'))
       })
+    api.sqlSaved()
+      .then((body) => {
+        if (gone) return
+        setSaved(body)
+        // the open tabs of saved queries take the names (and owners) the server has now
+        const byId = new Map([...body.mine, ...body.shared].map((q) => [q.id, q]))
+        setTabsState((now) => ({
+          ...now,
+          tabs: now.tabs.map((t) => {
+            const q = t.savedId === null ? undefined : byId.get(t.savedId)
+            return q ? { ...t, title: q.name, mine: q.mine, ownerName: q.owner_name } : t
+          }),
+        }))
+      })
+      .catch((err) => {
+        if (!gone && !(err instanceof AuthError)) setSavedError(problemText(err, 'The saved queries could not be loaded.'))
+      })
     return () => { gone = true }
   }, [])
+
+  // the open tabs are kept in this browser (a reload brings them back)
+  useEffect(() => keepTabs({ tabs, active }), [tabs, active])
 
   const resize = (part: Partial<Sizes>) => {
     sizesNow.current = { ...sizesNow.current, ...part }
@@ -338,17 +396,65 @@ export default function SqlPage() {
     }
   }
 
+  // ---- the tabs
+  const changeTab = (id: string, part: Partial<SqlTab>) =>
+    setTabsState((now) => ({ ...now, tabs: now.tabs.map((t) => (t.id === id ? { ...t, ...part } : t)) }))
+
+  /** Opens a new tab (made from the open tabs); with reuseBlank it takes the place of an empty, unchanged active tab. */
+  function openTab(make: (open: SqlTab[]) => SqlTab, reuseBlank = false) {
+    setTabsState((now) => {
+      const at = now.tabs.findIndex((t) => t.id === now.active)
+      const reuse = reuseBlank && at >= 0 && isBlank(now.tabs[at])
+      const made = make(reuse ? now.tabs.filter((_, i) => i !== at) : now.tabs)
+      return { tabs: reuse ? now.tabs.map((t, i) => (i === at ? made : t)) : [...now.tabs, made], active: made.id }
+    })
+    setExcelError('')
+  }
+
+  function selectTab(id: string) {
+    setTabsState((now) => ({ ...now, active: id }))
+    setExcelError('')
+  }
+
+  function closeTab(id: string) {
+    setTabsState((now) => {
+      const at = now.tabs.findIndex((t) => t.id === id)
+      const rest = now.tabs.filter((t) => t.id !== id)
+      if (rest.length === 0) {
+        const fresh = newTab([])
+        return { tabs: [fresh], active: fresh.id }
+      }
+      const next = now.active === id ? (rest[at] ?? rest[at - 1]).id : now.active
+      return { tabs: rest, active: next }
+    })
+    setOutputs((now) => {
+      const rest = { ...now }
+      delete rest[id]
+      return rest
+    })
+  }
+
+  function openSaved(query: SqlSavedQuery) {
+    const shown = tabs.find((t) => t.savedId === query.id)
+    if (shown) selectTab(shown.id)
+    else openTab(() => savedTab(query), true)
+  }
+
+  // ---- running
+  const setOutput = (id: string, next: (old: TabOutput) => TabOutput) =>
+    setOutputs((now) => ({ ...now, [id]: next(now[id] ?? NO_OUTPUT) }))
+
   async function run() {
     if (busy.current) return
-    const sql = (editor.current?.runText() ?? '').trim()
+    const id = activeNow.current
+    const sql = (handles.current.get(id)?.runText() ?? '').trim()
     if (!sql) {
-      setResult(null)
-      setError('Type a SELECT query first.')
+      setOutput(id, () => ({ result: null, error: 'Type a SELECT query first.' }))
       return
     }
     busy.current = true
-    setRunning(true)
-    setError('')
+    setRunningTab(id)
+    setOutput(id, (old) => ({ ...old, error: '' }))
     setExcelError('')
     const list = withRecent(recent, sql)
     setRecent(list)
@@ -358,23 +464,23 @@ export default function SqlPage() {
       // storage blocked: the list lasts until the page is loaded again
     }
     try {
-      setResult(await api.sql(sql))
+      const result = await api.sql(sql)
+      setOutput(id, () => ({ result, error: '' }))
     } catch (err) {
       if (err instanceof AuthError) return // the app shows the sign-in page
-      setResult(null)
-      setError(problemText(err, 'The query could not be run.'))
+      setOutput(id, () => ({ result: null, error: problemText(err, 'The query could not be run.') }))
     } finally {
       busy.current = false
-      setRunning(false)
+      setRunningTab(null)
     }
   }
 
   async function excel() {
-    if (!result || excelBusy) return
+    if (!output.result || excelBusy) return
     setExcelBusy(true)
     setExcelError('')
     try {
-      await api.sqlExcel(result.sql)
+      await api.sqlExcel(output.result.sql)
     } catch (err) {
       if (!(err instanceof AuthError)) setExcelError(problemText(err, 'The Excel file could not be made.'))
     } finally {
@@ -383,11 +489,181 @@ export default function SqlPage() {
   }
 
   function preview(table: string) {
-    editor.current?.setText(`SELECT * FROM ${table} LIMIT 100;`)
+    handles.current.get(activeNow.current)?.setText(`SELECT * FROM ${table} LIMIT 100;`)
     void run()
   }
 
-  const editorMax = () => Math.max(140, (column.current?.clientHeight || 1000) - 160)
+  // ---- saving
+  /** A saved query came back from the API: the list and the tabs that show it take its new state. */
+  function applyQuery(query: SqlSavedQuery) {
+    setSaved((now) => (now ? withQuery(now, query) : now))
+    setTabsState((now) => ({
+      ...now,
+      tabs: now.tabs.map((t) => (t.savedId === query.id ? { ...t, title: query.name, mine: query.mine, ownerName: query.owner_name } : t)),
+    }))
+  }
+
+  /** The saved query is gone: out of the list, and the tabs that showed it become unsaved tabs. */
+  function forgetQuery(id: number) {
+    setSaved((now) => (now ? { mine: now.mine.filter((q) => q.id !== id), shared: now.shared.filter((q) => q.id !== id) } : now))
+    setTabsState((now) => ({
+      ...now,
+      tabs: now.tabs.map((t) => (t.savedId === id ? { ...t, savedId: null, base: '', mine: true, ownerName: '' } : t)),
+    }))
+  }
+
+  function askName(asNew: boolean) {
+    setSaveError('')
+    setSaveAsk({
+      tabId: tab.id,
+      heading: asNew ? 'Save as' : 'Save query',
+      name: asNew && tab.savedId !== null ? `${tab.title} (copy)` : tab.title,
+      shared: false,
+    })
+  }
+
+  async function save() {
+    if (readOnly) {
+      toast.error(readOnlyNote(tab))
+      return
+    }
+    if (tab.savedId === null) {
+      askName(false)
+      return
+    }
+    if (!isDirty(tab) || saving.current) return
+    saving.current = true
+    const { id, savedId, text } = tab
+    try {
+      const { query } = await api.sqlChangeSaved(savedId, { sql: text })
+      applyQuery(query)
+      changeTab(id, { base: text }) // what was typed meanwhile stays unsaved
+    } catch (err) {
+      if (err instanceof AuthError) return
+      if (err instanceof ApiError && err.status === 404) forgetQuery(savedId) // deleted meanwhile: the next Save asks a name
+      toast.error(problemText(err, 'The query could not be saved.'))
+    } finally {
+      saving.current = false
+    }
+  }
+
+  async function saveNamed(name: string, shared: boolean) {
+    const target = tabs.find((t) => t.id === saveAsk?.tabId)
+    if (!target) {
+      setSaveAsk(null)
+      return
+    }
+    setSaveBusy(true)
+    setSaveError('')
+    const text = target.text
+    try {
+      const { query } = await api.sqlSave({ name, sql: text, shared })
+      setSaved((now) => (now ? withQuery(now, query) : now))
+      changeTab(target.id, { savedId: query.id, title: query.name, base: text, mine: true, ownerName: query.owner_name })
+      setSaveAsk(null)
+    } catch (err) {
+      if (!(err instanceof AuthError)) setSaveError(problemText(err, 'The query could not be saved.'))
+    } finally {
+      setSaveBusy(false)
+    }
+  }
+
+  // ---- the "..." of a saved query (calls the API, the list follows)
+  async function renameSaved(query: SqlSavedQuery, name: string): Promise<string> {
+    try {
+      applyQuery((await api.sqlChangeSaved(query.id, { name })).query)
+      return ''
+    } catch (err) {
+      if (err instanceof AuthError) return ''
+      if (err instanceof ApiError && err.status === 404) forgetQuery(query.id)
+      return problemText(err, 'The query could not be renamed.')
+    }
+  }
+
+  async function duplicateSaved(query: SqlSavedQuery) {
+    try {
+      const copy = (await api.sqlSave({ name: `${query.name} (copy)`, sql: query.sql, shared: false })).query
+      setSaved((now) => (now ? withQuery(now, copy) : now))
+      toast.success(`Saved a copy: "${copy.name}".`)
+    } catch (err) {
+      if (!(err instanceof AuthError)) toast.error(problemText(err, 'The copy could not be saved.'))
+    }
+  }
+
+  async function shareSaved(query: SqlSavedQuery, shared: boolean) {
+    try {
+      applyQuery((await api.sqlChangeSaved(query.id, { shared })).query)
+    } catch (err) {
+      if (err instanceof AuthError) return
+      if (err instanceof ApiError && err.status === 404) forgetQuery(query.id)
+      toast.error(problemText(err, 'The query could not be changed.'))
+    }
+  }
+
+  async function deleteSaved(query: SqlSavedQuery) {
+    try {
+      await api.sqlDeleteSaved(query.id)
+      forgetQuery(query.id)
+      toast.success(`"${query.name}" was deleted.`)
+    } catch (err) {
+      if (err instanceof AuthError) return
+      if (err instanceof ApiError && err.status === 404) forgetQuery(query.id)
+      toast.error(problemText(err, 'The query could not be deleted.'))
+    }
+  }
+
+  // ---- .sql files
+  async function openFile(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0]
+    event.target.value = '' // the same file can be opened again
+    if (!file) return
+    if (file.size > FILE_MAX) {
+      toast.error(`${file.name} is too big - a .sql file can be at most 200 KB.`)
+      return
+    }
+    let text: string
+    try {
+      text = await file.text()
+    } catch {
+      toast.error(`${file.name} could not be read.`)
+      return
+    }
+    const title = file.name.replace(/\.(sql|txt)$/i, '') || file.name
+    openTab((open) => ({ ...newTab(open, text), title }), true)
+  }
+
+  // the latest functions, for the parts made once (the window's Ctrl+S, the memo'd panels)
+  const latest = useRef({ save, askName, openSaved, renameSaved, duplicateSaved, shareSaved, deleteSaved, preview })
+  latest.current = { save, askName, openSaved, renameSaved, duplicateSaved, shareSaved, deleteSaved, preview }
+
+  // Ctrl+S saves (Ctrl+Shift+S: Save as), never the browser's own "save the page"
+  useEffect(() => {
+    const onKey = (event: globalThis.KeyboardEvent) => {
+      if (!(event.ctrlKey || event.metaKey) || event.altKey || event.key.toLowerCase() !== 's') return
+      event.preventDefault()
+      if (document.querySelector('[role="alertdialog"]')) return // a dialog is open: it has its own buttons
+      if (event.shiftKey) latest.current.askName(true)
+      else void latest.current.save()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
+
+  const savedActions = useMemo<SavedActions>(() => ({
+    open: (query) => latest.current.openSaved(query),
+    rename: (query, name) => latest.current.renameSaved(query, name),
+    duplicate: (query) => void latest.current.duplicateSaved(query),
+    share: (query, shared) => void latest.current.shareSaved(query, shared),
+    remove: (query) => void latest.current.deleteSaved(query),
+  }), [])
+  const tree = useMemo(() => ({
+    insert: (name: string) => handles.current.get(activeNow.current)?.insert(name),
+    preview: (table: string) => latest.current.preview(table),
+  }), [])
+
+  const editorMax = () => Math.max(140, (column.current?.clientHeight || 1000) - 200)
+  const running = runningTab === tab.id
+  const result = output.result
   const status = result && `${result.truncated ? `first ${result.row_count} rows` : plural(result.row_count, 'row')} · ${result.secs.toFixed(2)} s`
 
   if (forbidden) return <NoAccess />
@@ -398,19 +674,42 @@ export default function SqlPage() {
         Read-only: SELECT queries on ai_gold, max 500 rows, 30 s limit. Every query is in the Audit log.
       </p>
       <div className="flex min-h-0 flex-1 max-[900px]:flex-col max-[900px]:gap-3">
-        <aside aria-label="Tables" style={{ width: sizes.tree }}
-          className="flex-none rounded-xl border border-border bg-card p-2 max-[900px]:h-[300px] max-[900px]:w-full!">
-          <SchemaTree schema={schema} error={schemaError} onInsert={(name) => editor.current?.insert(name)} onPreview={preview} />
+        <aside aria-label="Saved queries and tables" style={{ width: sizes.tree }}
+          className="flex flex-none flex-col gap-2 rounded-xl border border-border bg-card p-2 max-[900px]:w-full!">
+          <SqlSaved list={saved} error={savedError} activeId={tab.savedId} actions={savedActions} />
+          <div aria-hidden="true" className="flex-none border-t border-border" />
+          <section aria-label="Tables" className="min-h-0 flex-1 max-[900px]:h-[300px] max-[900px]:flex-none">
+            <SchemaTree schema={schema} error={schemaError} onInsert={tree.insert} onPreview={tree.preview} />
+          </section>
         </aside>
-        <Splitter vertical label="Width of the table list" value={sizes.tree} min={200} max={() => 520}
-          onChange={(tree) => resize({ tree })} onDone={keepSizes} />
+        <Splitter vertical label="Width of the left panel" value={sizes.tree} min={200} max={() => 520}
+          onChange={(width) => resize({ tree: width })} onDone={keepSizes} />
 
         <div ref={column} className="flex min-h-0 min-w-0 flex-1 flex-col">
           <div className="mb-2 flex flex-none flex-wrap items-center gap-2">
-            <Button size="sm" onClick={() => void run()} disabled={running} title={`Run (${RUN_KEYS}). With text selected, only the selection runs.`}>
-              {running ? <Spinner /> : <Play />} Run
+            <Button size="sm" onClick={() => void run()} disabled={runningTab !== null} title={`Run (${RUN_KEYS}). With text selected, only the selection runs.`}>
+              {runningTab !== null ? <Spinner /> : <Play />} Run
             </Button>
-            <Button size="sm" variant="outline" onClick={() => editor.current?.setText('')} title="Clear the editor (Ctrl+Z brings the text back)">
+            {/* a disabled button shows no tooltip in every browser: the note sits on the box around it too */}
+            <span title={readOnly ? readOnlyNote(tab) : undefined} className="inline-flex">
+              <Button size="sm" variant="outline" onClick={() => void save()} disabled={readOnly}
+                title={readOnly ? readOnlyNote(tab) : tab.savedId === null ? `Save (${SAVE_KEYS}) - asks for a name` : `Save (${SAVE_KEYS})`}>
+                <Save /> Save
+              </Button>
+            </span>
+            <Button size="sm" variant="outline" onClick={() => askName(true)} title={`Save as a new saved query (${SAVE_AS_KEYS})`}>
+              <SaveAll /> Save as…
+            </Button>
+            <Button size="icon-sm" variant="ghost" onClick={() => fileBox.current?.click()} aria-label="Open .sql file" title="Open a .sql file in a new tab">
+              <FileUp />
+            </Button>
+            <input ref={fileBox} type="file" accept=".sql,.txt,text/plain" hidden data-testid="sql-file"
+              onChange={(event) => void openFile(event)} />
+            <Button size="icon-sm" variant="ghost" onClick={() => saveFile(tab.text, sqlFileName(tab.title))} disabled={!tab.text}
+              aria-label="Download .sql" title={tab.text ? `Download this tab as ${sqlFileName(tab.title)}` : 'The tab is empty'}>
+              <Download />
+            </Button>
+            <Button size="sm" variant="outline" onClick={() => handles.current.get(tab.id)?.setText('')} title="Clear the editor (Ctrl+Z brings the text back)">
               <Eraser /> Clear
             </Button>
             <Button size="sm" variant="outline" onClick={() => void excel()} disabled={!result || excelBusy}
@@ -423,12 +722,12 @@ export default function SqlPage() {
                   <History /> Recent
                 </Button>
               </PopoverTrigger>
-              <PopoverContent align="start" className="w-[min(520px,90vw)] p-1.5">
+              <PopoverContent align="start" className="ui-scope w-[min(520px,90vw)] p-1.5">
                 <ul aria-label="Recent queries">
                   {recent.map((sql) => (
                     <li key={sql}>
                       <button type="button" title={sql}
-                        onClick={() => { editor.current?.setText(sql); setRecentOpen(false) }}
+                        onClick={() => { handles.current.get(tab.id)?.setText(sql); setRecentOpen(false) }}
                         className="block w-full truncate rounded-md px-2.5 py-1.5 text-left font-mono text-[12px] hover:bg-accent focus-visible:outline-2 focus-visible:outline-ring">
                         {sql.replace(/\s+/g, ' ')}
                       </button>
@@ -437,7 +736,7 @@ export default function SqlPage() {
                 </ul>
               </PopoverContent>
             </Popover>
-            <span className="ml-auto text-[11.5px] text-muted-foreground max-[640px]:hidden">{RUN_KEYS} runs · a selection runs alone</span>
+            <span className="ml-auto text-[11.5px] text-muted-foreground max-[640px]:hidden">{RUN_KEYS} runs · {SAVE_KEYS} saves</span>
           </div>
           {excelError && (
             <div role="alert" className="mb-2 flex-none rounded-lg border border-destructive/40 bg-danger-soft px-3 py-1.5 text-[12.5px] text-destructive">
@@ -445,21 +744,32 @@ export default function SqlPage() {
             </div>
           )}
 
-          <div style={{ height: sizes.editor }} className="flex-none overflow-hidden rounded-xl border border-input bg-card">
+          <SqlTabs tabs={tabs} active={tab.id} onSelect={selectTab} onClose={closeTab}
+            onNew={() => openTab((open) => newTab(open))} />
+          <div style={{ height: sizes.editor }} className="flex-none overflow-hidden rounded-b-xl border border-t-0 border-input bg-card">
             <Suspense fallback={<div role="status" className="p-3 text-[12.5px] text-muted-foreground"><Dots /> Loading the editor…</div>}>
-              <SqlEditor ref={editor} initialText={initialText} tables={schema?.tables ?? NO_TABLES} onChange={keepText} onRun={() => void run()} />
+              {tabs.map((t) => (
+                <div key={t.id} role="tabpanel" aria-labelledby={`sql-tab-${t.id}`} hidden={t.id !== tab.id} className="h-full">
+                  <SqlEditor initialText={t.text} tables={schema?.tables ?? NO_TABLES} active={t.id === tab.id}
+                    ref={(handle) => {
+                      if (handle) handles.current.set(t.id, handle)
+                      else handles.current.delete(t.id)
+                    }}
+                    onChange={(text) => changeTab(t.id, { text })} onRun={() => void run()} />
+                </div>
+              ))}
             </Suspense>
           </div>
           <Splitter vertical={false} label="Height of the editor" value={sizes.editor} min={100} max={editorMax}
-            onChange={(editor) => resize({ editor })} onDone={keepSizes} />
+            onChange={(height) => resize({ editor: height })} onDone={keepSizes} />
 
           <div className="flex min-h-0 flex-1 flex-col gap-1.5 max-[900px]:min-h-[340px]">
             <div role="status" className="flex-none text-[12px] text-muted-foreground tabular-nums">
               {running ? <><Spinner className="mr-1 inline" /> Running…</> : status || ''}
             </div>
-            {error ? (
+            {output.error ? (
               <div role="alert" className="flex-none rounded-lg border border-destructive/40 bg-danger-soft px-3 py-2 text-[13px] whitespace-pre-wrap text-destructive">
-                {error}
+                {output.error}
               </div>
             ) : result ? (
               <ResultGrid result={result} />
@@ -471,6 +781,10 @@ export default function SqlPage() {
           </div>
         </div>
       </div>
+
+      <SqlSaveDialog request={saveAsk} busy={saveBusy} error={saveError}
+        onSave={(name, shared) => void saveNamed(name, shared)} onCancel={() => setSaveAsk(null)} />
+      <Toaster position="top-center" duration={6000} />
     </div>
   )
 }
