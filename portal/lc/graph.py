@@ -63,11 +63,12 @@ RECURSION_LIMIT = 50
 
 # 05-Nov: "for that above answer create one line chart" got a query of ONE row (one month's total), so no chart
 # could be drawn. A line chart or a trend needs one row per period: such a question with one row is sent back once.
-# A bar / pie chart of one row is not sent back - the Ask page says why there is no chart.
+# 16-Nov: "a bar graph for the last 6 month of sales" got one row too - any chart of SEVERAL periods ("last 6
+# months", "monthly", "each month") with one row is sent back the same way. A chart of one period is not.
 LINE_CHART_WORDS = re.compile(r"\bline\s*-?\s*(?:chart|graph|plot|diagram)s?\b|\btrend(?:s|lines?)?\b|\bover\s+time\b",
                               re.I)
-ONE_ROW_LINE_CHART_PROBLEM = ("your query returned only 1 row, but this question asks for a line chart / trend - a "
-                              "line chart needs one row per period: return the last periods (e.g. the last 6 NOP "
+ONE_ROW_LINE_CHART_PROBLEM = ("your query returned only 1 row, but this question asks for a line chart / trend or "
+                              "a chart of several periods - it needs one row per period: return the last periods (e.g. the last 6 NOP "
                               "months, or every period the earlier answer covered), one row per period, ordered by "
                               "period; dim_calendar has one row per day - use SELECT DISTINCT for the period list.")
 
@@ -75,6 +76,20 @@ ONE_ROW_LINE_CHART_PROBLEM = ("your query returned only 1 row, but this question
 def line_chart_request(text):
     """True when the question (typed + understood as) asks for a line chart, a line graph or a trend."""
     return bool(LINE_CHART_WORDS.search(text or ""))
+
+
+SEVERAL_PERIODS = re.compile(
+    r"\b(?:last|past|previous|recent)\s+(?:\d+|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|few|several)"
+    r"\s+(?:nop\s+)?(?:sales\s+)?(?:calendar\s+)?(?:months?|quarters?|years?|weeks?|days?|periods?)\b"
+    r"|\b(?:monthly|quarterly|yearly|weekly|daily|month[\s-]*wise|month[\s-]*by[\s-]*month)\b"
+    r"|\b(?:each|every|per|by)\s+(?:nop\s+)?(?:sales\s+)?(?:month|quarter|year|week|day|period)\b", re.I)
+
+
+def several_periods_chart_request(text):
+    """True when the question asks for a chart (any kind) of several periods: "a bar graph for the last 6 months",
+    "monthly sales as a pie chart". A line chart / trend counts too (line_chart_request)."""
+    text = text or ""
+    return line_chart_request(text) or bool(agent.CHART_WORDS.search(text) and SEVERAL_PERIODS.search(text))
 
 
 class AskState(TypedDict, total=False):
@@ -278,6 +293,12 @@ def check_sql(state):
             cleaned = agent.fy_period_dates(agent.order_months_by_date(agent.check_sql(state["sql"], state["allowed"])))
         except GuardError as exc:
             return {"problem": f"the SQL guard refused the query: {exc}"}
+        # 16-Nov: a period list of LIMIT n calendar DAYS counts the sales n times - never run, also not on the last
+        # try (then the "could not answer" message is better than a number n times too big)
+        days = agent.calendar_limit_periods(cleaned)
+        if days:
+            return {"problem": agent.CALENDAR_LIMIT_PROBLEM.format(column=days[0], limit=days[1]),
+                    "schema_not_needed": True}
         if state["attempt"] >= agent.MAX_TRIES:
             return {"cleaned": cleaned}
         column = agent.month_text_ranges(cleaned)
@@ -321,7 +342,7 @@ def run_sql(state):
     except warehouse.QueryError as exc:
         return {**update, "problem": f"MySQL returned an error: {exc}"}
     if (not state["one_row_retry_used"] and state["attempt"] < agent.MAX_TRIES and len(data["rows"]) == 1
-            and line_chart_request(f"{result.text} {result.understood_as}")):
+            and several_periods_chart_request(f"{result.text} {result.understood_as}")):
         # a line chart needs one row per period: sent back once; the 1-row answer is kept in case that try
         # gives nothing better (keep_first_answer) - an answered question never becomes an error
         return {**update, "one_row_retry_used": True, "schema_not_needed": True,
