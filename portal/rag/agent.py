@@ -94,17 +94,18 @@ PDF_MIN_SCORE = 0.64
 ROUTE_MAX_TOKENS = 300    # room for a reasoning model's short thinking + one word
 
 # the steps of one question with their own time (02-Nov, Vishnu: where do the seconds go?), in the order shown;
+# 16-Nov: each label names where the step goes (the vector DB Qdrant and its collection, or MySQL ss_gold);
 # 'other' = the rest of the total (the notes for the answer, saving, the web page)
 STEP_NAMES = [
     ("rewrite", "Understand the follow-up (AI)"),
-    ("pdf_search", "Search the PDFs"),
+    ("pdf_search", "Search the PDF documents (vector DB Qdrant: mi_pdfs)"),
     ("route", "Decide: data, documents or both (AI)"),
-    ("embed", "Embed the question (text to numbers)"),
-    ("search", "Search the notes in Qdrant"),
+    ("embed", "Embed the question (text to numbers, on this PC)"),
+    ("search", "Search the SQL notes (vector DB Qdrant: mi_docs)"),
     ("schema", "Pick the tables and columns"),
     ("sql_ai", "Write the SQL (AI)"),
     ("check", "Check the SQL (guard and checks)"),
-    ("mysql", "Run the SQL on MySQL"),
+    ("mysql", "Run the SQL on MySQL (ss_gold)"),
     ("answer_ai", "Write the answer (AI)"),
     ("wait", "Wait for Groq's per-minute limit"),
     ("other", "Other app work"),

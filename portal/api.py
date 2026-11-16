@@ -315,7 +315,7 @@ STREAM_TYPE = "application/x-ndjson"  # one JSON object per line
 def ask_stream(request):
     """/api/ask streamed (the Ask page): the same sign-in, CSRF and checks (they still fail as a JSON error, before
     anything is sent) and the same saved question, but the reply is one JSON object per line while it runs:
-        {"type": "step", "label": "Search the notes in Qdrant"}    a step starts
+        {"type": "step", "label": "Search the SQL notes (vector DB Qdrant: mi_docs)"}    a step starts
         {"type": "token", "text": "..."}                           a piece of the final answer as it is written
         {"type": "done", "chat": {...}, "card": {...}}              the same reply as /api/ask
         {"type": "error", "message": "..."}                         something failed outside the question itself

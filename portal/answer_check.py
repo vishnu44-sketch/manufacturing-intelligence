@@ -28,7 +28,7 @@ from .rag import warehouse
 from .rag.sql_guard import GuardError, check_sql
 
 CHECK, HOW = "check", "how"
-STEP_LABEL = "Run the same SQL again on MySQL"   # the step the streamed Ask page shows
+STEP_LABEL = "Run the same SQL again on MySQL (ss_gold)"   # the step the streamed Ask page shows
 MAX_CHARS = 160         # a check message is short
 MAX_WORDS = 16          # per sentence
 

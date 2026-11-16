@@ -386,7 +386,7 @@ def test_a_saved_answer_has_the_time_of_each_step(client, user, mysql):
     assert card["secs"] == 58.4
     assert steps["Wait for Groq's per-minute limit"]["secs"] == 45.0
     assert steps["Write the SQL (AI)"]["note"] == "2 tries"
-    assert steps["Embed the question (text to numbers)"]["secs"] == 0.05
+    assert steps["Embed the question (text to numbers, on this PC)"]["secs"] == 0.05
     assert old_card["time_steps"] == []
 
 

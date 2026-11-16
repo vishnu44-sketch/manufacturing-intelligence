@@ -28,8 +28,8 @@ from portal.tests.test_agent import (ANSWER, BACKUP, DOC_ANSWER, DOC_QUESTION, G
 pytestmark = pytest.mark.django_db
 
 QUESTION = "Top customers in Aug 2026?"
-DATA_STEPS = ["Search the PDFs", "Search the notes in Qdrant", "Pick the tables and columns", "Write the SQL (AI)",
-              "Check the SQL (guard and checks)", "Run the SQL on MySQL", "Write the answer (AI)"]
+DATA_STEPS = ["Search the PDF documents (vector DB Qdrant: mi_pdfs)", "Search the SQL notes (vector DB Qdrant: mi_docs)", "Pick the tables and columns", "Write the SQL (AI)",
+              "Check the SQL (guard and checks)", "Run the SQL on MySQL (ss_gold)", "Write the answer (AI)"]
 
 
 class BreaksAfter(str):
@@ -186,7 +186,7 @@ def test_a_document_question_streams_its_answer(monkeypatch, mysql, signed_in):
 
     _, events = stream(signed_in, DOC_QUESTION)
 
-    assert [e["label"] for e in events if e["type"] == "step"] == ["Search the PDFs", "Write the answer (AI)"]
+    assert [e["label"] for e in events if e["type"] == "step"] == ["Search the PDF documents (vector DB Qdrant: mi_pdfs)", "Write the answer (AI)"]
     assert "".join(e["text"] for e in events if e["type"] == "token") == DOC_ANSWER
     card = events[-1]["card"]
     assert card["status"] == "docs" and card["sources"][0] == {"kind": "pdf", "heading": "Warranty and Returns Policy, page 1"}
@@ -211,7 +211,7 @@ def test_a_retry_step_says_which_try_it_is(monkeypatch, mysql, signed_in):
     _, events = stream(signed_in)
 
     labels = [e["label"] for e in events if e["type"] == "step"]
-    assert "Write the SQL (AI) - try 2" in labels and labels.count("Run the SQL on MySQL") == 2
+    assert "Write the SQL (AI) - try 2" in labels and labels.count("Run the SQL on MySQL (ss_gold)") == 2
 
 
 # ---------- the rules for errors ----------
@@ -292,7 +292,7 @@ def test_the_question_is_still_saved_when_the_browser_leaves_early(monkeypatch, 
     first = json.loads(next(iter(r.streaming_content)))
     r.close()                                                                # the browser left after one line
 
-    assert first == {"type": "step", "label": "Search the PDFs"}
+    assert first == {"type": "step", "label": "Search the PDF documents (vector DB Qdrant: mi_pdfs)"}
     saved = Question.objects.get()
     assert saved.status == "ok" and saved.answer == ANSWER and saved.total_tokens == 3800
     assert saved.conversation is not None
