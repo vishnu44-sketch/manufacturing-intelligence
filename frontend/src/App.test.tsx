@@ -165,8 +165,33 @@ describe('App', () => {
     await askPage()
     expect(window.location.pathname).toBe('/ask')
     expect(document.title).toBe('Assistant · Manufacturing Intelligence')
-    expect(screen.getByRole('heading', { level: 1, name: 'Assistant' })).toBeInTheDocument()   // the other pages keep it
-    expect(document.querySelector('.mi-shell-title')).toHaveTextContent('Assistant')
+    // 16-Nov: the Assistant has no title row either - the conversation gets the room
+    expect(screen.queryByRole('heading', { level: 1, name: 'Assistant' })).not.toBeInTheDocument()
+    expect(document.querySelector('.mi-shell-title')).toBeNull()
+  })
+
+  it('keeps the title row on the other pages; the Assistant tab shows the open chat title', async () => {
+    const SALES = { id: 1, title: 'Net sales by month', archived: false, created_at: '', created_text: '03 Nov 2026 09:00 AM',
+                    updated_at: '', updated_text: '', group: 'Today', questions: 0 }
+    fakeFetch({
+      '/api/me': { body: ASHA }, '/api/memories': { body: { memories: [], limit: 20, max_chars: 300 } },
+      '/api/chats': { body: { chats: [SALES], removed: [] } },
+      '/api/chats/1': { body: { chat: SALES, total: 0, earlier: 0, cards: [] } },
+    })
+
+    open('/memory')
+    expect(await screen.findByRole('heading', { level: 1, name: 'Memory' })).toBeInTheDocument()
+
+    fireEvent.click(menu().getByRole('link', { name: 'Assistant' }))      // /ask opens the latest chat
+
+    await waitFor(() => expect(window.location.pathname).toBe('/c/1'))
+    await waitFor(() => expect(document.title).toBe('Net sales by month · Manufacturing Intelligence'))
+    expect(document.querySelector('.mi-shell-title')).toBeNull()
+    expect(screen.getByRole('button', { name: 'Options for this chat' })).toBeInTheDocument()
+
+    fireEvent.click(menu().getByRole('link', { name: 'Memory' }))
+    expect(await screen.findByRole('heading', { level: 1, name: 'Memory' })).toBeInTheDocument()
+    await waitFor(() => expect(document.title).toBe('Memory · Manufacturing Intelligence'))
   })
 
   it('the top bar opens a new chat and the History page', async () => {

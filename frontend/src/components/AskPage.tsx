@@ -9,6 +9,9 @@
 // then the answer grows word by word, and the finished card takes its place. When the stream cannot be
 // used (nothing comes back, e.g. a proxy), it asks the plain way (/api/ask) and shows "Thinking…".
 // History's "Ask again" lands here (/new with the question in the navigation state) and asks at once.
+// 16-Nov ("I can't read my chat properly"): the conversation gets the room - no title row above it (the browser
+// tab shows the chat's title), the chat's "..." menu floats at its top right, the thread and the question box
+// sit in a centred column (at most 920 px wide) and the box under a conversation is one row that grows with the text.
 // Drawn with Tailwind + shadcn/ui (src/components/ui); the page's root has the class "ui-scope" (see
 // src/tailwind.css). The grid / scrolling / phone-drawer layout still comes from app.css (ask-layout,
 // chats, conv, conv-scroll, composer ...). Messages (a chat removed or deleted, a failed chat action) show
@@ -24,7 +27,6 @@ import type { AskResponse, Card, ChatDetail, ChatSummary, Me, SavedAnswer } from
 import AnswerCard from './AnswerCard'
 import AskStart from './AskStart'
 import { type ChatActions, ChatMenu, deleteQuestion } from './ChatMenu'
-import { plural } from './common'
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from './ui/alert-dialog'
 import { Button } from './ui/button'
 import { Card as Box } from './ui/card'
@@ -112,12 +114,15 @@ function scrollTo(el: HTMLElement | null, block: ScrollLogicalPosition) {
   el?.scrollIntoView?.({ block, behavior: 'smooth' }) // (jsdom has no scrollIntoView)
 }
 
-/** The grow-with-the-text height of a question box (up to 220 px). */
-function grow(el: HTMLTextAreaElement | null, extra = 0) {
+/** The grow-with-the-text height of a question box (up to `most` px; past it the box scrolls). */
+function grow(el: HTMLTextAreaElement | null, extra = 0, most = 220) {
   if (!el) return
   el.style.height = 'auto'
-  el.style.height = `${Math.min(el.scrollHeight + extra, 220)}px`
+  el.style.height = `${Math.min(el.scrollHeight + extra, most)}px`
 }
+
+/** The question box under a conversation: at most 6 rows of 24 px and its 2 x 6 px padding. */
+const SMALL_BOX_MOST = 6 * 24 + 12
 
 /** A question bubble (on the right, in the brand colour); keeps the class "bubble". */
 function Bubble({ text }: { text: string }) {
@@ -363,7 +368,6 @@ export default function AskPage({ me }: { me: Me }) {
   // show the newest answer (or the question being asked)
   useEffect(() => { scrollTo(newest.current, 'start') }, [detail?.chat.id, detail?.cards.length])
   useEffect(() => { if (pending) scrollTo(sending.current, 'end') }, [pending])
-  useEffect(() => { grow(box.current) }, [question])
 
   /** Shows a just-asked answer: in the chat already on screen, or opens its chat. */
   function showAnswer(reply: AskResponse, startedIn: number | null) {
@@ -532,10 +536,27 @@ export default function AskPage({ me }: { me: Me }) {
   const filled = question.trim() !== ''
   // the first question moves the box from the middle of the page to the bottom: the cursor stays in it
   useEffect(() => { if (!start && pending) box.current?.focus() }, [start]) // eslint-disable-line react-hooks/exhaustive-deps
+  // the box grows with the text: on the start screen up to 220 px, under a conversation up to 6 rows
+  useEffect(() => { grow(box.current, 0, start ? 220 : SMALL_BOX_MOST) }, [question, start])
+
+  // the browser tab shows the open chat's title ("<chat title> · Manufacturing Intelligence"); the frame's
+  // "Assistant · Manufacturing Intelligence" comes back when the chat is closed
+  const chatTitle = chat?.title ?? ''
+  useEffect(() => {
+    if (!chatTitle) return
+    const before = document.title
+    document.title = `${chatTitle} · Manufacturing Intelligence`
+    return () => { document.title = before }
+  }, [chatTitle])
+
+  // The column of the thread and of the question box: centred, at most 920 px wide; with the chat's "..."
+  // button 44 px stay free on each side for it (on a phone the button has a small row of its own: full width).
+  const column = cn('conv-col mx-auto flex w-full flex-col',
+    chat ? 'max-w-[min(920px,calc(100%_-_88px))] max-[700px]:max-w-full' : 'max-w-[920px]')
 
   // The question box: a rounded card with the text and a round send button (in the brand colour when there
-  // is text, grey when empty): two rows of text and, under them, the button at the right. The same box on the
-  // start screen (bigger shadow) and under a conversation.
+  // is text, grey when empty). On the start screen two rows of text with the button under them at the right
+  // (a bigger shadow); under a conversation (16-Nov) one row that grows with the text, the button inside at the right.
   const sendButton = (
     <Button type="submit" size="icon" aria-label="Ask" title="Ask (Enter)" disabled={pending !== null}
             className={cn('rounded-full', start ? 'size-10' : 'size-9',
@@ -548,15 +569,15 @@ export default function AskPage({ me }: { me: Me }) {
       {askError && <div className="errbox" role="alert" style={{ marginBottom: 10 }}>{askError}</div>}
       <div className={cn('border border-border bg-card transition-[border-color,box-shadow]',
         'focus-within:border-primary focus-within:ring-3 focus-within:ring-primary/15',
-        'flex flex-col rounded-3xl px-5 max-[700px]:px-4',
-        start ? 'gap-2 pt-4 pb-3 shadow-lg' : 'gap-1 pt-3 pb-2 shadow-sm')}>
-        <Textarea id="q" ref={box} rows={2} maxLength={me.max_question_chars} required aria-label="Your question"
-                  className={cn('max-h-[220px] flex-1 rounded-none! border-0! bg-transparent! px-0! shadow-none focus-visible:ring-0',
-                    start ? 'min-h-12 py-0! text-[15px]!' : 'min-h-11 py-0!')}
+        start ? 'flex flex-col gap-2 rounded-3xl px-5 pt-4 pb-3 shadow-lg max-[700px]:px-4'
+          : 'flex items-end gap-2 rounded-[22px] py-1.5 pr-1.5 pl-4 shadow-sm')}>
+        <Textarea id="q" ref={box} rows={start ? 2 : 1} maxLength={me.max_question_chars} required aria-label="Your question"
+                  className={cn('flex-1 rounded-none! border-0! bg-transparent! px-0! shadow-none focus-visible:ring-0',
+                    start ? 'max-h-[220px]! min-h-12! py-0! text-[15px]!' : 'max-h-[156px]! min-h-9! py-1.5!')}
                   value={question} readOnly={pending !== null} onChange={(e) => setQuestion(e.target.value)}
                   onKeyDown={onKey}
                   placeholder="Ask about sales, customers, orders, stock or documents…" />
-        <div className="flex items-center justify-end">{sendButton}</div>
+        {start ? <div className="flex items-center justify-end">{sendButton}</div> : sendButton}
       </div>
     </form>
   )
@@ -565,99 +586,90 @@ export default function AskPage({ me }: { me: Me }) {
     // no chat list here (12-Nov): "New chat" and "History" (its Chats tab) are in the top bar of the frame
     <div className="ask-layout chats-none ui-scope">
       <section className="conv" aria-label="Conversation">
-        <div className="conv-head">
-          <div className="min-w-0 flex-1">
-            {route.kind === 'question' ? (
-              <>
-                <div className="conv-title">Saved answer</div>
-                <div className="mt-0.5 text-[12.5px] text-muted-foreground [overflow-wrap:anywhere]">
-                  {single?.chat && <>From the chat <Link to={chatPath(single.chat.id)}>{single.chat.title}</Link> · </>}
-                  the rows come from running the saved SQL again (no AI call).
-                </div>
-              </>
-            ) : chat ? (
-              <>
-                <div className="conv-title" title={chat.title}>{chat.title}</div>
-                <div className="mt-0.5 text-[12.5px] text-muted-foreground">{plural(detail!.total, 'question')} · started {chat.created_text}</div>
-              </>
-            ) : (
-              <>
-                <div className="conv-title">New chat</div>
-                <div className="mt-0.5 text-[12.5px] text-muted-foreground [overflow-wrap:anywhere]">
-                  Your questions and answers are saved - you find this chat again under History.
-                </div>
-              </>
-            )}
-          </div>
-          {chat && route.kind === 'chat' && (
-            <Popover open={menuOpen} onOpenChange={setMenuOpen}>
-              <PopoverTrigger asChild>
-                <Button type="button" variant="ghost" size="icon-sm" className="text-muted-foreground hover:text-primary"
-                        aria-label="Options for this chat" title="Rename, remove or delete">
-                  <Ellipsis aria-hidden="true" />
-                </Button>
-              </PopoverTrigger>
-              <PopoverContent portal={false} align="end" side="bottom" className="w-[min(17rem,calc(100vw-2rem))] p-2.5">
-                <ChatMenu key={chat.id} chat={listedChat(chat.id) ?? { ...chat, questions: detail?.total }}
-                          actions={actions} onDone={() => setMenuOpen(false)} />
-              </PopoverContent>
-            </Popover>
-          )}
-        </div>
-
-        <div className="conv-scroll" id="conv-scroll">
-          {chat?.archived && (
-            <div className="mb-4 flex flex-wrap items-center justify-between gap-2.5 rounded-lg border border-warning/25 bg-warning-soft py-2 pr-3 pl-3.5 text-[12.5px] font-medium text-warning">
-              <span>This chat was removed from your list.</span>
-              <Button type="button" variant="outline" size="sm"
-                      onClick={() => actions.restore(listedChat(chat.id) ?? chat)}>Restore it</Button>
+        <div className={cn('conv-scroll', chat && 'has-menu')} id="conv-scroll">
+          {/* 16-Nov: no head row - the chat's "..." menu (rename / remove / delete) floats at the top right and
+              stays there while the conversation scrolls (app.css, .conv-menu) */}
+          {chat && (
+            <div className="conv-menu">
+              <Popover open={menuOpen} onOpenChange={setMenuOpen}>
+                <PopoverTrigger asChild>
+                  <Button type="button" variant="ghost" size="icon-sm"
+                          className="rounded-full bg-background/80 text-muted-foreground backdrop-blur-sm hover:text-primary"
+                          aria-label="Options for this chat" title="Rename, remove or delete">
+                    <Ellipsis aria-hidden="true" />
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent portal={false} align="end" side="bottom" className="w-[min(17rem,calc(100vw-2rem))] p-2.5">
+                  <ChatMenu key={chat.id} chat={listedChat(chat.id) ?? { ...chat, questions: detail?.total }}
+                            actions={actions} onDone={() => setMenuOpen(false)} />
+                </PopoverContent>
+              </Popover>
             </div>
           )}
-          {loadError && <div className="errbox">{loadError}</div>}
 
-          <div className="thread" id="thread">
-            {single && (
-              <div className="chat-item" id={`q-${single.card.id}`}>
-                <div className="flex flex-col items-end">
-                  <Bubble text={single.card.text} />
-                  <QuestionTime>{single.card.created_text}</QuestionTime>
+          <div className={cn(column, 'flex-1')}>
+            {/* a slim line at the top instead of the old head: a removed chat, or where a saved answer comes from */}
+            {chat?.archived && (
+              <div className="mb-4 flex flex-wrap items-center gap-x-2 gap-y-0.5 self-start rounded-lg bg-warning-soft px-3 py-1.5 text-[12.5px] font-medium text-warning">
+                <span>This chat was removed from your list.</span>
+                <Button type="button" variant="link" size="xs" className="h-auto p-0 text-[12.5px] font-semibold text-warning underline"
+                        onClick={() => actions.restore(listedChat(chat.id) ?? chat)}>Restore it</Button>
+              </div>
+            )}
+            {route.kind === 'question' && (
+              <div className="saved-note mb-4 text-[12.5px] text-muted-foreground [overflow-wrap:anywhere]">
+                <span className="font-semibold text-heading">Saved answer</span>
+                {' · '}
+                {single?.chat && <>From the chat <Link to={chatPath(single.chat.id)}>{single.chat.title}</Link> · </>}
+                the rows come from running the saved SQL again (no AI call).
+              </div>
+            )}
+            {loadError && <div className="errbox">{loadError}</div>}
+
+            <div className="thread" id="thread">
+              {single && (
+                <div className="chat-item" id={`q-${single.card.id}`}>
+                  <div className="flex flex-col items-end">
+                    <Bubble text={single.card.text} />
+                    <QuestionTime>{single.card.created_text}</QuestionTime>
+                  </div>
+                  <AnswerCard card={single.card} autoRows />
                 </div>
-                <AnswerCard card={single.card} autoRows />
-              </div>
-            )}
-            {detail && route.kind === 'chat' && detail.earlier > 0 && (
-              <div className="text-center text-[12.5px] text-muted-foreground">
-                {detail.earlier} earlier question{detail.earlier === 1 ? ' of this chat is' : 's of this chat are'} in{' '}
-                <Link to="/history">History</Link>.
-              </div>
-            )}
-            {cards.map((card, i) => {
-              const last = i === cards.length - 1
-              return (
-                <div className="chat-item" id={`q-${card.id}`} key={card.id} ref={last ? newest : undefined}>
-                  <QuestionBubble card={card} me={me} editable={!pending} onEdit={edit} />
-                  <AnswerCard card={withNotice(card)} autoRows={last || card.id === justAsked} />
+              )}
+              {detail && route.kind === 'chat' && detail.earlier > 0 && (
+                <div className="text-center text-[12.5px] text-muted-foreground">
+                  {detail.earlier} earlier question{detail.earlier === 1 ? ' of this chat is' : 's of this chat are'} in{' '}
+                  <Link to="/history">History</Link>.
                 </div>
-              )
-            })}
-            {pending && (
-              <div className="chat-item" ref={sending}>
-                <div className="flex flex-col items-end"><Bubble text={pending} /></div>
-                {live?.text ? <LiveAnswer text={live.text} /> : <Thinking steps={live?.steps} />}
-              </div>
-            )}
-            {start && <AskStart examples={me.examples} onPick={fillExample}>{composer}</AskStart>}
+              )}
+              {cards.map((card, i) => {
+                const last = i === cards.length - 1
+                return (
+                  <div className="chat-item" id={`q-${card.id}`} key={card.id} ref={last ? newest : undefined}>
+                    <QuestionBubble card={card} me={me} editable={!pending} onEdit={edit} />
+                    <AnswerCard card={withNotice(card)} autoRows={last || card.id === justAsked} />
+                  </div>
+                )
+              })}
+              {pending && (
+                <div className="chat-item" ref={sending}>
+                  <div className="flex flex-col items-end"><Bubble text={pending} /></div>
+                  {live?.text ? <LiveAnswer text={live.text} /> : <Thinking steps={live?.steps} />}
+                </div>
+              )}
+              {start && <AskStart examples={me.examples} onPick={fillExample}>{composer}</AskStart>}
+            </div>
           </div>
         </div>
 
         {!start && (
-          <div className="composer">
+          <div className={cn('composer', column)}>
             {composer}
-            {/* one short line; the longer tips sit behind the (i) - on hover, and read out by a screen reader */}
-            <div className="mt-2 flex items-center justify-center gap-1.5 text-[11px] leading-normal text-faint">
+            {/* one short line, small and light; the longer tips sit behind the (i) - on hover, and read out by a screen reader */}
+            <div className="mt-1.5 flex items-center justify-center gap-1.5 text-[10.5px] leading-normal text-faint">
               <span>Enter to send · Shift+Enter for a new line</span>
               <span className="inline-flex cursor-help" title={TIPS}>
-                <Info aria-hidden="true" className="size-3.5" />
+                <Info aria-hidden="true" className="size-3" />
                 <span className="sr-only">{TIPS}</span>
               </span>
             </div>

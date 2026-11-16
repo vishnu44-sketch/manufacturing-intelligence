@@ -1,5 +1,6 @@
-// The Ask page's chat actions: the "..." menu of the open chat in its head (Rename / Remove from list / Delete,
-// which asks first), a removed chat with "Restore it", editing an old question (its new answer takes the old
+// The Ask page's chat actions: the "..." menu of the open chat (Rename / Remove from list / Delete, which asks
+// first; 16-Nov: no head row - the button floats at the top right of the conversation, the browser tab shows the
+// chat title, the thread sits in a centred column and the box grows with the text), a removed chat with "Restore it", editing an old question (its new answer takes the old
 // one's place), a saved answer on its own (/q/<id>), the example link (/new?q=) and only the newest answer's
 // rows. No chat list on this page since 12-Nov: the chats are History's "Chats" tab (HistoryChats.test.tsx).
 import { fireEvent, screen, waitFor, within } from '@testing-library/react'
@@ -36,11 +37,12 @@ function replies(extra = {}) {
   }
 }
 
-/** Opens the "..." menu of the open chat (in the head of the conversation). */
+/** Opens the "..." menu of the open chat (16-Nov: no head row - the button floats at the top right of the
+ *  conversation) and gives back the place of the menu. */
 async function openMenu() {
-  const head = (await screen.findByText('Net sales by month', { selector: '.conv-title' })).closest('.conv-head') as HTMLElement
-  fireEvent.click(within(head).getByRole('button', { name: 'Options for this chat' }))
-  return head
+  const button = await screen.findByRole('button', { name: 'Options for this chat' })
+  fireEvent.click(button)
+  return button.closest('.conv-menu') as HTMLElement
 }
 
 describe('AskPage chat actions', () => {
@@ -59,17 +61,84 @@ describe('AskPage chat actions', () => {
     expect(fetch.mock.calls.map(([url]) => url)).not.toContain('/api/questions/11/rows')   // older: on "Show rows"
   })
 
-  it('renames the open chat from the menu in its head', async () => {
+  it('has no head row above the conversation (16-Nov): the browser tab shows the chat title', async () => {
+    fakeFetch(replies())
+
+    renderAt('/c/1', <AskPage me={ASHA} />)
+
+    expect(await screen.findByText('Answer to And for Sep?')).toBeInTheDocument()
+    expect(document.querySelector('.conv-head')).toBeNull()
+    expect(document.querySelector('.conv-title')).toBeNull()
+    expect(screen.queryByText(/2 questions · started/)).not.toBeInTheDocument()
+    expect(screen.queryByText('Net sales by month')).not.toBeInTheDocument()       // the title is in the tab only
+    await waitFor(() => expect(document.title).toBe('Net sales by month · Manufacturing Intelligence'))
+    // the "..." button floats at the top right of the conversation, over the scrolled thread
+    const menu = screen.getByRole('button', { name: 'Options for this chat' }).closest('.conv-menu') as HTMLElement
+    expect(menu.parentElement).toHaveClass('conv-scroll', 'has-menu')
+    expect(menu.nextElementSibling).toHaveClass('conv-col')
+  })
+
+  it('puts the thread and the question box in a centred column of at most 920 px', async () => {
+    fakeFetch(replies())
+
+    renderAt('/c/1', <AskPage me={ASHA} />)
+
+    const thread = (await screen.findByText('Answer to And for Sep?')).closest('#thread') as HTMLElement
+    const column = thread.closest('.conv-col') as HTMLElement
+    expect(column).toHaveClass('mx-auto', 'w-full', 'max-w-[min(920px,calc(100%_-_88px))]', 'max-[700px]:max-w-full')
+    const composer = screen.getByLabelText('Your question').closest('.composer') as HTMLElement
+    expect(composer).toHaveClass('conv-col', 'mx-auto', 'max-w-[min(920px,calc(100%_-_88px))]')
+  })
+
+  it('a saved answer has no "..." menu and the plain 920 px column', async () => {
+    fakeFetch(replies({
+      '/api/questions/11': { body: { card: card(11, 'Net sales in Aug?'), chat: SALES } },
+      '/api/questions/11/rows': { body: ROWS },
+    }))
+
+    renderAt('/q/11', <AskPage me={ASHA} />)
+
+    expect(await screen.findByText('Saved answer')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Options for this chat' })).not.toBeInTheDocument()
+    expect(document.querySelector('#thread')!.closest('.conv-col')).toHaveClass('max-w-[920px]')
+  })
+
+  it('the question box under a conversation is one row and grows with the text up to 6 rows', async () => {
+    fakeFetch(replies())
+    // jsdom does no layout: a box is 24 px per line of text and 12 px of padding high
+    Object.defineProperty(HTMLTextAreaElement.prototype, 'scrollHeight', {
+      configurable: true, get() { return 24 * (this as HTMLTextAreaElement).value.split('\n').length + 12 },
+    })
+    try {
+      renderAt('/c/1', <AskPage me={ASHA} />)
+      await screen.findByText('Answer to And for Sep?')
+      const box = screen.getByLabelText('Your question') as HTMLTextAreaElement
+
+      expect(box).toHaveAttribute('rows', '1')
+      expect(box).toHaveClass('min-h-9!', 'max-h-[156px]!')
+      expect(box.style.height).toBe('36px')                                            // one row
+      fireEvent.change(box, { target: { value: 'Net sales\nby month\nfor FY 2026' } })
+      expect(box.style.height).toBe('84px')                                            // three rows
+      fireEvent.change(box, { target: { value: Array.from({ length: 10 }, (_, i) => `line ${i}`).join('\n') } })
+      expect(box.style.height).toBe('156px')                                           // 6 rows at most, then it scrolls
+      // the round send button sits inside the box, at the right of the text
+      expect(box.parentElement).toContainElement(screen.getByRole('button', { name: 'Ask' }))
+    } finally {
+      delete (HTMLTextAreaElement.prototype as { scrollHeight?: number }).scrollHeight   // jsdom's own again
+    }
+  })
+
+  it('renames the open chat from its "..." menu', async () => {
     const fetch = fakeFetch(replies({ '/api/chats/1/rename': { body: { chat: { ...SALES, title: 'Sales per month' } } } }))
 
     renderAt('/c/1', <AskPage me={ASHA} />)
-    const head = await openMenu()
-    expect(within(head).getByText('2 questions · last one 03 Nov, 09:05 AM')).toBeInTheDocument()
-    fireEvent.change(within(head).getByLabelText('New title for this chat'), { target: { value: 'Sales per month' } })
-    fireEvent.click(within(head).getByRole('button', { name: 'Rename' }))
+    const menu = await openMenu()
+    expect(within(menu).getByText('2 questions · last one 03 Nov, 09:05 AM')).toBeInTheDocument()
+    fireEvent.change(within(menu).getByLabelText('New title for this chat'), { target: { value: 'Sales per month' } })
+    fireEvent.click(within(menu).getByRole('button', { name: 'Rename' }))
 
     await waitFor(() => expect(callsTo(fetch, '/api/chats/1/rename')).toEqual([{ title: 'Sales per month' }]))
-    expect(await screen.findByText('Sales per month', { selector: '.conv-title' })).toBeInTheDocument()
+    await waitFor(() => expect(document.title).toBe('Sales per month · Manufacturing Intelligence'))   // the tab follows
   })
 
   it('removes the open chat and says where its questions are', async () => {
@@ -83,8 +152,8 @@ describe('AskPage chat actions', () => {
     }))
 
     renderAt('/c/1', <AskPage me={ASHA} />)
-    const head = await openMenu()
-    fireEvent.click(within(head).getByRole('button', { name: /Remove from list/ }))
+    const menu = await openMenu()
+    fireEvent.click(within(menu).getByRole('button', { name: /Remove from list/ }))
 
     expect(await screen.findByText(/was removed from your chats/)).toBeInTheDocument()   // a toast
     expect(callsTo(fetch, '/api/chats/1/remove')).toHaveLength(1)
@@ -97,16 +166,16 @@ describe('AskPage chat actions', () => {
     }))
 
     renderAt('/c/1', <AskPage me={ASHA} />)
-    let head = await openMenu()
-    fireEvent.click(within(head).getByRole('button', { name: /Delete/ }))
+    let menu = await openMenu()
+    fireEvent.click(within(menu).getByRole('button', { name: /Delete/ }))
     let dialog = await screen.findByRole('alertdialog')                      // "Are you sure?"
     expect(dialog).toHaveAccessibleName('Delete this chat and its 2 questions permanently? This cannot be undone.')
     fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }))
     await waitFor(() => expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument())
     expect(callsTo(fetch, '/api/chats/1/delete')).toHaveLength(0)            // "no": nothing deleted
 
-    head = await openMenu()
-    fireEvent.click(within(head).getByRole('button', { name: /Delete/ }))
+    menu = await openMenu()
+    fireEvent.click(within(menu).getByRole('button', { name: /Delete/ }))
     dialog = await screen.findByRole('alertdialog')
     fireEvent.click(within(dialog).getByRole('button', { name: 'Delete' }))
 
@@ -119,8 +188,25 @@ describe('AskPage chat actions', () => {
 
     renderAt('/c/3', <AskPage me={ASHA} />)
 
-    expect(await screen.findByText('This chat was removed from your list.')).toBeInTheDocument()
+    const notice = await screen.findByText('This chat was removed from your list.')
     expect(screen.getByRole('button', { name: 'Restore it' })).toBeInTheDocument()
+    // 16-Nov: a slim line at the top of the conversation's column, above the thread
+    expect(notice.closest('.conv-col')).toContainElement(document.querySelector('#thread') as HTMLElement)
+    expect(notice.parentElement!.nextElementSibling).toHaveAttribute('id', 'thread')
+    expect(screen.getByRole('button', { name: 'Options for this chat' })).toBeInTheDocument()   // the menu is still there
+  })
+
+  it('"Restore it" puts a removed chat back in the list', async () => {
+    const fetch = fakeFetch(replies({
+      '/api/chats/3': { body: { chat: OLD, total: 1, earlier: 0, cards: [card(31, 'Old one', { has_rows: false })] } },
+      '/api/chats/3/restore': { body: { chat: { ...OLD, archived: false } } },
+    }))
+
+    renderAt('/c/3', <AskPage me={ASHA} />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Restore it' }))
+
+    await waitFor(() => expect(screen.queryByText('This chat was removed from your list.')).not.toBeInTheDocument())
+    expect(callsTo(fetch, '/api/chats/3/restore')).toHaveLength(1)
   })
 
   it('copies a question with one click and says "Copied"; marked text in the bubble can be seen (12-Nov)', async () => {
@@ -202,8 +288,11 @@ describe('AskPage chat actions', () => {
 
     renderAt('/q/11', <AskPage me={ASHA} />)
 
-    expect(await screen.findByText('Saved answer')).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: 'Net sales by month', current: false })).toBeInTheDocument()
+    const note = (await screen.findByText('Saved answer')).parentElement as HTMLElement   // a slim line, no head row
+    expect(note).toHaveClass('saved-note')
+    expect(note).toHaveTextContent('Saved answer · From the chat Net sales by month · the rows come from running the saved SQL again (no AI call).')
+    expect(within(note).getByRole('link', { name: 'Net sales by month', current: false })).toHaveAttribute('href', '/c/1')
+    expect(document.querySelector('.conv-head')).toBeNull()
     expect(screen.getByLabelText('Your question')).toHaveValue('Net sales in Aug?')   // asking continues that chat
     await waitFor(() => expect(fetch.mock.calls.map(([url]) => url)).toContain('/api/questions/11/rows'))
   })

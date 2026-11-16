@@ -3,7 +3,7 @@
 // the name, the role and "Sign out"), and under it the light menu on the left, in groups: Home (Home, Assistant),
 // Intelligence (Knowledge graph), Tools (History, Memory) and - for staff only - Administration (Users,
 // Documents, Data, Audit). The page it is on is a filled pill. The browser tab shows "<page> · Manufacturing Intelligence".
-// Above the page is a row with its title (a page can go without it: header={false}, as Home does).
+// Above the page is a row with its title (a page can go without it: header={false}, as Home and the Assistant do).
 // The « button under the menu makes it small (icons only, the name on hover) on every page; » opens it again. The
 // choice is kept in this browser (localStorage). On a phone the menu is a drawer, opened by the ☰ button in the top bar.
 // Colours are the names of src/tailwind.css (light and dark); the layout is in shell.css.
@@ -211,7 +211,7 @@ export default function Shell({ me, title, active, onSignOut, header = true, chi
         </aside>
 
         <div className="mi-shell-main">
-          {/* the page title (Home has none: its banner has the greeting and the clock) */}
+          {/* the page title (Home has none: its banner has the greeting and the clock; the Assistant has none either) */}
           {header && (
             <div className="mi-shell-title">
               <h1 className="m-0 text-[20px] leading-tight font-semibold text-foreground">{title}</h1>
