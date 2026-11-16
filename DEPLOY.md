@@ -16,6 +16,8 @@ Already used on the laptop (see .env): `GROQ_API_KEY`, `GROQ_MODEL`, `GROQ_FALLB
 `EMBED_MODEL`, `MYSQL_*`, `AI_GOLD_DATABASE`, `AI_DB_USER`, `AI_DB_PASSWORD`, `APP_DB_NAME`,
 `APP_DB_USER`, `APP_DB_PASSWORD`, `QDRANT_API_KEY` (needed: it protects the compose Qdrant),
 `QDRANT_COLLECTION` (default mi_docs), `QDRANT_PDF_COLLECTION` (default mi_pdfs), `MCP_ACCESS_KEY`, `MCP_AUTH`.
+The data database and its read-only user are always `AI_GOLD_DATABASE=ss_gold` and `AI_DB_USER=ss_ai_reader`
+(see section 6).
 
 For the website in production:
 
@@ -133,3 +135,29 @@ the stream cannot be used, and the MCP server and the eval use the plain path an
   harm: the steps and the answer then arrive together at the end, as with `/api/ask`.
 - When the browser closes or reloads the page during a stream, the question still runs to the end and is
   saved in History (as with `/api/ask`); only nothing more is sent.
+
+## 6. The company data: the database ss_gold and the loader
+
+The data questions read SS Manufacturing's (synthetic) sales, stock and master data from the MySQL database
+`ss_gold`, through the read-only user `ss_ai_reader` (SELECT on ss_gold only). `loader/load_gold.py` builds
+ss_gold from the input files and writes into no other database, so another project's database on the same
+MySQL server is never touched. A sales month runs from the 21st of the previous month to the 20th
+(`dim_calendar.sales_month`, e.g. 21-Sep-2026 .. 20-Oct-2026 = 'Oct 2026').
+
+1. The input files are not in git. Copy them next to `manage.py`: the folder `inputdata/` (the base files)
+   and the folder `inputdata_batches/batch_001/` (one incremental batch).
+2. In `.env` (the loader stops when the names are different):
+
+       AI_GOLD_DATABASE=ss_gold
+       AI_DB_USER=ss_ai_reader
+       AI_DB_PASSWORD=<a password for the read-only user>
+
+3. Load, on the laptop (the MySQL admin login is `MYSQL_USER` / `MYSQL_PASSWORD` in `.env`):
+
+       venv\Scripts\python.exe loader\load_gold.py
+       venv\Scripts\python.exe loader\load_gold.py --batch inputdata_batches\batch_001
+
+   The first command drops and rebuilds every ss_gold table from `inputdata/` and makes / updates
+   'ss_ai_reader'@'localhost'; the second merges the batch (nothing dropped; running it twice changes nothing).
+   `load_log` shows each run. Then build the search indexes again: `python manage.py ingest_docs` and
+   `python manage.py ingest_pdfs`.

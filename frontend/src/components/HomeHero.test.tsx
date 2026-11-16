@@ -1,4 +1,4 @@
-// The Home welcome banner: the greeting, the India-time clock inside it (changing every minute), the NOP month and
+// The Home welcome banner: the greeting, the India-time clock inside it (changing every minute), the sales month and
 // FY badges (no separate date badge: the clock has the date), no big buttons (the feature cards below have them),
 // the quick start opening the Ask page with the question, and the movement only when motion is fine.
 import { act, cleanup, fireEvent, screen, within } from '@testing-library/react'
@@ -25,13 +25,13 @@ function motion(ok: boolean) {
 afterEach(() => { vi.useRealTimers() })
 
 describe('HomeHero', () => {
-  it('greets by name and shows the NOP month and FY badges, without a separate date badge', () => {
+  it('greets by name and shows the sales month and FY badges, without a separate date badge', () => {
     const banner = hero()
     expect(within(banner).getByRole('heading', { name: /^Good (morning|afternoon|evening), Asha/ })).toBeInTheDocument()
     expect(within(banner).getByText(/Ask the company data a question in plain English/)).toBeInTheDocument()
     const today = within(banner).getByRole('list', { name: 'Today' })
     expect(within(today).getAllByRole('listitem')).toHaveLength(2)
-    expect(within(today).getByText('NOP sales month Nov 2026 · 21-Oct-2026 to 20-Nov-2026')).toHaveAttribute('data-slot', 'badge')
+    expect(within(today).getByText('Sales month Nov 2026 · 21-Oct-2026 to 20-Nov-2026')).toHaveAttribute('data-slot', 'badge')
     expect(within(today).getByText('FY 2026-27')).toHaveAttribute('data-slot', 'badge')
   })
 

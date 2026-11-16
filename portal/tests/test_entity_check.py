@@ -117,7 +117,7 @@ def test_a_ranking_or_list_is_found(text, what):
     "how many customers", "how many customers bought the coolant pump",                       # counts
     "number of customers in Kerala", "the most customers", "how many top customers are in Kerala",
     "share of the top 5 customers", "average sales per customer",
-    "Monthly net sales of the top customer of the last 3 NOP months as a line chart",   # known from the chat
+    "Monthly net sales of the top customer of the last 3 sales months as a line chart",   # known from the chat
     "sales to our biggest customer in Oct",
     "top customer groups", "top product categories", "what is the best customer group",       # another thing
     "which month was best selling", "top customs duty", "net sales of Oct 2026", "monthly sales trend", "", None,
@@ -143,7 +143,7 @@ def test_a_column_of_the_thing_shows_it(what, columns):
     ("customer", ["customer_count", "net_sales_inr"]),                   # a count of them is no customer column
     ("country", ["country_count", "net_sales_inr"]),
     ("product", ["customer_name", "net_sales_inr"]),
-    ("sales person", ["nop_sales_month", "net_sales_inr"]),
+    ("sales person", ["sales_month", "net_sales_inr"]),
     ("state", ["customer_name", "net_sales_inr"]),
     ("country", ["product_description", "net_sales_inr"]),
 ])
@@ -307,7 +307,7 @@ def test_a_follow_up_about_a_filter_is_not_sent_back(monkeypatch, tables, user, 
 def test_a_line_chart_retry_and_the_ranking_retry_are_never_both_used(monkeypatch, tables, user, steps):
     """A 1-row line chart of the top customers is sent back once for the periods; that try is not sent back
     again for the customers (one kept first answer at a time)."""
-    one_row = {"columns": ["nop_sales_month", "net_sales_inr"], "rows": [["Oct 2026", Decimal("1.00")]],
+    one_row = {"columns": ["sales_month", "net_sales_inr"], "rows": [["Oct 2026", Decimal("1.00")]],
                "truncated": False}
     tables.results = [one_row, one_row]
     use_fake_ai(monkeypatch, [PRODUCT_TOTAL_SQL, PRODUCT_TOTAL_SQL, WRONG_ANSWER])

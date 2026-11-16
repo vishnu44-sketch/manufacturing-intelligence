@@ -29,7 +29,7 @@ const LINE = {
 const PAGE: Page = {
   questions: [
     LINE,
-    { ...LINE, id: 4, text: 'Weather?', understood_as: '', answer: 'Not a NOP data question.', rows_count: null,
+    { ...LINE, id: 4, text: 'Weather?', understood_as: '', answer: 'Not an SS Manufacturing data question.', rows_count: null,
       secs_text: '0.4', tokens_text: '-', status: 'refused', excel_url: '', ask_again: 'Weather?', edited: true,
       model: 'qwen/qwen3.8-27b', backup: true },
   ],

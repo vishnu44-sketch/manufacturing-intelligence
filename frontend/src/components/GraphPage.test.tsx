@@ -223,7 +223,7 @@ describe('GraphPage', () => {
     fakeFetch(replies({
       '/api/graph/search?q=zz': { body: { q: 'zz', results: [] } },
       '/api/graph/search?q=%27x': { status: 400, body: { detail: 'Type at least 2 characters to search.' } },
-      [AURORA_URL]: { status: 503, body: { detail: 'The NOP data (MySQL) cannot be read right now - please try again in a minute.' } },
+      [AURORA_URL]: { status: 503, body: { detail: 'The SS Manufacturing data (MySQL) cannot be read right now - please try again in a minute.' } },
     }))
     renderAt('/graph', <GraphPage />)
     const box = screen.getByRole('combobox', { name: 'Search' })
@@ -235,7 +235,7 @@ describe('GraphPage', () => {
 
     fireEvent.change(box, { target: { value: 'Aurora' } })
     fireEvent.click(await screen.findByRole('option', { name: /Aurora Hydraulics Private Limited/ }))
-    expect(await screen.findByRole('alert')).toHaveTextContent('The NOP data (MySQL) cannot be read right now')
+    expect(await screen.findByRole('alert')).toHaveTextContent('The SS Manufacturing data (MySQL) cannot be read right now')
     expect(screen.queryByRole('img', { name: /Knowledge graph around/ })).not.toBeInTheDocument()
   })
 

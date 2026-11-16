@@ -246,7 +246,7 @@ def test_an_answered_card_has_what_the_page_shows(client, user, monkeypatch, mys
     assert card["backup_model"] == "qwen/qwen3.8-27b"
     assert card["sql"] == SQL and card["has_rows"] is True
     assert card["sources"] == [{"kind": "example", "heading": "Q: Who were the top 5 customers by invoice value in Aug 2026?"},
-                               {"kind": "rule", "heading": "NOP sales month"}]
+                               {"kind": "rule", "heading": "sales month"}]
     assert [s["label"] for s in card["time_steps"]][:2] == ["Write the SQL (AI)", "Run the SQL on MySQL"]
     assert card["created_text"] and card["created_at"] and card["edited"] is False
 
@@ -266,7 +266,7 @@ def test_a_documents_card_has_its_pdf_sources_and_no_sql_rows_or_excel(client, u
 
 
 def test_a_refused_card_never_shows_sql_even_when_some_was_saved(client, user, mysql):
-    chat = make_chat(user, "Tell me a joke", status="refused", sql=SQL, answer="Not a NOP data question.")
+    chat = make_chat(user, "Tell me a joke", status="refused", sql=SQL, answer="Not an SS Manufacturing data question.")
     client.force_login(user)
 
     card = get(client, "api_chat", chat.pk).json()["cards"][0]

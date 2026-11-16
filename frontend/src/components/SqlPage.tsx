@@ -1,5 +1,5 @@
 // SQL (staff): a small MySQL Workbench inside the app. On the left the saved queries (mine, and the ones
-// other admins shared; SqlSaved.tsx) above the tables of ai_gold with their row counts and, opened with the
+// other admins shared; SqlSaved.tsx) above the tables of ss_gold with their row counts and, opened with the
 // arrow, their columns and types (a search box filters them; a click puts the name into the editor at the
 // cursor; the play icon runs "SELECT * ... LIMIT 100" of the table). On the right the editor tabs (SqlTabs.tsx,
 // several queries open at once, each with its own text and its own last result), the SQL editor (CodeMirror,
@@ -142,7 +142,7 @@ function SchemaTreeView({ schema, error, onInsert, onPreview }:
     else next.add(name)
     return next
   })
-  const database = schema?.database || 'ai_gold'
+  const database = schema?.database || 'ss_gold'
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-2">
@@ -671,7 +671,7 @@ export default function SqlPage() {
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-2">
       <p className="m-0 flex-none text-[12px] text-muted-foreground">
-        Read-only: SELECT queries on ai_gold, max 500 rows, 30 s limit. Every query is in the Audit log.
+        Read-only: SELECT queries on ss_gold, max 500 rows, 30 s limit. Every query is in the Audit log.
       </p>
       <div className="flex min-h-0 flex-1 max-[900px]:flex-col max-[900px]:gap-3">
         <aside aria-label="Saved queries and tables" style={{ width: sizes.tree }}

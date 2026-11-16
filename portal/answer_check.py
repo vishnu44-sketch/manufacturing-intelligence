@@ -37,7 +37,7 @@ NO_EARLIER = ("There is no earlier answer in this chat that I can check yet. Ask
               "run its query again and show you where the numbers come from.")
 FROM_DOCUMENTS = ("My last answer came from the company documents, not from a database query: the document and page "
                   "it used are named under it, so you can check it there.")
-NOT_FROM_QUERY = ("My last answer did not come from a database query (the NOP data does not have what was asked), so "
+NOT_FROM_QUERY = ("My last answer did not come from a database query (the SS Manufacturing data does not have what was asked), so "
                   "there are no numbers of mine to check.")
 DID_NOT_RUN = ("I tried to run the same query again, but it did not run this time ({problem}). So I cannot check my "
                "answer right now - please ask the question again.")

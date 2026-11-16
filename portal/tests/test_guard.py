@@ -1,4 +1,4 @@
-"""SQL guard checks: only one read-only SELECT on ai_gold tables may ever run.
+"""SQL guard checks: only one read-only SELECT on ss_gold tables may ever run.
 
 Pure unit tests - no MySQL, no network: every test passes its own list of allowed tables.
 Run with:  python -m pytest -q portal/tests/test_guard.py
@@ -7,7 +7,7 @@ import pytest
 
 from portal.rag.sql_guard import MAX_ROWS, GuardError, check_sql
 
-# the ai_gold tables the tests pretend exist
+# the ss_gold tables the tests pretend exist
 TABLES = {"dim_customers", "dim_calendar", "dim_sales_people", "fact_invoice_lines"}
 
 
@@ -114,14 +114,14 @@ def test_a_dangerous_function_hidden_in_a_subquery_is_refused():
         check("SELECT * FROM dim_customers WHERE customer_id = (SELECT SLEEP(3))")
 
 
-# ---------- only ai_gold tables ----------
+# ---------- only ss_gold tables ----------
 
-@pytest.mark.parametrize("table", ["nop_gold.fact_invoice", "information_schema.tables",
+@pytest.mark.parametrize("table", ["other_gold.fact_invoice", "information_schema.tables",
                                    "mysql.user", "performance_schema.threads", "sys.version",
                                    "`mysql`.`user`"])
 def test_other_databases_are_refused(table):
-    """Only ai_gold may be read - not the real NOP gold, not MySQL's own databases."""
-    with pytest.raises(GuardError, match="Only the ai_gold database may be read"):
+    """Only ss_gold may be read - not the company project's gold database, not MySQL's own databases."""
+    with pytest.raises(GuardError, match="Only the ss_gold database may be read"):
         check(f"SELECT * FROM {table}")
 
 
@@ -130,12 +130,12 @@ def test_another_database_hidden_in_a_subquery_is_refused():
         check("SELECT * FROM dim_customers WHERE customer_id IN (SELECT 1 FROM mysql.user)")
 
 
-def test_ai_gold_written_in_front_of_the_table_is_fine():
-    assert "ai_gold.dim_customers" in check("SELECT customer_name FROM ai_gold.dim_customers")
+def test_ss_gold_written_in_front_of_the_table_is_fine():
+    assert "ss_gold.dim_customers" in check("SELECT customer_name FROM ss_gold.dim_customers")
 
 
 def test_unknown_table_is_refused():
-    """A table that is not in ai_gold (here: 'customers') is refused by name."""
+    """A table that is not in ss_gold (here: 'customers') is refused by name."""
     with pytest.raises(GuardError, match="Unknown table 'customers'"):
         check("SELECT * FROM customers")
 
@@ -169,7 +169,7 @@ def test_sql_code_fences_are_stripped():
 
 
 def test_cte_names_are_allowed():
-    """A WITH name is not an ai_gold table, but the query defines it itself - so it is fine."""
+    """A WITH name is not an ss_gold table, but the query defines it itself - so it is fine."""
     cleaned = check("WITH top_c AS (SELECT customer_id FROM dim_customers) SELECT * FROM top_c")
     assert "FROM top_c" in one_line(cleaned)
 

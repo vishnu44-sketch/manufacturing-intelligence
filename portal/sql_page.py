@@ -1,8 +1,8 @@
-"""The SQL page (staff only): a tree of the ai_gold tables and columns, a SQL box and the rows - like MySQL
+"""The SQL page (staff only): a tree of the ss_gold tables and columns, a SQL box and the rows - like MySQL
 Workbench, inside the app. The views are in api.py (/api/sql/schema, /api/sql, /api/sql/excel).
 
 The safety rules, never skipped:
-- every SQL typed here goes through the SQL guard (sql_guard.check_sql) with the ai_gold tables as the only
+- every SQL typed here goes through the SQL guard (sql_guard.check_sql) with the ss_gold tables as the only
   allowed ones: exactly one SELECT, no other database (the app's own mi_app with its users and chats,
   information_schema, mysql ...), no writes, at most 500 rows;
 - it runs only as the read-only MySQL user (warehouse.run_select): a READ ONLY session, stopped after 30 s.
@@ -35,7 +35,7 @@ CACHE_SECONDS = 300      # the tree (columns, types, row counts) is kept 5 minut
 MYSQL_DOWN = "The company data (MySQL) can't be read right now - please try again in a minute."
 TIME_LIMIT_CODE = 3024   # MySQL: "maximum statement execution time exceeded"
 
-# the column types of ai_gold, read with the read-only user (fixed SQL written here, the database name a parameter)
+# the column types of ss_gold, read with the read-only user (fixed SQL written here, the database name a parameter)
 COLUMNS_SQL = ("SELECT table_name, column_name, column_type FROM information_schema.columns "
                "WHERE table_schema = %s ORDER BY table_name, ordinal_position")
 
@@ -61,7 +61,7 @@ def clear_cache():
 
 
 def schema():
-    """The ai_gold tables A to Z with their row counts and their columns (name + MySQL type) in table order.
+    """The ss_gold tables A to Z with their row counts and their columns (name + MySQL type) in table order.
     Kept CACHE_SECONDS; a failure is not kept (tried again next time). Only names, types and counts - never a
     host, a user name or a password. Raises WarehouseUnavailable / QueryError when MySQL cannot be read."""
     now = time.monotonic()
@@ -101,14 +101,14 @@ def sql_problem(sql):
 
 
 def checked(sql):
-    """The SQL the guard lets run (one SELECT, only ai_gold tables, at most 500 rows) - or SqlProblem."""
+    """The SQL the guard lets run (one SELECT, only ss_gold tables, at most 500 rows) - or SqlProblem."""
     problem = sql_problem(sql)
     if problem:
         raise SqlProblem(400, problem)
     try:
         allowed = warehouse.allowed_tables()
     except (warehouse.WarehouseUnavailable, warehouse.QueryError) as exc:
-        log.warning("SQL page: the ai_gold tables could not be read: %s", exc)
+        log.warning("SQL page: the ss_gold tables could not be read: %s", exc)
         raise SqlProblem(503, MYSQL_DOWN) from None
     try:
         return check_sql(sql, allowed)

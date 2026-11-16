@@ -1,4 +1,4 @@
-// Home: the welcome banner (greeting, the clock, NOP month / FY badges, the quick start), the KPI
+// Home: the welcome banner (greeting, the clock, sales month / FY badges, the quick start), the KPI
 // cards (icon, counting number, small line of the last months, change badge, a click opens the Ask page), the
 // recent questions, the usage bar and its colours, the connections, the tables, how it works; skeletons while it
 // loads; MySQL down (only the data parts say so), the whole call failing, and an older server without
@@ -26,7 +26,7 @@ const HOME: HomeData = {
   calendar: { today: '05-Nov-2026', month: 'Nov 2026', month_from: '21-Oct-2026', month_to: '20-Nov-2026', fy: '2627', fy_label: 'FY 2026-27' },
   kpis: [
     { key: 'month_sales', label: 'Net sales Oct 2026', money: true, value: 1200000, text: 'INR 1,200,000.00',
-      note: '21-Sep-2026 to 20-Oct-2026 (last complete NOP sales month)', change: { pct: 20, direction: 'up', text: '20.0% vs Sep 2026' },
+      note: '21-Sep-2026 to 20-Oct-2026 (last complete sales month)', change: { pct: 20, direction: 'up', text: '20.0% vs Sep 2026' },
       trend: TREND, ask: 'What were the net sales in Oct 2026?' },
     { key: 'fy_sales', label: 'Net sales FY 2026-27 so far', money: true, value: 4360522752.5, text: 'INR 4,360,522,752.50',
       note: '01-Apr-2026 to 05-Nov-2026', change: null, trend: null, ask: 'Net sales in FY 2026-27 so far?' },
@@ -55,7 +55,7 @@ const HOME: HomeData = {
   ],
   tables_error: '',
   connections: [
-    { key: 'ai_gold', name: 'MySQL ai_gold', what: 'Company data (read-only)', ok: true, note: 'Reachable' },
+    { key: 'ss_gold', name: 'MySQL ss_gold', what: 'Company data (read-only)', ok: true, note: 'Reachable' },
     { key: 'docs', name: 'Qdrant mi_docs', what: 'SQL notes for the AI (RAG)', ok: false, note: 'Not reachable right now' },
     { key: 'groq', name: 'Groq AI', what: 'openai/gpt-oss-120b', ok: true, note: 'Key set' },
   ],
@@ -114,12 +114,12 @@ function controlledMotion() {
 }
 
 describe('HomePage', () => {
-  it('shows the welcome banner: the greeting, the clock, the NOP month / FY badges and the quick start (no buttons)', async () => {
+  it('shows the welcome banner: the greeting, the clock, the sales month / FY badges and the quick start (no buttons)', async () => {
     fakeFetch({ '/api/home': { body: HOME } })
 
     renderAt('/', <HomePage me={ME} />)
 
-    expect(await screen.findByText('NOP sales month Nov 2026 · 21-Oct-2026 to 20-Nov-2026')).toBeInTheDocument()
+    expect(await screen.findByText('Sales month Nov 2026 · 21-Oct-2026 to 20-Nov-2026')).toBeInTheDocument()
     const hero = screen.getByRole('region', { name: 'Welcome' })
     expect(within(hero).getByRole('heading', { name: /^Good (morning|afternoon|evening), Asha/ })).toBeInTheDocument()
     const today = within(hero).getByRole('list', { name: 'Today' })
@@ -159,7 +159,7 @@ describe('HomePage', () => {
     expect(line).toBeInTheDocument()
     expect(line.querySelector('svg')).toHaveAttribute('aria-hidden', 'true')
     expect(line.querySelector('polyline')?.getAttribute('points')?.split(' ')).toHaveLength(6)
-    expect(within(line).getByText(/The last 6 NOP sales months: May 2026: INR 9 L, .*Oct 2026: INR 12 L\./)).toBeInTheDocument()
+    expect(within(line).getByText(/The last 6 sales months: May 2026: INR 9 L, .*Oct 2026: INR 12 L\./)).toBeInTheDocument()
     expect(kpi('fy_sales').querySelector('[data-slot="sparkline"]')).toBeNull()      // trend null
     expect(kpi('customers').querySelector('[data-slot="sparkline"]')).toBeNull()     // only 1 month
     expect(kpi('products').querySelector('[data-slot="sparkline"]')).toBeNull()      // no trend at all
@@ -257,7 +257,7 @@ describe('HomePage', () => {
   })
 
   it('5 connections: all 5 in a row on a wide screen, 3 + 2 in between', async () => {
-    const five = ['ai_gold', 'app_db', 'docs', 'pdfs', 'groq'].map((key) => ({ ...HOME.connections[0], key, name: key }))
+    const five = ['ss_gold', 'app_db', 'docs', 'pdfs', 'groq'].map((key) => ({ ...HOME.connections[0], key, name: key }))
     fakeFetch({ '/api/home': { body: { ...HOME, connections: five } } })
 
     renderAt('/', <HomePage me={ME} />)
@@ -442,7 +442,7 @@ describe('HomePage', () => {
 
     await screen.findByText('2,063')
     expect(within(screen.getByRole('list', { name: 'Connections' })).getAllByRole('listitem')).toHaveLength(3)
-    const gold = document.querySelector('[data-connection="ai_gold"]') as HTMLElement
+    const gold = document.querySelector('[data-connection="ss_gold"]') as HTMLElement
     expect(gold).toHaveTextContent('Connected: Reachable')
     expect(gold.querySelector('[data-dot]')).toHaveAttribute('data-dot', 'ok')
     expect(gold.querySelector('.animate-ping')).toBeInTheDocument()
@@ -530,11 +530,11 @@ describe('HomePage', () => {
     expect(await screen.findByText(/The key numbers can't be read right now/)).toBeInTheDocument()
     expect(screen.getByText(/The tables can't be read right now/)).toBeInTheDocument()
     expect(document.querySelectorAll('[data-kpi]')).toHaveLength(0)
-    expect(screen.queryByText(/NOP sales month/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/Sales month/)).not.toBeInTheDocument()
     expect(screen.getByRole('heading', { name: /, Asha/ })).toBeInTheDocument()
     expect(screen.getByText('90,403')).toBeInTheDocument()                                    // the usage still shows
     expect(screen.getAllByRole('link', { name: /Top 5 customers by invoice value/ })).toHaveLength(1)   // and the recent questions
-    expect(document.querySelector('[data-connection="ai_gold"]')).toHaveTextContent('Not connected: Not reachable right now')
+    expect(document.querySelector('[data-connection="ss_gold"]')).toHaveTextContent('Not connected: Not reachable right now')
     expect(screen.getByRole('region', { name: 'Welcome' })).toBeInTheDocument()
   })
 

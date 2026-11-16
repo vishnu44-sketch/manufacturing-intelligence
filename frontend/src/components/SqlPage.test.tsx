@@ -45,7 +45,7 @@ vi.mock('./SqlEditor', async () => {
 })
 
 const SCHEMA: SqlSchema = {
-  database: 'ai_gold',
+  database: 'ss_gold',
   tables: [
     { name: 'dim_customers', rows: 5001, columns: [{ name: 'customer_id', type: 'int' }, { name: 'customer_name', type: 'varchar(200)' }] },
     { name: 'fact_invoice_lines', rows: 100720, columns: [{ name: 'invoice_no', type: 'varchar(30)' }, { name: 'net_amount', type: 'decimal(18,2)' }] },
@@ -120,7 +120,7 @@ describe('SqlPage: the menu and the address', () => {
     expect(admin).toEqual(['Users', 'Documents', 'Data', 'SQL', 'Audit'])
     expect(await screen.findByText('dim_customers')).toBeInTheDocument()
     expect(document.title).toBe('SQL · Manufacturing Intelligence')
-    expect(screen.getByText(/Read-only: SELECT queries on ai_gold, max 500 rows, 30 s limit\. Every query is in the Audit log\./))
+    expect(screen.getByText(/Read-only: SELECT queries on ss_gold, max 500 rows, 30 s limit\. Every query is in the Audit log\./))
       .toBeInTheDocument()
   })
 
@@ -144,7 +144,7 @@ describe('SqlPage: the table tree', () => {
   it('shows the tables with their row counts, and the columns with their types when opened', async () => {
     page()
     expect(await screen.findByText('dim_customers')).toBeInTheDocument()
-    expect(tree().getByText('ai_gold')).toBeInTheDocument()
+    expect(tree().getByText('ss_gold')).toBeInTheDocument()
     expect(tree().getByText('2 tables')).toBeInTheDocument()
     expect(tree().getByText('5,001')).toBeInTheDocument()
     expect(tree().getByText('100,720')).toBeInTheDocument()
@@ -202,8 +202,8 @@ describe('SqlPage: the table tree', () => {
   })
 
   it('shows the API message when the tables cannot be loaded', async () => {
-    page({ '/api/sql/schema': { status: 503, body: { detail: 'The NOP data (MySQL) cannot be reached.' } } })
-    expect(await screen.findByText('The NOP data (MySQL) cannot be reached.')).toHaveAttribute('role', 'alert')
+    page({ '/api/sql/schema': { status: 503, body: { detail: 'The SS Manufacturing data (MySQL) cannot be reached.' } } })
+    expect(await screen.findByText('The SS Manufacturing data (MySQL) cannot be reached.')).toHaveAttribute('role', 'alert')
     expect(await textBox()).toBeInTheDocument()                                    // the editor still works
   })
 })

@@ -1,11 +1,11 @@
-"""The SQL guard: decides whether a SQL written by the AI may run on ai_gold.
+"""The SQL guard: decides whether a SQL written by the AI may run on ss_gold.
 
 check_sql(sql) returns the cleaned SQL, or raises GuardError with the reason in plain English.
 
 What may run - and nothing else:
 - exactly ONE statement: SELECT, WITH ... SELECT, or SELECTs joined by UNION / INTERSECT / EXCEPT;
-- only ai_gold tables (names read from information_schema) and the query's own CTE names;
-  no other database in front of a table (information_schema, mysql, sys, nop_gold ...);
+- only ss_gold tables (names read from information_schema) and the query's own CTE names;
+  no other database in front of a table (information_schema, mysql, sys, other_gold ...);
 - no SELECT ... INTO (files or variables), no FOR UPDATE / LOCK IN SHARE MODE,
   no MySQL variables (@x, @@x), no optimizer hints or special /*! */ comments,
   no dangerous functions (SLEEP, BENCHMARK, LOAD_FILE, GET_LOCK ...);
@@ -23,7 +23,7 @@ from sqlglot import exp
 from sqlglot.errors import ParseError, TokenError
 
 MAX_ROWS = 500
-ALLOWED_DATABASE = "ai_gold"
+ALLOWED_DATABASE = "ss_gold"
 
 # functions that wait, read files, take locks or touch replication - never allowed
 BLOCKED_FUNCTIONS = {
@@ -62,7 +62,7 @@ def check_sql(sql, allowed_tables=None):
     """Return the cleaned SQL that may run, or raise GuardError.
 
     allowed_tables: the table names that may be read (lower case). When not given they are
-    read from ai_gold's information_schema (warehouse.allowed_tables()).
+    read from ss_gold's information_schema (warehouse.allowed_tables()).
     """
     text = strip_fences(sql)
     if not text:
@@ -134,7 +134,7 @@ def _check_node(node, allowed, cte_names):
 
 
 def _check_table(table, allowed, cte_names):
-    """Only ai_gold tables (or the query's own CTE names) may be read."""
+    """Only ss_gold tables (or the query's own CTE names) may be read."""
     name = (table.name or "").lower()
     database = (table.db or "").lower()
     if table.catalog:
@@ -142,7 +142,7 @@ def _check_table(table, allowed, cte_names):
     if database and database != ALLOWED_DATABASE:
         raise GuardError(f"Only the {ALLOWED_DATABASE} database may be read - not '{table.db}'.")
     if not name:
-        raise GuardError("Table functions (such as JSON_TABLE) are not allowed - read ai_gold tables.")
+        raise GuardError("Table functions (such as JSON_TABLE) are not allowed - read ss_gold tables.")
     if not database and name in cte_names:
         return  # a WITH name defined inside this query
     if name not in allowed:

@@ -1,7 +1,7 @@
-"""Read-only access to the NOP data: the MySQL database ai_gold.
+"""Read-only access to the SS Manufacturing data: the MySQL database ss_gold.
 
 The app connects ONLY as the read-only user from .env (AI_DB_USER / AI_DB_PASSWORD,
-SELECT on ai_gold only) - never as the admin user the loader uses.
+SELECT on ss_gold only) - never as the admin user the loader uses.
 Every query gets its own connection:
     SET SESSION TRANSACTION READ ONLY      -> MySQL itself refuses any change
     SET SESSION MAX_EXECUTION_TIME=30000   -> a SELECT is stopped after 30 seconds
@@ -9,8 +9,8 @@ then the query runs, at most 500 rows are kept, and the connection is closed.
 
 run_select(sql)   {columns, rows, truncated} of one SELECT (the SQL guard checks it first)
 run_select_params(sql, params)  the same for fixed SQL written in the code, with driver parameters (%s)
-schema()          {table: [columns]} of ai_gold, read once from information_schema
-allowed_tables()  the ai_gold table names (the SQL guard allows only these)
+schema()          {table: [columns]} of ss_gold, read once from information_schema
+allowed_tables()  the ss_gold table names (the SQL guard allows only these)
 schema_text()     the same as short text lines 'table: col1, col2, ...' for the AI prompt
 """
 import os
@@ -36,8 +36,8 @@ class QueryError(Exception):
 
 
 def database_name():
-    """The NOP data database (from .env, normally 'ai_gold')."""
-    return os.getenv("AI_GOLD_DATABASE", "").strip() or "ai_gold"
+    """The SS Manufacturing data database (from .env, normally 'ss_gold')."""
+    return os.getenv("AI_GOLD_DATABASE", "").strip() or "ss_gold"
 
 
 def connect():
@@ -103,7 +103,7 @@ def _read_only_query(sql, params, max_rows):
 
 @lru_cache(maxsize=1)
 def schema():
-    """{table: [column, ...]} of every ai_gold table, in column order.
+    """{table: [column, ...]} of every ss_gold table, in column order.
     Read once from information_schema, then kept for the life of the process."""
     conn = connect()
     try:
@@ -124,7 +124,7 @@ def schema():
 
 
 def allowed_tables():
-    """The ai_gold table names in lower case - the only tables the AI may read."""
+    """The ss_gold table names in lower case - the only tables the AI may read."""
     return {name.lower() for name in schema()}
 
 

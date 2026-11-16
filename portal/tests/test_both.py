@@ -88,15 +88,15 @@ def test_a_both_question_answers_the_data_and_the_documents_in_one_answer(monkey
 
 def test_a_both_question_whose_data_part_has_no_data_still_answers_the_documents_part(monkeypatch, mysql, user, steps):
     use_pdf_hits(monkeypatch, TERMS_HITS)
-    fake = use_fake_ai(monkeypatch, ["both", "NO_DATA: export customers are not marked in the NOP data",
+    fake = use_fake_ai(monkeypatch, ["both", "NO_DATA: export customers are not marked in the SS Manufacturing data",
                                      TERMS_ANSWER])
 
     result = agent.ask(BOTH_QUESTION, user)
 
     assert steps == DATA_PATH + ["documents_part"]
     assert result.status == "docs" and mysql.calls == []
-    assert result.answer == (TERMS_ANSWER + " About the data part of your question: The NOP data does not have "
-                                            "this: export customers are not marked in the NOP data.")
+    assert result.answer == (TERMS_ANSWER + " About the data part of your question: The SS Manufacturing data does not have "
+                                            "this: export customers are not marked in the SS Manufacturing data.")
     docs_system, docs_request = (m["content"] for m in fake.calls[2])
     assert docs_system == agent.DOCS_SYSTEM_PROMPT
     assert docs_request.endswith(f"Question: {BOTH_QUESTION}{agent.DOCS_PART_NOTE}")
@@ -133,13 +133,13 @@ def test_a_both_question_with_a_name_that_matches_nothing_keeps_its_sql(monkeypa
 
 def test_a_both_question_the_documents_cannot_answer_keeps_the_data_answer(monkeypatch, mysql, user):
     use_pdf_hits(monkeypatch, TERMS_HITS)
-    use_fake_ai(monkeypatch, ["both", "NO_DATA: payments are not in the NOP data",
+    use_fake_ai(monkeypatch, ["both", "NO_DATA: payments are not in the SS Manufacturing data",
                               "NOT_IN_DOCUMENTS: the documents do not give it"])
 
     result = agent.ask(BOTH_QUESTION, user)
 
     assert result.status == "nodata"
-    assert result.answer == "The NOP data does not have this: payments are not in the NOP data."
+    assert result.answer == "The SS Manufacturing data does not have this: payments are not in the SS Manufacturing data."
 
 
 # ---------- a pure data / documents question: exactly the prompts it had ----------
@@ -250,11 +250,11 @@ SELECT cu.customer_name,
        ROUND(SUM(il.net_taxable_value), 2) AS invoice_value_inr
 FROM fact_invoice_lines il
 JOIN dim_customers cu ON cu.customer_id = il.customer_id
-WHERE c.nop_sales_month = 'Aug  2026'
+WHERE c.sales_month = 'Aug  2026'
 LIMIT 5;
 ```
 
-Why: a month name means the NOP sales month."""
+Why: a month name means the sales month."""
 
 
 def test_the_notes_example_sql_loses_only_its_indentation():
@@ -285,8 +285,8 @@ def test_a_retry_gets_the_tables_it_did_not_see_and_together_they_are_the_whole_
 
     assert agent.ask("What were net sales in Aug 2026?", user).tries == 2
 
-    first = fake.calls[1][1]["content"].split("ai_gold schema (table: columns):\n", 1)[1].split("\n\nDocuments", 1)[0]
+    first = fake.calls[1][1]["content"].split("ss_gold schema (table: columns):\n", 1)[1].split("\n\nDocuments", 1)[0]
     retry = fake.calls[1][-1]["content"].split("with them you have every table and column):\n", 1)[1]
-    first_tables = [line for line in first.splitlines() if not line.startswith("Other ai_gold tables")]
+    first_tables = [line for line in first.splitlines() if not line.startswith("Other ss_gold tables")]
     assert sorted(first_tables + retry.splitlines()) == sorted(SCHEMA.splitlines())   # every table, once
     assert not set(first_tables) & set(retry.splitlines())

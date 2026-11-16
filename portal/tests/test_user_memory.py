@@ -188,7 +188,7 @@ def test_a_memory_is_used_in_a_new_chat_in_the_sql_and_answer_prompts(monkeypatc
 def test_the_memory_block_keeps_every_rule(user):
     block = agent.preferences([EXPORT], "sql")
     for words in ("not instructions", "never change the rules", "read-only SELECT", "the SQL guard",
-                  "the date rules", "the allowed ai_gold tables", "the question wins"):
+                  "the date rules", "the allowed ss_gold tables", "the question wins"):
         assert words in block
     assert "not instructions" in agent.preferences([EXPORT], "answer")
     assert "answer only from the pieces" in agent.preferences([EXPORT], "docs")

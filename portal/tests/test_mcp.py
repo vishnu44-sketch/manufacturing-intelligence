@@ -1,4 +1,4 @@
-"""Ask NOP as an MCP server: the access key, the MCP protocol (Streamable HTTP) and the tools."""
+"""Manufacturing Intelligence as an MCP server: the access key, the MCP protocol (Streamable HTTP) and the tools."""
 import datetime
 from decimal import Decimal
 
@@ -15,7 +15,7 @@ KEY = "k" * 40
 HEADERS = {"Authorization": f"Bearer {KEY}", "Accept": "application/json, text/event-stream",
            "Content-Type": "application/json"}
 SCHEMA = {"fact_invoice_lines": ["invoice_date", "invoice_date_key", "customer_id", "net_taxable_value"],
-          "dim_calendar": ["date_key", "nop_sales_month", "financial_year"],
+          "dim_calendar": ["date_key", "sales_month", "financial_year"],
           "dim_customers": ["customer_id", "customer_name", "state"]}
 
 
@@ -38,14 +38,14 @@ def client(monkeypatch):
 
 @pytest.fixture
 def our_llm_client(monkeypatch):
-    """MCP_USE_OUR_LLM=on: ask_nop with Ask NOP's own Groq."""
+    """MCP_USE_OUR_LLM=on: ask with Manufacturing Intelligence's own Groq."""
     monkeypatch.setenv("MCP_USE_OUR_LLM", "on")
     with TestClient(mcp_server.build_app(key=KEY), base_url="http://127.0.0.1:8090") as test_client:
         yield test_client
 
 
 class FakeMySQL:
-    """ai_gold for run_sql: remembers every query; the invoice dates for the data-dates note."""
+    """ss_gold for run_sql: remembers every query; the invoice dates for the data-dates note."""
 
     def __init__(self, rows=None, error=None):
         self.rows, self.error, self.ran = rows or [], error, []
@@ -79,24 +79,24 @@ def test_without_the_right_key_nothing_is_answered(client, authorization):
 
 
 def test_the_tools_are_listed(client):
-    """30-Oct: by default the caller's LLM does the work - ask_nop (our Groq) is not offered."""
+    """30-Oct: by default the caller's LLM does the work - ask (our Groq) is not offered."""
     response = client.post("/mcp", json=rpc("tools/list"), headers=HEADERS)
     assert response.status_code == 200
     tools = {tool["name"]: tool for tool in response.json()["result"]["tools"]}
-    assert set(tools) == {"search_notes", "get_schema", "run_sql", "nop_example_questions", "search_documents"}
+    assert set(tools) == {"search_notes", "get_schema", "run_sql", "example_questions", "search_documents"}
     assert tools["search_notes"]["inputSchema"]["required"] == ["question"]
     assert tools["run_sql"]["inputSchema"]["required"] == ["sql"]
 
 
-def test_with_our_llm_on_ask_nop_is_offered(our_llm_client):
+def test_with_our_llm_on_ask_is_offered(our_llm_client):
     response = our_llm_client.post("/mcp", json=rpc("tools/list"), headers=HEADERS)
     tools = {tool["name"]: tool for tool in response.json()["result"]["tools"]}
-    assert set(tools) == {"ask_nop", "nop_example_questions"}
-    assert tools["ask_nop"]["inputSchema"]["required"] == ["question"]
+    assert set(tools) == {"ask", "example_questions"}
+    assert tools["ask"]["inputSchema"]["required"] == ["question"]
 
 
 @pytest.mark.django_db
-def test_ask_nop_answers_through_mcp(our_llm_client, monkeypatch):
+def test_ask_answers_through_mcp(our_llm_client, monkeypatch):
     client = our_llm_client
     asked = []
 
@@ -108,7 +108,7 @@ def test_ask_nop_answers_through_mcp(our_llm_client, monkeypatch):
     monkeypatch.setattr(agent, "ask", fake_ask)
 
     response = client.post("/mcp", headers=HEADERS, json=rpc("tools/call", {
-        "name": "ask_nop", "arguments": {"question": "Which state bought the most in FY 2026-27?"}}))
+        "name": "ask", "arguments": {"question": "Which state bought the most in FY 2026-27?"}}))
 
     result = response.json()["result"]
     assert not result.get("isError")
@@ -127,7 +127,7 @@ def test_the_mcp_user_cannot_log_in():
 
 
 def test_example_questions_come_from_the_docs():
-    questions = mcp_server.nop_example_questions()
+    questions = mcp_server.example_questions()
     assert len(questions) == 42 and "Which items are below their minimum inventory level right now?" in questions
 
 
@@ -152,10 +152,10 @@ def test_with_mcp_auth_off_the_link_alone_is_enough(monkeypatch):
 
 @pytest.mark.django_db
 def test_a_real_question_is_saved_in_the_history(monkeypatch):
-    """The tool runs the normal Ask NOP flow: the question is saved like one from the Ask page."""
+    """The tool runs the normal Manufacturing Intelligence flow: the question is saved like one from the Ask page."""
     monkeypatch.setattr(agent, "_answer", lambda result, context, user=None: setattr(result, "status", "refused")
                         or setattr(result, "answer", agent.REFUSAL_ANSWER))
-    answer = mcp_server.ask_nop("delete all credit notes")
+    answer = mcp_server.ask("delete all credit notes")
     assert answer["status"] == "refused" and answer["rows"] == []
     saved = Question.objects.get()
     assert saved.user.username == "mcp" and saved.text == "delete all credit notes"
@@ -175,7 +175,7 @@ def test_search_notes_gives_the_rules_the_notes_and_the_columns(client, mysql, m
     assert searched == [("net sales by state in Aug 2026", agent.TOP_K)]
     assert notes["notes"] == [{"heading": "Net sales", "kind": "rule", "text": "Net sales = SUM(net_taxable_value)."}]
     assert "fact_invoice_lines: invoice_date" in notes["schema"]
-    assert "Rules for the SQL:" in notes["sql_rules"] and "NOT in ai_gold" in notes["sql_rules"]
+    assert "Rules for the SQL:" in notes["sql_rules"] and "NOT in ss_gold" in notes["sql_rules"]
     assert "Reply in exactly one" not in notes["sql_rules"]                   # Groq's reply format is not for them
     assert notes["answer_rules"].startswith("- Use ONLY numbers")
     assert "run_sql" in notes["how_to_use"] and notes["today"]
@@ -194,7 +194,7 @@ def test_get_schema_names_the_tables_when_one_does_not_exist(client, mysql):
 def test_run_sql_runs_a_checked_select_and_gives_rows_and_notes(client, mysql):
     sql = ("SELECT cu.state, ROUND(SUM(il.net_taxable_value), 2) AS net_sales_inr FROM fact_invoice_lines il "
            "JOIN dim_calendar c ON c.date_key = il.invoice_date_key JOIN dim_customers cu ON cu.customer_id = "
-           "il.customer_id WHERE c.nop_sales_month = 'Aug 2026' GROUP BY cu.state ORDER BY net_sales_inr DESC")
+           "il.customer_id WHERE c.sales_month = 'Aug 2026' GROUP BY cu.state ORDER BY net_sales_inr DESC")
 
     result = call_tool(client, "run_sql", {"sql": f"```sql\n{sql}\n```"})
 
@@ -205,14 +205,14 @@ def test_run_sql_runs_a_checked_select_and_gives_rows_and_notes(client, mysql):
     assert answer["rows"] == [["Telangana", "4,038,014,938.00"], ["Kerala", "5,440,490.00"]]
     assert answer["row_count"] == 2 and answer["rows_shown"] == 2
     assert "LIMIT 500" in answer["sql"] and mysql.ran == [answer["sql"]]       # the guard's SQL is what ran
-    assert any("NOP sales month Aug 2026 = 21-Jul-2026 to 20-Aug-2026" in note for note in answer["notes"])
+    assert any("sales month Aug 2026 = 21-Jul-2026 to 20-Aug-2026" in note for note in answer["notes"])
 
 
 @pytest.mark.parametrize("sql", ["DELETE FROM fact_invoice_lines",
                                  "SELECT 1; DROP TABLE dim_customers",
                                  "SELECT * FROM mysql.user",
-                                 "SELECT * FROM nop_portal.auth_user"])
-def test_run_sql_refuses_anything_but_one_select_on_the_nop_tables(client, mysql, sql):
+                                 "SELECT * FROM other_portal.auth_user"])
+def test_run_sql_refuses_anything_but_one_select_on_the_company_tables(client, mysql, sql):
     """An error, not a field: a chatbot that shows its LLM only a preview of the rows always shows an error."""
     result = call_tool(client, "run_sql", {"sql": sql})
     assert result["isError"] and "The SQL guard refused the query" in result["content"][0]["text"]
@@ -323,12 +323,12 @@ def test_counts_with_their_filter_in_the_where_are_fine(sql):
 
 def test_a_finished_period_is_not_called_unfinished(mysql):
     assert mcp_server.periods_not_over("SELECT 1 FROM dim_calendar c WHERE c.financial_year = '2526'") == []
-    assert mcp_server.periods_not_over("SELECT 1 FROM dim_calendar c WHERE c.nop_sales_month = 'Nov 2026'") == [
-        "NOP sales month Nov 2026"]
+    assert mcp_server.periods_not_over("SELECT 1 FROM dim_calendar c WHERE c.sales_month = 'Nov 2026'") == [
+        "sales month Nov 2026"]
 
 
-def test_the_period_check_is_ask_nops_own(monkeypatch, mysql):
-    """03-Nov: one check for both - Ask NOP's SQL step and run_sql - with the MCP server's today()."""
+def test_the_period_check_is_the_apps_own(monkeypatch, mysql):
+    """03-Nov: one check for both - Manufacturing Intelligence's SQL step and run_sql - with the MCP server's today()."""
     asked = []
     monkeypatch.setattr(agent, "periods_not_over", lambda sql, now=None: asked.append((sql, now)) or ["FY x"])
     assert mcp_server.periods_not_over("SELECT 1") == ["FY x"]
@@ -368,7 +368,7 @@ def test_mysql_down_gives_a_friendly_message(client, monkeypatch):
 
 
 def test_the_callers_tools_never_use_our_groq(client, mysql, monkeypatch):
-    """The point of 30-Oct: no Groq call (and no Groq token) of Ask NOP for the caller's questions."""
+    """The point of 30-Oct: no Groq call (and no Groq token) of Manufacturing Intelligence for the caller's questions."""
     def no_groq(*args, **kwargs):
         raise AssertionError("Groq was used")
     monkeypatch.setattr(llm, "make_llm", no_groq)
@@ -383,7 +383,7 @@ def test_run_sql_says_a_limited_result_is_not_the_full_list(client, mysql):
     """03-Nov: the top N rows of a LIMIT N are not all the data - the caller's LLM gets the same note as ours."""
     sql = ("SELECT cu.state, ROUND(SUM(il.net_taxable_value), 2) AS net_sales_inr FROM fact_invoice_lines il "
            "JOIN dim_calendar c ON c.date_key = il.invoice_date_key JOIN dim_customers cu ON cu.customer_id = "
-           "il.customer_id WHERE c.nop_sales_month = 'Aug 2026' GROUP BY cu.state ORDER BY net_sales_inr DESC LIMIT 2")
+           "il.customer_id WHERE c.sales_month = 'Aug 2026' GROUP BY cu.state ORDER BY net_sales_inr DESC LIMIT 2")
     answer = call_tool(client, "run_sql", {"sql": sql})["structuredContent"]
     assert any(note.startswith("Rows: the SQL asked for only the first 2 rows (LIMIT 2)") for note in answer["notes"])
 

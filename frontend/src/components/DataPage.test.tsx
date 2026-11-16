@@ -7,7 +7,7 @@ import type { DataTables } from '../types'
 import DataPage from './DataPage'
 
 const DATA: DataTables = {
-  database: 'ai_gold', mysql_error: '', table_count: 3, total: '206,000',
+  database: 'ss_gold', mysql_error: '', table_count: 3, total: '206,000',
   invoices_from: '21 Dec 2025', invoices_to: '20 Mar 2027', last_load: '06 Oct 2026 07:10 PM',
   tables: [
     { name: 'fact_invoice_lines', note: 'Invoice lines and credit / debit note lines (sales)', kind: 'Main data', rows: 100720, rows_text: '100,720' },
@@ -31,7 +31,7 @@ describe('DataPage', () => {
     expect(screen.getByText('LOAD HISTORY')).toBeInTheDocument()
     expect(screen.getByText('-')).toBeInTheDocument()                                // a table without a note
     expect(screen.getByText('Total')).toBeInTheDocument()
-    expect(screen.getByText(/MySQL ai_gold/)).toBeInTheDocument()
+    expect(screen.getByText(/MySQL ss_gold/)).toBeInTheDocument()
   })
 
   it('says clearly when MySQL cannot be read', async () => {
@@ -39,7 +39,7 @@ describe('DataPage', () => {
 
     renderAt('/data', <DataPage />)
 
-    expect(await screen.findByText('The NOP data (MySQL) cannot be read right now: Cannot connect: (2003) refused')).toHaveClass('errbox')
+    expect(await screen.findByText('The SS Manufacturing data (MySQL) cannot be read right now: Cannot connect: (2003) refused')).toHaveClass('errbox')
     expect(screen.queryByText(/records in/)).not.toBeInTheDocument()
   })
 

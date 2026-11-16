@@ -159,10 +159,10 @@ def test_sales_order_document_includes_the_financial_year():
 
 def test_note_document_is_the_note_number_not_the_invoice():
     _, document_of = lg.FACT_DOCUMENT["fact_invoice_lines"]
-    note = {"document_type": "CREDIT_NOTE", "invoice_number": "NOPI/D/2627/5", "note_number": "NOPI/CN/2627/4"}
-    invoice = {"document_type": "INVOICE", "invoice_number": "NOPI/D/2627/5", "note_number": None}
-    assert document_of(note) == ("CREDIT_NOTE", "NOPI/CN/2627/4")
-    assert document_of(invoice) == ("INVOICE", "NOPI/D/2627/5")
+    note = {"document_type": "CREDIT_NOTE", "invoice_number": "SSMI/D/2627/5", "note_number": "SSMI/CN/2627/4"}
+    invoice = {"document_type": "INVOICE", "invoice_number": "SSMI/D/2627/5", "note_number": None}
+    assert document_of(note) == ("CREDIT_NOTE", "SSMI/CN/2627/4")
+    assert document_of(invoice) == ("INVOICE", "SSMI/D/2627/5")
 
 
 def test_plan_dimension_reuses_ids_adds_new_ones_and_skips_a_key_sent_twice():

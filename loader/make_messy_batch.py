@@ -4,7 +4,7 @@ make_messy_batch.py - makes ONE messy INCREMENTAL batch of input files
 
 The batch has the same file names, sheet names, header rows and columns as the
 base files in <repo>/inputdata. Its new business dates are 21-Sep-2026 ..
-20-Mar-2027 (NOP sales months Oct 2026 .. Mar 2027), so every answer the base
+20-Mar-2027 (sales months Oct 2026 .. Mar 2027), so every answer the base
 data gives for earlier months stays the same. It also:
   - re-sends rows already loaded from inputdata: most unchanged (the loader
     must skip them), some changed (must be updated): open orders now closed or
@@ -16,7 +16,7 @@ data gives for earlier months stays the same. It also:
     codes not in any master, impossible / out-of-calendar dates and a few truly
     bad amounts ('abc') that must become NULL;
   - keeps the clean TRUTH of every row it writes and writes
-    EXPECTED_ANSWERS.txt (+ EXPECTED_ANSWERS.json for scripts): what ai_gold must
+    EXPECTED_ANSWERS.txt (+ EXPECTED_ANSWERS.json for scripts): what ss_gold must
     show after the base full load and then this batch.
 
 Run from the repo folder (same seed = same files, about 2 minutes):
@@ -40,7 +40,7 @@ BASE_DIR = REPO_DIR / "inputdata"
 
 START, END = date(2026, 9, 21), date(2027, 3, 20)   # new business dates of the batch
 CALENDAR_END = date(2027, 3, 31)                    # last day in dim_calendar
-NEW_CUSTOMERS = 4957        # + 43 in ai_gold = 5,000 customers
+NEW_CUSTOMERS = 4957        # + 43 in ss_gold = 5,000 customers
 NEW_ITEMS = 4850            # + 150 = 5,000 items (4,000 FG, 450 RM, 250 CO, 150 CA)
 NEW_ORDERS = 32_200         # about 100,000 sales order lines
 
@@ -52,7 +52,7 @@ INVOICE_FILE = "Sales Invoice Details.xlsx"
 NOTE_FILE = "GSTR1_Credit_Debit_Note.csv"
 BASE_STOCK_FILE = "Inventory Audit Report as on 200926.xlsx"
 
-# what ai_gold holds after the base full load (verified 06-Oct-2026)
+# what ss_gold holds after the base full load (verified 06-Oct-2026)
 BASE_GOLD_ROWS = {"dim_calendar": 1096, "dim_customers": 44, "dim_products": 151, "dim_fx_rates": 23,
                   "dim_sales_people": 7, "dim_tax_codes": 4, "dim_stock_movement_types": 8,
                   "fact_sales_order_lines": 1098, "fact_invoice_lines": 343, "fact_stock_ledger": 162,
@@ -123,8 +123,8 @@ PLACEHOLDER_FORMS = ["NA", "N/A", "#N/A", "NULL", "-", "--"]
 
 
 # ============================================================== small helpers
-def nop_month(day):
-    """NOP sales month of a date: 21st of the previous month .. 20th, named after the END month."""
+def sales_month(day):
+    """Sales month of a date: 21st of the previous month .. 20th, named after the END month."""
     if day.day <= 20:
         year, month = day.year, day.month
     elif day.month == 12:
@@ -449,7 +449,7 @@ class Batch:
                 row["E-MAIL"] = f"accounts@{raw['CUSTOMER NAME'].split()[0].lower()}-group.example.com"
             if change == "inactive":
                 row["ACTIVE"], row["INACTIVE"] = "NO", "YES"
-            # recoverable mess only: the row must clean back to what ai_gold holds
+            # recoverable mess only: the row must clean back to what ss_gold holds
             row["CUSTOMER CODE"] = mess.code(code, 0.3)
             row["CUSTOMER NAME"] = mess.spaces(row["CUSTOMER NAME"], 0.25)
             flag = "Y" if row["ACTIVE"] == "YES" else "N"
@@ -746,7 +746,7 @@ class Batch:
                 cust = self.customer_by_code[raw["Customer Code"]]
                 series = "S" if raw["Item No"] is None else ("D" if cust["country"] == "India" else "E")
             inv["series"] = series
-            inv["number"] = f"NOPI/{series}/2627/{next_no[series]}"
+            inv["number"] = f"SSMI/{series}/2627/{next_no[series]}"
             next_no[series] += 1
         self.invoices = invoices
         self.write_sales_orders(base_orders, resend_keys, close_keys, cancel_keys)
@@ -1083,7 +1083,7 @@ class Batch:
                     "Customer_Shipping_State_GSTCode": state[2] if state else "",
                     "Credit_Debit_Note_Value": f"{note_value / 100:.2f}", "Revision_Month": str(note_day.month),
                     "Duty_Status": "WPAY", "BP_Type": "Regular/TDS/ISD" if state else "Overseas",
-                    "Doc_Series": series, "Doc_Series_Prefix": "NOPI", "Doc_Series_Suffix": f"/{series}/",
+                    "Doc_Series": series, "Doc_Series_Prefix": "SSMI", "Doc_Series_Suffix": f"/{series}/",
                     "Issue_Reason": f"{reason} - {original['number']}", "Pre_GST": "N",
                     "GSTIN_As_per_Billing_Address": "N", "Customer_Bill_To_GSTIN": cust["gstin"] or "",
                     "Tax_Only": "N", "Stock_Impact": "Y" if reason.endswith("return") else "N",
@@ -1093,7 +1093,7 @@ class Batch:
                 rows.append([values[h] for h in header])
                 sign = 1 if debit else -1
                 self.note_truth.append({
-                    "number": f"NOPI/{series}/{number}", "date": note_day, "customer": original["customer"],
+                    "number": f"SSMI/{series}/{number}", "date": note_day, "customer": original["customer"],
                     "sale_type": original["sale_type"], "person": original["person"],
                     "taxable": sign * taxable, "printed_taxable": taxable, "debit": debit,
                     "unknown_customer": original["unknown_customer"],
@@ -1280,12 +1280,12 @@ class Batch:
         base = self.base
         inv_rows = Base.rows(base.inv_header, base.invoices)
         note_col = {h: i for i, h in enumerate(base.note_header)}
-        base_sales = defaultdict(int)        # NOP month -> paise (base invoices + notes)
+        base_sales = defaultdict(int)        # sales month -> paise (base invoices + notes)
         base_fy_invoiced = base_fy_notes = 0
         base_cal_sep = 0
         for raw in inv_rows:
             day, taxable = inv_date(raw["Invoice Date"]), round(raw["Taxable Value"] * 100)
-            base_sales[nop_month(day)] += taxable
+            base_sales[sales_month(day)] += taxable
             if day >= date(2026, 4, 1):
                 base_fy_invoiced += taxable
             if date(2026, 9, 1) <= day <= date(2026, 9, 30):
@@ -1294,7 +1294,7 @@ class Batch:
         for raw in base.notes:
             day = datetime.strptime(raw[note_col["CreditDebitNote_Date"]], "%d-%m-%Y").date()
             taxable = round(float(raw[note_col["Item_Taxable_Value"]]) * 100)
-            base_sales[nop_month(day)] -= taxable
+            base_sales[sales_month(day)] -= taxable
             if day >= date(2026, 4, 1):
                 base_fy_notes += taxable
                 base_fy_note_count += 1
@@ -1309,7 +1309,7 @@ class Batch:
         batch_invoiced = sum(t["taxable"] for t in self.invoice_truth)
         cal_sep_batch = 0
         for t in self.invoice_truth:
-            m = nop_month(t["date"])
+            m = sales_month(t["date"])
             net[m] += t["taxable"]
             split[m][t["sale_type"]] += t["taxable"]
             by_customer[m][t["customer"]] += t["taxable"]
@@ -1321,7 +1321,7 @@ class Batch:
         credit_total = debit_total = 0
         credit_notes, debit_notes = set(), set()
         for t in self.note_truth:
-            m = nop_month(t["date"])
+            m = sales_month(t["date"])
             net[m] += t["taxable"]
             split[m][t["sale_type"]] += t["taxable"]
             by_customer[m][t["customer"]] += t["taxable"]
@@ -1386,8 +1386,8 @@ class Batch:
         rows_after["load_log"] += len(counts)
 
         metrics = {
-            "nop_month_net_sales": {m: net[m] / 100 for m in months},
-            "nop_month_net_sales_base_unchanged": {"Aug 2026": base_sales["Aug 2026"] / 100,
+            "sales_month_net_sales": {m: net[m] / 100 for m in months},
+            "sales_month_net_sales_base_unchanged": {"Aug 2026": base_sales["Aug 2026"] / 100,
                                                    "Sep 2026": base_sales["Sep 2026"] / 100},
             "aug_2026_split": {"Domestic": 5889340.00, "Export": 1699975.00, "Service": 15000.00},
             "split_month": split_month,
@@ -1420,9 +1420,9 @@ class Batch:
         m = exp["metrics"]
         questions = [
             ("What were net sales in Dec 2026?",
-             f"NOP sales month Dec 2026 (21-Nov-2026 to 20-Dec-2026): INR {m['nop_month_net_sales']['Dec 2026']:,.2f}"),
-            ("What were net sales in each NOP sales month from Oct 2026 to Mar 2027?",
-             "; ".join(f"{k} {v:,.2f}" for k, v in m["nop_month_net_sales"].items())),
+             f"Sales month Dec 2026 (21-Nov-2026 to 20-Dec-2026): INR {m['sales_month_net_sales']['Dec 2026']:,.2f}"),
+            ("What were net sales in each sales month from Oct 2026 to Mar 2027?",
+             "; ".join(f"{k} {v:,.2f}" for k, v in m["sales_month_net_sales"].items())),
             (f"What were domestic, export and service sales in {m['split_month']}?",
              "; ".join(f"{k} {v:,.2f}" for k, v in m["split"].items())),
             (f"Who were the top 5 customers by invoice value in {m['top5_month']}?",
@@ -1454,7 +1454,7 @@ class Batch:
 
         lines = [f"EXPECTED ANSWERS - {self.out.name}",
                  "Computed by make_messy_batch.py from the clean truth it generated (not from the loader),",
-                 "for ai_gold after: (1) load_gold.py full load of inputdata/, then (2) load_gold.py --batch "
+                 "for ss_gold after: (1) load_gold.py full load of inputdata/, then (2) load_gold.py --batch "
                  f"{self.out.name}.", "",
                  "ROWS PER TABLE AFTER THE BATCH (incl. the -1 Unknown row in dimensions)"]
         lines += [f"- {t}: {n:,}" for t, n in exp["rows_after"].items()]
@@ -1463,17 +1463,17 @@ class Batch:
             lines.append(f"- {t}: source rows {c['source_rows']:,}; inserted {c['inserted']:,}; updated "
                          f"{c['updated']:,}; skipped {c['skipped']:,} (already loaded, same values "
                          f"{c['skipped_unchanged']:,} + exact duplicate lines {c['skipped_duplicates']:,})")
-        lines += ["", "NUMBERS (net sales = SUM(net_taxable_value), NOP months, credit notes negative)"]
-        lines += [f"- Net sales NOP {k}: {v:,.2f}" for k, v in m["nop_month_net_sales"].items()]
-        lines += [f"- UNCHANGED: net sales NOP {k}: {v:,.2f}" for k, v in m["nop_month_net_sales_base_unchanged"].items()]
-        lines += ["- UNCHANGED: NOP Aug 2026 Domestic 5,889,340.00 / Export 1,699,975.00 / Service 15,000.00",
-                  "- UNCHANGED: top 5 customers NOP Aug 2026: Aurora Fluid Power Limited 1,730,000.00; ...",
+        lines += ["", "NUMBERS (net sales = SUM(net_taxable_value), sales months, credit notes negative)"]
+        lines += [f"- Net sales in sales month {k}: {v:,.2f}" for k, v in m["sales_month_net_sales"].items()]
+        lines += [f"- UNCHANGED: net sales in sales month {k}: {v:,.2f}" for k, v in m["sales_month_net_sales_base_unchanged"].items()]
+        lines += ["- UNCHANGED: sales month Aug 2026 Domestic 5,889,340.00 / Export 1,699,975.00 / Service 15,000.00",
+                  "- UNCHANGED: top 5 customers in sales month Aug 2026: Aurora Fluid Power Limited 1,730,000.00; ...",
                   "- UNCHANGED: stock value as on 20-Sep-2026: 52 items, 542 units, 23,856,971.91",
                   f"- Calendar month Sep 2026 (1-30 Sep) net sales: {m['calendar_sep_2026_net_sales']:,.2f} "
                   "(was 1,623,375.00: batch invoices dated 21-30 Sep 2026 are added)",
-                  f"- Split NOP {m['split_month']}: " + "; ".join(f"{k} {v:,.2f}" for k, v in m["split"].items()),
-                  f"- Top 5 customers NOP {m['top5_month']}: " + "; ".join(f"{n} {v:,.2f}" for n, v in m["top5_customers"]),
-                  f"- Top sales person NOP {m['top_person_month']}: {m['top_person'][0]} {m['top_person'][1]:,.2f}",
+                  f"- Split in sales month {m['split_month']}: " + "; ".join(f"{k} {v:,.2f}" for k, v in m["split"].items()),
+                  f"- Top 5 customers in sales month {m['top5_month']}: " + "; ".join(f"{n} {v:,.2f}" for n, v in m["top5_customers"]),
+                  f"- Top sales person in sales month {m['top_person_month']}: {m['top_person'][0]} {m['top_person'][1]:,.2f}",
                   f"- Open orders after the batch: {m['open_orders'][0]:,} orders, {m['open_orders'][1]:,} lines, "
                   f"{m['open_orders'][2]:,.2f} before GST, {m['open_orders'][3]:,.2f} incl. GST",
                   f"- Stock as on 20-Mar-2027: {m['stock_20_mar_2027'][0]:,} items, qty {m['stock_20_mar_2027'][1]:,}, "
@@ -1487,7 +1487,7 @@ class Batch:
                   f"- Exchange rate Feb 2027: {m['fx_feb_2027']}",
                   f"- Customers {m['customers']:,}; products {m['products']:,}; products without a foreign code "
                   f"{m['products_without_foreign_code']:,}",
-                  f"- Invoices in NOP Nov 2026: {m['invoices_in_nov_2026']:,}; freight NOP Dec 2026: {m['freight_dec_2026']:,.2f}",
+                  f"- Invoices in sales month Nov 2026: {m['invoices_in_nov_2026']:,}; freight in sales month Dec 2026: {m['freight_dec_2026']:,.2f}",
                   "", "ROWS WITH A -1 (UNKNOWN) KEY ADDED BY THE BATCH (new rows only)"]
         lines += [f"- {k}: {v:,}" for k, v in exp["unknown_keys_added"].items()]
         lines += ["", "TRULY BAD AMOUNTS (must load as NULL; text like 'abc' is logged as 'bad number -> NULL', "

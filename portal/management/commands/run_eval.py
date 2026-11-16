@@ -234,7 +234,7 @@ class OneModel:
         lc_calls.chat = one_model_chat
         if self.memory_store:
             from ...lc import docs, vectorstore
-            path = Path(tempfile.mkdtemp(prefix="nop_eval_store_"))
+            path = Path(tempfile.mkdtemp(prefix="eval_store_"))
             vectorstore.rebuild(docs.load_docs(Path(settings.BASE_DIR) / "docs"), path=path)
             agent.search = lambda question, top_k=5: vectorstore.search(question, top_k=top_k, path=path)
 

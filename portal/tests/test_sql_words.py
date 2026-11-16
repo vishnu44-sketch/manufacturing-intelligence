@@ -35,13 +35,13 @@ def check_shape(sentences):
 
 
 BAR_CHART_SQL = """
-SELECT c.nop_sales_month, ROUND(SUM(il.net_taxable_value), 2) AS net_sales_inr
+SELECT c.sales_month, ROUND(SUM(il.net_taxable_value), 2) AS net_sales_inr
 FROM fact_invoice_lines il
 JOIN dim_calendar c ON c.date_id = il.invoice_date_id
-WHERE c.nop_sales_month IN ('Jun 2026', 'Jul 2026', 'Aug 2026', 'Sep 2026', 'Oct 2026')
+WHERE c.sales_month IN ('Jun 2026', 'Jul 2026', 'Aug 2026', 'Sep 2026', 'Oct 2026')
   AND il.invoice_date <= CURRENT_DATE
-GROUP BY c.nop_sales_month
-ORDER BY MIN(c.nop_sales_period_start)
+GROUP BY c.sales_month
+ORDER BY MIN(c.sales_period_start)
 LIMIT 5
 """
 
@@ -50,10 +50,10 @@ def test_bar_chart_sql_in_plain_words():
     assert describe_sql(BAR_CHART_SQL) == [
         "Took the invoice lines (sales, credit and debit notes).",
         "Matched each line to its date in the calendar.",
-        "Kept the NOP sales months Jun 2026, Jul 2026, Aug 2026, Sep 2026 and Oct 2026.",
+        "Kept the sales months Jun 2026, Jul 2026, Aug 2026, Sep 2026 and Oct 2026.",
         "Kept the lines dated up to today.",
-        "Added up the net value before GST (net sales) for each NOP sales month.",
-        "Showed the NOP sales months oldest first, at most 5.",
+        "Added up the net value before GST (net sales) for each sales month.",
+        "Showed the sales months oldest first, at most 5.",
     ]
 
 
@@ -79,25 +79,25 @@ def test_top_n_customers():
 
 def test_with_period_list_is_told_first():
     sql = """WITH periods AS (
-               SELECT DISTINCT c.nop_sales_month, c.nop_sales_period_start, c.nop_sales_period_end
+               SELECT DISTINCT c.sales_month, c.sales_period_start, c.sales_period_end
                FROM dim_calendar c
-               WHERE c.nop_sales_period_end <= CURRENT_DATE
-               ORDER BY c.nop_sales_period_end DESC
+               WHERE c.sales_period_end <= CURRENT_DATE
+               ORDER BY c.sales_period_end DESC
                LIMIT 6)
-             SELECT p.nop_sales_month, ROUND(COALESCE(SUM(il.net_taxable_value), 0), 2) AS sales_inr
+             SELECT p.sales_month, ROUND(COALESCE(SUM(il.net_taxable_value), 0), 2) AS sales_inr
              FROM periods p
              LEFT JOIN fact_invoice_lines il
-                    ON il.invoice_date BETWEEN p.nop_sales_period_start AND p.nop_sales_period_end
-             GROUP BY p.nop_sales_month, p.nop_sales_period_start
-             ORDER BY p.nop_sales_period_start"""
+                    ON il.invoice_date BETWEEN p.sales_period_start AND p.sales_period_end
+             GROUP BY p.sales_month, p.sales_period_start
+             ORDER BY p.sales_period_start"""
     out = describe_sql(sql)
     check_shape(out)
-    assert out[0] == ("First made a list of periods from the calendar: kept the days whose NOP sales month "
-                      "ended up to today; sorted by end of the NOP sales month, newest first, at most 6.")
+    assert out[0] == ("First made a list of periods from the calendar: kept the days whose sales month "
+                      "ended up to today; sorted by end of the sales month, newest first, at most 6.")
     assert out[1] == "Took the list of periods."
     assert out[2] == "Matched each row to its invoice lines (also keeping rows with none)."
-    assert "Added up the net value before GST (net sales) for each NOP sales month." in out
-    assert out[-1] == "Showed the NOP sales months oldest first."
+    assert "Added up the net value before GST (net sales) for each sales month." in out
+    assert out[-1] == "Showed the sales months oldest first."
 
 
 def test_stock_query():

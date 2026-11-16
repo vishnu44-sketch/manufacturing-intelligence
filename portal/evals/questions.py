@@ -27,11 +27,11 @@ fi AS (SELECT customer_id, MIN(invoice_date) AS f FROM fact_invoice_lines WHERE 
 SELECT COUNT(DISTINCT fi.customer_id), ROUND(SUM(il.net_taxable_value), 2)
 FROM fy JOIN fi ON fi.f BETWEEN fy.a AND fy.b
 JOIN fact_invoice_lines il ON il.customer_id = fi.customer_id AND il.invoice_date BETWEEN fy.a AND fy.b"""
-NOP_FEB_2027 = "SELECT MIN(full_date), MAX(full_date) FROM dim_calendar WHERE nop_sales_month = 'Feb 2027'"
+FEB_2027 = "SELECT MIN(full_date), MAX(full_date) FROM dim_calendar WHERE sales_month = 'Feb 2027'"
 LATEST_REPORT = "SELECT MAX(report_date) FROM fact_stock_ledger"
 CUSTOMER_FEB_2027 = """SELECT ROUND(SUM(il.net_taxable_value), 2) FROM fact_invoice_lines il
 JOIN dim_calendar c ON c.date_id = il.invoice_date_id JOIN dim_customers cu ON cu.customer_id = il.customer_id
-WHERE cu.customer_name LIKE '{name}' AND c.nop_sales_month = 'Feb 2027'"""
+WHERE cu.customer_name LIKE '{name}' AND c.sales_month = 'Feb 2027'"""
 FY = ("FROM fact_invoice_lines il JOIN dim_calendar c ON il.invoice_date_id = c.date_id "
       "{join} WHERE c.financial_year = '2627'")
 PROD = "JOIN dim_products p ON il.product_id = p.product_id"
@@ -40,7 +40,7 @@ LATEST_CLOSE = ("FROM fact_stock_ledger sl JOIN dim_stock_movement_types mt ON s
                 "JOIN dim_products p ON sl.product_id = p.product_id WHERE mt.movement_type = 'Closing balance' "
                 "AND sl.report_date = (SELECT MAX(report_date) FROM fact_stock_ledger)")
 MONTH = ("SELECT ROUND(SUM(il.net_taxable_value), 2) FROM fact_invoice_lines il JOIN dim_calendar c "
-         "ON il.invoice_date_id = c.date_id WHERE c.nop_sales_month = '{m}'")
+         "ON il.invoice_date_id = c.date_id WHERE c.sales_month = '{m}'")
 
 ITEMS = [
     {"id": "Q38", "question": "what is last year and current year revenue",
@@ -71,15 +71,15 @@ ITEMS = [
     {"id": "Q02", "question": "How much did Allied Castings buy in Feb 2027?",
      "must": """SELECT ROUND(SUM(il.net_taxable_value), 2) FROM fact_invoice_lines il
                 JOIN dim_calendar c ON c.date_id = il.invoice_date_id JOIN dim_customers cu ON cu.customer_id = il.customer_id
-                WHERE cu.customer_name LIKE '%Allied Castings%' AND c.nop_sales_month = 'Feb 2027' GROUP BY cu.customer_name""",
-     "should": NOP_FEB_2027},
+                WHERE cu.customer_name LIKE '%Allied Castings%' AND c.sales_month = 'Feb 2027' GROUP BY cu.customer_name""",
+     "should": FEB_2027},
     {"id": "Q17", "question": "What is our cost of goods sold now?",
      "must": """SELECT ROUND(SUM(-sl.transaction_value), 2) FROM fact_stock_ledger sl
                 JOIN dim_stock_movement_types t ON t.movement_type_id = sl.movement_type_id
                 WHERE t.movement_type = 'COGS' AND sl.report_date = (SELECT MAX(report_date) FROM fact_stock_ledger)""",
      "should": LATEST_REPORT},
     {"id": "Q03", "question": "How much did Eastern Machine Tools buy in Feb 2027?",
-     "must": CUSTOMER_FEB_2027.format(name="%Eastern Machine Tools%"), "should": NOP_FEB_2027},
+     "must": CUSTOMER_FEB_2027.format(name="%Eastern Machine Tools%"), "should": FEB_2027},
     {"id": "Q31", "question": "What was the purchase value in the latest stock report?",
      "must": """SELECT ROUND(SUM(sl.transaction_value), 2) FROM fact_stock_ledger sl
                 JOIN dim_stock_movement_types t ON t.movement_type_id = sl.movement_type_id
@@ -87,13 +87,13 @@ ITEMS = [
      "should": LATEST_REPORT},
     # 12-Oct: "last month" must come from TODAY (CURDATE), not from sorting the month names as text
     {"id": "Q45", "question": "what is the last month sales and which customer we got more revanu",
-     "must": """WITH lm AS (SELECT p.nop_sales_period_start s, p.nop_sales_period_end e FROM dim_calendar t
-                JOIN dim_calendar p ON p.full_date = t.nop_sales_period_start - INTERVAL 1 DAY WHERE t.full_date = CURDATE()),
+     "must": """WITH lm AS (SELECT p.sales_period_start s, p.sales_period_end e FROM dim_calendar t
+                JOIN dim_calendar p ON p.full_date = t.sales_period_start - INTERVAL 1 DAY WHERE t.full_date = CURDATE()),
                 cs AS (SELECT il.customer_id, SUM(il.net_taxable_value) v FROM fact_invoice_lines il
                 JOIN lm ON il.invoice_date BETWEEN lm.s AND lm.e GROUP BY il.customer_id)
                 SELECT (SELECT ROUND(SUM(v), 2) FROM cs), (SELECT ROUND(MAX(v), 2) FROM cs)""",
-     "should": """SELECT p.nop_sales_period_start, p.nop_sales_period_end FROM dim_calendar t
-                  JOIN dim_calendar p ON p.full_date = t.nop_sales_period_start - INTERVAL 1 DAY
+     "should": """SELECT p.sales_period_start, p.sales_period_end FROM dim_calendar t
+                  JOIN dim_calendar p ON p.full_date = t.sales_period_start - INTERVAL 1 DAY
                   WHERE t.full_date = CURDATE()"""},
     # 13-Oct: Vishnu's own questions that went wrong (quarter dates, lowest month, since, Not given, category)
     {"id": "Q46", "question": "Which state had the highest net sales in the first quarter of FY 2026-27?",
@@ -104,8 +104,8 @@ ITEMS = [
     {"id": "Q47", "question": "Show net sales month by month from Jan 2026 to Mar 2027, after credit notes and debit notes",
      "should": """SELECT ROUND(MIN(s), 2), ROUND(MAX(s), 2) FROM (SELECT SUM(il.net_taxable_value) s FROM fact_invoice_lines il
                   JOIN dim_calendar c ON c.date_id = il.invoice_date_id
-                  WHERE c.nop_sales_period_start >= '2025-12-21' AND c.nop_sales_period_end <= '2027-03-20'
-                  GROUP BY c.nop_sales_month) x""",
+                  WHERE c.sales_period_start >= '2025-12-21' AND c.sales_period_end <= '2027-03-20'
+                  GROUP BY c.sales_month) x""",
      "must_have": ["21-dec-2025"], "must_not": ["01-jan-2026", "jul 2026 (", "july 2026"]},
     {"id": "Q48", "question": "Which customers bought from us between Jan 2026 and Jun 2026 but have bought nothing since Oct 2026?",
      "must": """SELECT 975200.00, 68000.00""",
@@ -122,7 +122,7 @@ ITEMS = [
      "must": """SELECT COUNT(*) FROM dim_products p WHERE p.item_group = 'Finished goods' AND NOT EXISTS
                 (SELECT 1 FROM fact_invoice_lines il WHERE il.product_id = p.product_id
                  AND il.invoice_date BETWEEN '2026-12-21' AND '2027-03-20')""",
-     "must_have": ["21-dec-2026", "20-mar-2027"], "must_not": ["nop sales month mar 2027"]},
+     "must_have": ["21-dec-2026", "20-mar-2027"], "must_not": ["sales month mar 2027"]},
     {"id": "Q52", "question": "What was our total stock value on 20-Mar-2027, by warehouse?",
      "must": """SELECT ROUND(SUM(sl.cumulative_value), 2) FROM fact_stock_ledger sl JOIN dim_stock_movement_types t
                 ON t.movement_type_id = sl.movement_type_id WHERE t.movement_type = 'Closing balance' AND sl.report_date = '2027-03-20'""",
@@ -141,11 +141,11 @@ ITEMS = [
     # 14-Oct: a question of its own in a chat must not take the earlier questions' month (13-Oct: Japan -> "No data")
     {"id": "Q58", "question": "give me sep 2026 revanue",
      "must": """SELECT ROUND(SUM(il.net_taxable_value), 2) FROM fact_invoice_lines il
-                JOIN dim_calendar c ON c.date_id = il.invoice_date_id WHERE c.nop_sales_month = 'Sep 2026'"""},
+                JOIN dim_calendar c ON c.date_id = il.invoice_date_id WHERE c.sales_month = 'Sep 2026'"""},
     {"id": "Q59", "question": "give me product category wise total revenue in sep 2026", "context": ["Q58"],
      "must": """SELECT ROUND(SUM(il.net_taxable_value), 2) FROM fact_invoice_lines il
                 JOIN dim_calendar c ON c.date_id = il.invoice_date_id JOIN dim_products p ON p.product_id = il.product_id
-                WHERE c.nop_sales_month = 'Sep 2026' GROUP BY p.product_category ORDER BY 1 DESC LIMIT 1"""},
+                WHERE c.sales_month = 'Sep 2026' GROUP BY p.product_category ORDER BY 1 DESC LIMIT 1"""},
     {"id": "Q60", "question": "who is our top customer in japan", "context": ["Q58", "Q59"],
      "must": """SELECT cu.customer_name, ROUND(SUM(il.net_taxable_value), 2) FROM fact_invoice_lines il
                 JOIN dim_customers cu ON cu.customer_id = il.customer_id WHERE cu.country = 'Japan'
@@ -163,7 +163,7 @@ ITEMS = [
      "must_not": ["no data was found for this question"]},
     # 14-Oct: reviewer notes typed into the bot (quarter refused, credit-note list cut at 500, months out of order)
     {"id": "Q63", "question": "“Quarter” is ambiguous (Q3, Q6, Q14). Q1 of FY 2026-27 could mean 1-Apr to 30-Jun-2026 or the "
-                              "NOP months Apr–Jun (21-Mar to 20-Jun-2026). Check which one the app chose and whether it told "
+                              "sales months Apr–Jun (21-Mar to 20-Jun-2026). Check which one the app chose and whether it told "
                               "you. Both are reasonable, but choosing silently is a weakness.",
      "must_have": ["apr-2026", "30-jun-2026"]},
     {"id": "Q64", "question": "Credit and debit notes (Q4, Q5, Q9). Net sales should be invoices minus credit notes plus debit "
@@ -174,10 +174,10 @@ ITEMS = [
                 ROUND(SUM(CASE WHEN document_type = 'DEBIT_NOTE' THEN net_taxable_value ELSE 0 END), 2),
                 ROUND(SUM(net_taxable_value), 2) FROM fact_invoice_lines""",
      "must_not": ["lowest"]},
-    {"id": "Q65", "question": "Exchange rate (Q20). The rates are monthly, so check whether the app matched each NOP month to "
+    {"id": "Q65", "question": "Exchange rate (Q20). The rates are monthly, so check whether the app matched each sales month to "
                               "the correct rate month. Also confirm it converted net value and not net value plus GST.",
      "must_not": ["1.800000", "1.630000", "1.790000"]},
-    {"id": "Q66", "question": "Q1 of FY 2026-27 means which dates - calendar dates or NOP months?",
+    {"id": "Q66", "question": "Q1 of FY 2026-27 means which dates - calendar dates or sales months?",
      "must_have": ["apr-2026", "30-jun-2026"]},
     # 22-Oct: new kinds of questions, never asked before
     {"id": "N01", "question": "Which 5 products sold the most by quantity in FY 2026-27?",
@@ -225,8 +225,8 @@ ITEMS = [
     {"id": "N16", "question": "Which month had our highest sales ever, and which had the lowest?",
      "must": f"SELECT 'Jan 2027', ({MONTH.format(m='Jan 2027')}), 'Sep 2026', ({MONTH.format(m='Sep 2026')})"},
     {"id": "N17", "question": "last month sales evlo? yaar top customer?",
-     "must": """WITH lm AS (SELECT p.nop_sales_period_start a, p.nop_sales_period_end b FROM dim_calendar t
-                JOIN dim_calendar p ON p.full_date = t.nop_sales_period_start - INTERVAL 1 DAY WHERE t.full_date = CURDATE())
+     "must": """WITH lm AS (SELECT p.sales_period_start a, p.sales_period_end b FROM dim_calendar t
+                JOIN dim_calendar p ON p.full_date = t.sales_period_start - INTERVAL 1 DAY WHERE t.full_date = CURDATE())
                 SELECT ROUND(SUM(il.net_taxable_value), 2) FROM fact_invoice_lines il JOIN lm
                 ON il.invoice_date BETWEEN lm.a AND lm.b"""},
     {"id": "N18", "question": "How much freight did we charge customers in FY 2026-27?",
@@ -238,8 +238,8 @@ ITEMS = [
     {"id": "N20", "question": "What are our sales this month so far?",
      "must": """SELECT ROUND(SUM(il.net_taxable_value), 2) FROM fact_invoice_lines il
                 JOIN dim_calendar t ON t.full_date = CURDATE()
-                WHERE il.invoice_date BETWEEN t.nop_sales_period_start AND CURDATE()""",
-     "should": "SELECT nop_sales_period_start, CURDATE() FROM dim_calendar WHERE full_date = CURDATE()",
+                WHERE il.invoice_date BETWEEN t.sales_period_start AND CURDATE()""",
+     "should": "SELECT sales_period_start, CURDATE() FROM dim_calendar WHERE full_date = CURDATE()",
      "must_have": ["so far"]},
 ]
 

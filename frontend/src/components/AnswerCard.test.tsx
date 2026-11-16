@@ -21,7 +21,7 @@ const OK: Card = {
   answer: 'Aurora Fluid Power Limited had the highest invoice value.',
   understood_as: '', backup_model: '', token_notice: '',
   time_steps: [{ label: 'Write the SQL (AI)', secs: 1.234, note: '' }, { label: 'Run the SQL on MySQL', secs: 0.05, note: '' }],
-  sql: SQL, sources: [{ kind: 'example', heading: 'Q: Top customers' }, { kind: 'rule', heading: 'NOP sales month' }],
+  sql: SQL, sources: [{ kind: 'example', heading: 'Q: Top customers' }, { kind: 'rule', heading: 'sales month' }],
   secs: 1.5, tries: 1, row_count: 2, has_rows: true,
   rows_url: '/api/questions/7/rows', excel_url: '/api/questions/7/excel',
   created_at: '2026-11-03T10:15:00+05:30', created_text: '03 Nov 2026 10:15 AM', edited: false,
@@ -102,7 +102,7 @@ describe('AnswerCard', () => {
 
   it('draws monthly sales as a line chart', async () => {
     const MONTHS = {
-      headers: [{ name: 'nop_sales_month', num: false }, { name: 'net_sales_inr', num: true }],
+      headers: [{ name: 'sales_month', num: false }, { name: 'net_sales_inr', num: true }],
       rows: [['Jan 2026', '13,356,235.00'], ['Feb 2026', '9,032,845.00'], ['Mar 2026', '8,938,405.00']]
         .map(([month, value]) => [{ text: month, num: false }, { text: value, num: true }]),
       row_count: 3, truncated: false, rows_error: '',
@@ -157,7 +157,7 @@ describe('AnswerCard chart wish', () => {
 
   it('draws the kind the question asks for ("give me that bar chart")', async () => {
     const MONTHS = {
-      headers: [{ name: 'nop_sales_month', num: false }, { name: 'net_sales_inr', num: true }],
+      headers: [{ name: 'sales_month', num: false }, { name: 'net_sales_inr', num: true }],
       rows: [['Jan 2026', '13,356,235.00'], ['Feb 2026', '9,032,845.00'], ['Mar 2026', '8,938,405.00']]
         .map(([month, value]) => [{ text: month, num: false }, { text: value, num: true }]),
       row_count: 3, truncated: false, rows_error: '',

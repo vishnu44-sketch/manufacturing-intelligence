@@ -1,4 +1,4 @@
-"""Which ai_gold tables the SQL call shows (agent.schema_for_prompt) - fewer Groq tokens per question.
+"""Which ss_gold tables the SQL call shows (agent.schema_for_prompt) - fewer Groq tokens per question.
 
 No Groq, no MySQL: the schema text and the document pieces are made up here (the AI is test_agent's fake).
 The full check against every docs example and eval question is done offline with the real docs.
@@ -12,7 +12,7 @@ from portal.tests.test_agent import use_fake_ai
 pytestmark = pytest.mark.django_db  # agent.ask() saves a Question
 
 SCHEMA = "\n".join([
-    "dim_calendar: date_id, full_date, nop_sales_month, financial_year",
+    "dim_calendar: date_id, full_date, sales_month, financial_year",
     "dim_customers: customer_id, customer_name",
     "dim_fx_rates: fx_rate_id, rate_month, exchange_rate",
     "dim_products: product_id, product_code, product_category",
@@ -29,9 +29,9 @@ SMALL = set(agent.ALWAYS_SHOWN)
 
 
 def shown_tables(text):
-    """The tables whose columns are in the schema text (not the 'Other ai_gold tables' line)."""
+    """The tables whose columns are in the schema text (not the 'Other ss_gold tables' line)."""
     return {line.split(":")[0] for line in text.splitlines()
-            if ":" in line and not line.startswith("Other ai_gold tables")}
+            if ":" in line and not line.startswith("Other ss_gold tables")}
 
 
 @pytest.fixture
@@ -79,7 +79,7 @@ def test_schema_for_prompt_shows_some_tables_and_names_the_others(schema):
     assert full is False
     assert shown_tables(text) == SMALL | {"fact_invoice_lines", "dim_customers"}
     others = text.splitlines()[-1]
-    assert others.startswith("Other ai_gold tables")
+    assert others.startswith("Other ss_gold tables")
     for table in ("fact_sales_order_lines", "fact_stock_ledger", "dim_products", "load_log"):
         assert table in others
     assert len(text) < len(SCHEMA)
@@ -116,5 +116,5 @@ def test_the_retry_after_a_failed_try_shows_every_table(monkeypatch, schema, use
     first_request = fake.calls[0][1]["content"]
     assert "fact_stock_ledger: " not in first_request          # try 1: only some tables
     retry_message = fake.calls[1][-1]["content"]
-    assert "The rest of the ai_gold schema" in retry_message and "fact_stock_ledger: " in retry_message
+    assert "The rest of the ss_gold schema" in retry_message and "fact_stock_ledger: " in retry_message
     assert Question.objects.count() == 1

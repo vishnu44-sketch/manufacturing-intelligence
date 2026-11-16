@@ -21,13 +21,13 @@ from portal.tests.test_graph import (DATA_START, TREND_ANSWER, TREND_ROWS, TREND
 
 pytestmark = pytest.mark.django_db  # agent.ask() saves a Question
 
-ONE_MONTH_SQL = ("```sql\nSELECT c.nop_sales_month, ROUND(SUM(il.net_taxable_value), 2) AS net_sales_inr\n"
+ONE_MONTH_SQL = ("```sql\nSELECT c.sales_month, ROUND(SUM(il.net_taxable_value), 2) AS net_sales_inr\n"
                  "FROM fact_invoice_lines il\nJOIN dim_calendar c ON c.date_id = il.invoice_date_id\n"
-                 "WHERE c.nop_sales_month = 'Oct 2026'\nGROUP BY c.nop_sales_month\n```")
-ONE_ROW = {"columns": ["nop_sales_month", "net_sales_inr"], "rows": [["Oct 2026", Decimal("2367096647.50")]],
+                 "WHERE c.sales_month = 'Oct 2026'\nGROUP BY c.sales_month\n```")
+ONE_ROW = {"columns": ["sales_month", "net_sales_inr"], "rows": [["Oct 2026", Decimal("2367096647.50")]],
            "truncated": False}
-NO_ROWS = {"columns": ["nop_sales_month", "net_sales_inr"], "rows": [], "truncated": False}
-ONE_ROW_ANSWER = "In NOP sales month Oct 2026 net sales were INR 2,367,096,647.50."
+NO_ROWS = {"columns": ["sales_month", "net_sales_inr"], "rows": [], "truncated": False}
+ONE_ROW_ANSWER = "In sales month Oct 2026 net sales were INR 2,367,096,647.50."
 LINE_QUESTION = "Net sales of Oct 2026 as a line chart"
 SENT_BACK = "That did not work: " + graph.ONE_ROW_LINE_CHART_PROBLEM
 
@@ -78,7 +78,7 @@ def test_one_row_for_a_line_chart_is_sent_back_once_and_the_second_rows_are_used
 def test_the_chat_follow_up_of_05_nov_gets_the_rows_of_its_second_try(monkeypatch, mysql, user, steps):
     """The typed question has the chart words; the rewrite wrote it out with the period."""
     mysql.results = [ONE_ROW, TREND_ROWS]
-    understood = "Net sales of NOP month Oct 2026 as a line chart"
+    understood = "Net sales of sales month Oct 2026 as a line chart"
     fake = use_fake_ai(monkeypatch, [understood, ONE_MONTH_SQL, TREND_SQL, TREND_ANSWER])
 
     result = agent.ask("for that above answer create one line chart", user,
@@ -92,7 +92,7 @@ def test_the_chat_follow_up_of_05_nov_gets_the_rows_of_its_second_try(monkeypatc
 
 def test_a_trend_found_only_in_the_understood_question_is_sent_back_too(monkeypatch, mysql, user, steps):
     mysql.results = [ONE_ROW, TREND_ROWS]
-    fake = use_fake_ai(monkeypatch, ["Net sales trend of the last 6 NOP months up to Oct 2026",
+    fake = use_fake_ai(monkeypatch, ["Net sales trend of the last 6 sales months up to Oct 2026",
                                      ONE_MONTH_SQL, TREND_SQL, TREND_ANSWER])
 
     result = agent.ask("and how did that move?", user, context=ChatHistory.for_chat(sales_chat(user)))
@@ -104,7 +104,7 @@ def test_a_trend_found_only_in_the_understood_question_is_sent_back_too(monkeypa
 # ---------- the retry gives nothing better: the first answer is kept ----------
 
 def test_one_row_again_keeps_the_first_answer_and_never_loops(monkeypatch, mysql, user, steps):
-    other_row = {"columns": ["nop_sales_month", "net_sales_inr"], "rows": [["Oct 2026", Decimal("1.00")]],
+    other_row = {"columns": ["sales_month", "net_sales_inr"], "rows": [["Oct 2026", Decimal("1.00")]],
                  "truncated": False}
     mysql.results = [ONE_ROW, other_row]
     fake = use_fake_ai(monkeypatch, [(ONE_MONTH_SQL, 3000), (ONE_MONTH_SQL, 3100), (ONE_ROW_ANSWER, 700)])
@@ -127,7 +127,7 @@ def test_one_row_again_keeps_the_first_answer_and_never_loops(monkeypatch, mysql
     ("NO_DATA: not available", None, "write_sql"),
     ("", None, "write_sql"),                                                    # a reply without SQL
     ("```sql\nDELETE FROM fact_invoice_lines\n```", None, "check_sql"),        # the guard refuses it
-    (TREND_SQL, warehouse.QueryError("(1054) Unknown column 'c.nop_sales_period_no'"), "run_sql"),
+    (TREND_SQL, warehouse.QueryError("(1054) Unknown column 'c.sales_period_no'"), "run_sql"),
     (TREND_SQL, NO_ROWS, "run_sql"),                                            # no rows at all
 ])
 def test_a_retry_that_fails_keeps_the_first_answer(monkeypatch, mysql, user, steps, second_reply, second_run,

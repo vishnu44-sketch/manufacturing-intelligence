@@ -1,19 +1,19 @@
 """
-load_gold.py - Step 2 of "Ask NOP".
+load_gold.py - Step 2 of "Manufacturing Intelligence".
 
 Reads the 9 synthetic (fake) input files in <repo>/inputdata, CLEANS them and
-writes a small gold star schema into the MySQL database `ai_gold`:
+writes a small gold star schema into the MySQL database `ss_gold`:
 
   dimensions : dim_calendar, dim_customers, dim_products, dim_fx_rates,
                dim_sales_people, dim_tax_codes, dim_stock_movement_types
   facts      : fact_sales_order_lines, fact_invoice_lines, fact_stock_ledger
   run log    : load_log (one row per table: rows read, rows loaded, fixes)
 
-Every run DROPS and RECREATES these tables (only inside ai_gold), so running
+Every run DROPS and RECREATES these tables (only inside ss_gold), so running
 it twice gives the same result. Each dimension has an Unknown row with id -1:
 a fact row whose code or date is not found gets -1 and is never dropped.
 At the end it creates / updates the read-only MySQL user the AI uses
-(SELECT on ai_gold only) and prints a summary.
+(SELECT on ss_gold only) and prints a summary.
 
 Run from the repo folder:
     venv\\Scripts\\python.exe loader\\load_gold.py
@@ -23,12 +23,12 @@ any subset of the files; a missing file = no change for its tables):
     venv\\Scripts\\python.exe loader\\load_gold.py --batch inputdata_batches\\batch_001
 Nothing is dropped: every row gets a business key (customer code, item no.,
 rate month, ... ; fact lines: document + line number inside the document).
-A key already in ai_gold with the same values is skipped, with other values it
+A key already in ss_gold with the same values is skipped, with other values it
 is updated in place (same id), a new key is inserted. Exact duplicate lines
 inside the batch are skipped (counted). All counts are checked before anything
 is written; load_log keeps one row per table per run. Running the same batch
 twice changes nothing the second time. Running WITHOUT --batch rebuilds
-ai_gold from inputdata/ only (the base data).
+ss_gold from inputdata/ only (the base data).
 
 Settings come from .env (MYSQL_HOST, MYSQL_PORT, MYSQL_USER, MYSQL_PASSWORD,
 AI_GOLD_DATABASE, AI_DB_USER, AI_DB_PASSWORD). Passwords are never printed.
@@ -53,8 +53,8 @@ REPO_DIR = Path(__file__).resolve().parent.parent
 INPUT_DIR = REPO_DIR / "inputdata"
 load_dotenv(REPO_DIR / ".env")
 
-GOLD_DB = "ai_gold"                 # the ONLY database this script writes to
-READER_USER = "nop_ai_reader"       # the AI's read-only MySQL user
+GOLD_DB = "ss_gold"                 # the ONLY database this script writes to
+READER_USER = "ss_ai_reader"        # the AI's read-only MySQL user
 UNKNOWN = -1                        # id of the Unknown row in every dimension
 CALENDAR_START = date(2024, 4, 1)
 CALENDAR_END = date(2027, 3, 31)
@@ -84,7 +84,7 @@ KNOWN_COUNTRIES = {name.upper(): name for name in [
     "India", "Japan", "Saudi Arabia", "United Arab Emirates", "United Kingdom",
     "United States of America", "Thailand", "Sri Lanka", "Mexico", "China",
     "South Africa", "Germany", "Vietnam", "Singapore"]}
-# sales order status as NOP writes it
+# sales order status as SS Manufacturing writes it
 STATUS_SPELLING = {"OPEN": "Open", "CLOSED": "Closed", "CANCELED": "Canceled", "CANCELLED": "Canceled"}
 # exchange-rate month written in other ways -> 'Mon YYYY' ('%b-%y' = the file's own 'Jan-25')
 RATE_MONTH_FORMATS = ["%b-%y", "%b %Y", "%B %Y", "%b-%Y", "%B-%y", "%B-%Y", "%Y-%m", "%b %y", "%B %y"]
@@ -97,7 +97,7 @@ COUNTRY_ISO_ALIASES = {
     "uae": "ARE", "uk": "GBR", "vietnam": "VNM",
 }
 
-# stock document prefix -> movement type id (NOP's REAL map)
+# stock document prefix -> movement type id (SS Manufacturing's REAL map)
 MOVEMENT_TYPES = [
     # id, movement type,      row kind,   prefixes,         direction
     (UNKNOWN, "Unknown",              "MOVEMENT", "",               "?"),
@@ -287,7 +287,7 @@ def clean_payment_terms(value, fixes):
 
 def rate_month_label(month, fixes):
     """'Jan-25' / 'January 2025' / '2025-01' -> 'Jan 2025' (same text as
-    dim_calendar.nop_sales_month); unreadable -> kept as written."""
+    dim_calendar.sales_month); unreadable -> kept as written."""
     for fmt in RATE_MONTH_FORMATS:
         try:
             label = datetime.strptime(month, fmt).strftime("%b %Y")
@@ -428,7 +428,7 @@ class Table:
 CALENDAR = Table("dim_calendar", (
     "One row per day from 01-Apr-2024 to 31-Mar-2027, plus the Unknown row -1. "
     "Gives every date its calendar month, Indian financial year (Apr-Mar) and "
-    "NOP sales month (21st to 20th). Every *_date_id in the facts points here."), [
+    "sales month (21st to 20th). Every *_date_id in the facts points here."), [
     ("date_id", "INT NOT NULL", "Date key = yyyymmdd as a number (20260920 = 20-Sep-2026). -1 = unknown or not applicable date."),
     ("full_date", "DATE", "The calendar date. NULL only on the -1 row."),
     ("day_of_month", "TINYINT", "Day of the month, 1-31."),
@@ -441,20 +441,20 @@ CALENDAR = Table("dim_calendar", (
     ("month_year", "VARCHAR(8)", "Calendar month label, e.g. 'Sep 2026' (1st to last day of the month)."),
     ("calendar_quarter", "TINYINT", "Calendar quarter 1-4 (1 = Jan-Mar)."),
     ("calendar_year", "SMALLINT", "Calendar year, e.g. 2026."),
-    ("financial_year", "VARCHAR(4)", "Indian financial year (1-Apr to 31-Mar) as NOP writes it: '2627' = FY 2026-27 = 01-Apr-2026 to 31-Mar-2027."),
+    ("financial_year", "VARCHAR(4)", "Indian financial year (1-Apr to 31-Mar) as SS Manufacturing writes it: '2627' = FY 2026-27 = 01-Apr-2026 to 31-Mar-2027."),
     ("financial_year_label", "VARCHAR(10)", "Financial year label, e.g. 'FY 2026-27'."),
     ("fiscal_period", "TINYINT", "Month number inside the financial year: 1 = April ... 12 = March."),
     ("fiscal_quarter", "TINYINT", "Quarter inside the financial year: 1 = Apr-Jun, 2 = Jul-Sep, 3 = Oct-Dec, 4 = Jan-Mar."),
     ("is_month_end", "CHAR(1)", "'Y' on the last day of a calendar month, else 'N'."),
     ("is_weekend", "CHAR(1)", "'Y' on Saturday and Sunday, else 'N'."),
-    ("nop_sales_month", "VARCHAR(8)", "NOP sales month of this date, e.g. 'Oct 2026'. A NOP sales month runs from the 21st of the previous month to the 20th and is named after the month it ENDS in (21-Sep-2026 .. 20-Oct-2026 = 'Oct 2026')."),
-    ("nop_sales_month_name", "VARCHAR(10)", "Month name of the NOP sales month, e.g. 'October'."),
-    ("nop_sales_month_no", "TINYINT", "Calendar month number of the NOP sales month (10 for 'Oct 2026')."),
-    ("nop_sales_year", "VARCHAR(4)", "Financial year of the NOP sales month, same style as financial_year: '2627' = NOP sales months Apr 2026 .. Mar 2027 (21-Mar-2026 .. 20-Mar-2027)."),
-    ("nop_sales_period_no", "TINYINT", "Position of the NOP sales month in its NOP sales year: 1 = April ... 12 = March."),
-    ("nop_sales_period_start", "DATE", "First day of the NOP sales month (the 21st of the previous month)."),
-    ("nop_sales_period_end", "DATE", "Last day of the NOP sales month (the 20th)."),
-], indexes=["full_date", "nop_sales_month", "month_year", "financial_year"])
+    ("sales_month", "VARCHAR(8)", "Sales month of this date, e.g. 'Oct 2026'. A sales month runs from the 21st of the previous month to the 20th and is named after the month it ENDS in (21-Sep-2026 .. 20-Oct-2026 = 'Oct 2026')."),
+    ("sales_month_name", "VARCHAR(10)", "Month name of the sales month, e.g. 'October'."),
+    ("sales_month_no", "TINYINT", "Calendar month number of the sales month (10 for 'Oct 2026')."),
+    ("sales_year", "VARCHAR(4)", "Financial year of the sales month, same style as financial_year: '2627' = sales months Apr 2026 .. Mar 2027 (21-Mar-2026 .. 20-Mar-2027)."),
+    ("sales_period_no", "TINYINT", "Position of the sales month in its sales year: 1 = April ... 12 = March."),
+    ("sales_period_start", "DATE", "First day of the sales month (the 21st of the previous month)."),
+    ("sales_period_end", "DATE", "Last day of the sales month (the 20th)."),
+], indexes=["full_date", "sales_month", "month_year", "financial_year"])
 
 CUSTOMERS = Table("dim_customers", (
     "Customers (dimension). One row per SAP customer from the Customer Master "
@@ -486,19 +486,19 @@ CUSTOMERS = Table("dim_customers", (
 
 PRODUCTS = Table("dim_products", (
     "Products / items (dimension). One row per SAP item from the Item Master, "
-    "with the client's product classification (PTC_NOPI / PCT_NOPJ sheets) "
+    "with the client's product classification (PTC_SSMI / PCT_SSMJ sheets) "
     "joined on the foreign code, plus the Unknown row -1."), [
     ("product_id", "INT NOT NULL", "Product key. -1 = Unknown product (item code not found, or a line without item code such as a service charge)."),
     ("product_code", "VARCHAR(30) NOT NULL", "SAP item number, e.g. 'FG00001'. Prefix: FG = finished goods, RM = raw material, CO = consumables, CA = capital item. 'UNKNOWN' on the -1 row."),
     ("product_description", "VARCHAR(255)", "Item description from the SAP item master."),
     ("item_group", "VARCHAR(50)", "SAP item group: 'Finished goods', 'Raw material', 'Consumables' or 'Capital Item'."),
-    ("foreign_code", "VARCHAR(50)", "Client's (NOP Japan) product code for the item. 'India - No Foreign Code' when SAP has none."),
-    ("product_category", "VARCHAR(50)", "Client classification - category, e.g. 'Trochoid pumps'. From the PTC_NOPI / PCT_NOPJ row whose product code = foreign_code. NULL = not classified."),
+    ("foreign_code", "VARCHAR(50)", "Client's (SS Manufacturing Japan) product code for the item. 'India - No Foreign Code' when SAP has none."),
+    ("product_category", "VARCHAR(50)", "Client classification - category, e.g. 'Trochoid pumps'. From the PTC_SSMI / PCT_SSMJ row whose product code = foreign_code. NULL = not classified."),
     ("product_segment_code", "VARCHAR(20)", "Client classification - product segment code, e.g. 'L-01'."),
     ("product_segment_name", "VARCHAR(100)", "Client classification - product segment name, e.g. 'L-01 Trochoid'."),
     ("middle_class_code", "VARCHAR(20)", "Client classification - middle segment code, e.g. '194'."),
     ("middle_class_name", "VARCHAR(100)", "Client classification - middle segment name, e.g. 'Trochoid group'."),
-    ("sales_agency", "VARCHAR(10)", "Which client sheet classified the item: 'NOP-I' (sheet PTC_NOPI) or 'NOPJ' (sheet PCT_NOPJ). NULL = not classified."),
+    ("sales_agency", "VARCHAR(10)", "Which client sheet classified the item: 'SSM-I' (sheet PTC_SSMI) or 'SSMJ' (sheet PCT_SSMJ). NULL = not classified."),
     ("sap_segment", "VARCHAR(50)", "SAP item master 'Segment' (product family), e.g. 'Trochoid pumps'."),
     ("sap_product_segment", "VARCHAR(20)", "SAP item master 'Product Segment' code, e.g. 'L-06' (can differ from the client's product_segment_code)."),
     ("hsn_code", "VARCHAR(20)", "HSN code (Indian GST goods classification)."),
@@ -515,10 +515,10 @@ PRODUCTS = Table("dim_products", (
 
 FX_RATES = Table("dim_fx_rates", (
     "INR -> JPY exchange rates (dimension). One row per monthly rate window "
-    "(21st of the previous month to the 20th = one NOP sales month), plus the "
+    "(21st of the previous month to the 20th = one sales month), plus the "
     "Unknown row -1. JPY value = INR value x exchange_rate."), [
     ("fx_rate_id", "INT NOT NULL", "Exchange-rate window key. -1 = Unknown (date outside every window)."),
-    ("rate_month", "VARCHAR(8)", "Month the rate is for, written like dim_calendar.nop_sales_month, e.g. 'Oct 2026'."),
+    ("rate_month", "VARCHAR(8)", "Month the rate is for, written like dim_calendar.sales_month, e.g. 'Oct 2026'."),
     ("start_date", "DATE", "First day the rate applies (the 21st of the previous month)."),
     ("end_date", "DATE", "Last day the rate applies (the 20th)."),
     ("from_currency", "VARCHAR(3)", "Currency converted from: 'INR'."),
@@ -614,7 +614,7 @@ INVOICE_LINES = Table("fact_invoice_lines", (
     ("product_id", "INT NOT NULL", "-> dim_products.product_id (item code; for notes the original invoice line with the same description). -1 = no item (service line) or not found."),
     ("sales_person_id", "INT NOT NULL", "-> dim_sales_people.sales_person_id (notes: the original invoice's sales person). -1 = Unknown."),
     ("fx_rate_id", "INT NOT NULL", "-> dim_fx_rates.fx_rate_id: the INR->JPY window holding invoice_date. -1 = outside every window."),
-    ("invoice_number", "VARCHAR(30)", "Invoice number, e.g. 'NOPI/D/2526/169'. For notes: the ORIGINAL invoice the note corrects."),
+    ("invoice_number", "VARCHAR(30)", "Invoice number, e.g. 'SSMI/D/2526/169'. For notes: the ORIGINAL invoice the note corrects."),
     ("invoice_series", "VARCHAR(5)", "Document series: D = domestic, E = export, S = service, DU = duplicate (from the invoice number); CN = credit note, DN = debit note."),
     ("transaction_type", "VARCHAR(30)", "Transaction type from the invoice file, e.g. 'GST Tax Invoice'. NULL on note rows."),
     ("so_number", "INT", "Sales order number the line was invoiced from (notes: from the original invoice). Restarts every financial year - pair it with so_date."),
@@ -658,7 +658,7 @@ INVOICE_LINES = Table("fact_invoice_lines", (
     ("invoice_discount_pct", "DECIMAL(6,2)", "Invoice-level discount in percent."),
     ("src_sales_person", "VARCHAR(110)", "Sales employee as written in the invoice file, for tracing (NULL on note rows)."),
     ("remarks", "VARCHAR(500)", "Remarks on the invoice, e.g. 'Based On Sales Orders 182.'."),
-    ("note_number", "VARCHAR(30)", "Credit / debit note number, e.g. 'NOPI/CN/2526/1' (series prefix + suffix + note no.). NULL on invoice rows."),
+    ("note_number", "VARCHAR(30)", "Credit / debit note number, e.g. 'SSMI/CN/2526/1' (series prefix + suffix + note no.). NULL on invoice rows."),
     ("note_series", "VARCHAR(20)", "Note series, e.g. 'CN/2526' (CN + financial year). NULL on invoice rows."),
     ("note_date_id", "INT NOT NULL", "-> dim_calendar.date_id of note_date. -1 on invoice rows (not a note) or unknown."),
     ("note_date", "DATE", "Date the credit / debit note was issued. NULL on invoice rows."),
@@ -732,16 +732,16 @@ ALL_TABLES = [CALENDAR, CUSTOMERS, PRODUCTS, FX_RATES, SALES_PEOPLE, TAX_CODES,
 
 # ============================================================== dimensions
 def build_calendar():
-    """One row per day 01-Apr-2024 .. 31-Mar-2027 with financial year and NOP
+    """One row per day 01-Apr-2024 .. 31-Mar-2027 with financial year and
     sales month (21st of the previous month .. 20th, named after the END month)."""
     rows = [{"date_id": UNKNOWN, "day_name": "Unknown", "month_name": "Unknown",
              "month_short": "Unk", "month_year": "Unknown", "financial_year": "Unk",
-             "financial_year_label": "Unknown", "nop_sales_month": "Unknown",
-             "nop_sales_month_name": "Unknown", "nop_sales_year": "Unk"}]
+             "financial_year_label": "Unknown", "sales_month": "Unknown",
+             "sales_month_name": "Unknown", "sales_year": "Unk"}]
     day = CALENDAR_START
     while day <= CALENDAR_END:
         fy = fy_start_year(day)
-        # NOP sales month: day 1-20 belongs to this month, day 21+ to the next month
+        # Sales month: day 1-20 belongs to this month, day 21+ to the next month
         if day.day <= 20:
             end_year, end_month = day.year, day.month
         elif day.month == 12:
@@ -750,7 +750,7 @@ def build_calendar():
             end_year, end_month = day.year, day.month + 1
         period_end = date(end_year, end_month, 20)
         period_start = (period_end.replace(day=1) - timedelta(days=1)).replace(day=21)
-        nop_fy = end_year if end_month >= 4 else end_year - 1
+        sales_fy = end_year if end_month >= 4 else end_year - 1
         rows.append({
             "date_id": date_id(day), "full_date": day,
             "day_of_month": day.day, "day_name": day.strftime("%A"),
@@ -764,13 +764,13 @@ def build_calendar():
             "fiscal_quarter": ((day.month - 4) % 12) // 3 + 1,
             "is_month_end": "Y" if (day + timedelta(days=1)).day == 1 else "N",
             "is_weekend": "Y" if day.isoweekday() >= 6 else "N",
-            "nop_sales_month": period_end.strftime("%b %Y"),
-            "nop_sales_month_name": period_end.strftime("%B"),
-            "nop_sales_month_no": end_month,
-            "nop_sales_year": f"{nop_fy % 100:02d}{(nop_fy + 1) % 100:02d}",
-            "nop_sales_period_no": (end_month - 4) % 12 + 1,
-            "nop_sales_period_start": period_start,
-            "nop_sales_period_end": period_end,
+            "sales_month": period_end.strftime("%b %Y"),
+            "sales_month_name": period_end.strftime("%B"),
+            "sales_month_no": end_month,
+            "sales_year": f"{sales_fy % 100:02d}{(sales_fy + 1) % 100:02d}",
+            "sales_period_no": (end_month - 4) % 12 + 1,
+            "sales_period_start": period_start,
+            "sales_period_end": period_end,
         })
         day += timedelta(days=1)
     info = load_info("dim_calendar", "generated (no file)", len(rows) - 1, rows,
@@ -872,13 +872,13 @@ def build_customers(src, sheet_only=True):
 
 
 def build_products(src):
-    """Item Master rows + client classification (PTC_NOPI / PCT_NOPJ) by foreign code."""
+    """Item Master rows + client classification (PTC_SSMI / PCT_SSMJ) by foreign code."""
     fixes = Fixes()
     items = records(read_excel(src.path(ITEM_FILE), "Item Lists"), fixes)
 
     # client classification: product code -> classification columns
     classification = {}
-    for sheet in ["PTC_NOPI", "PCT_NOPJ"]:
+    for sheet in ["PTC_SSMI", "PCT_SSMJ"]:
         df = read_excel(src.reference_path(CLIENT_FILE), sheet, header_row=5)
         for r in records(df, fixes):
             v = list(r.values())    # agency, code, name, category, seg cd, seg, middle cd, middle
@@ -908,7 +908,7 @@ def build_products(src):
             if found is None and foreign.endswith("-I"):
                 found = classification.get(foreign[:-2])
             if found is None:
-                fixes.add("foreign code not in PTC_NOPI / PCT_NOPJ -> classification blank")
+                fixes.add("foreign code not in PTC_SSMI / PCT_SSMJ -> classification blank")
         else:
             foreign = NO_FOREIGN_CODE
             fixes.add(f"blank foreign code -> '{NO_FOREIGN_CODE}'")
@@ -936,7 +936,7 @@ def build_products(src):
     count_exact_duplicates(rows, {"product_id"}, fixes)
     codes = [r["product_code"] for r in rows]
     fixes.add("duplicate item number (first row used for matching)", len(codes) - len(set(codes)))
-    info = load_info("dim_products", f"{ITEM_FILE} + {CLIENT_FILE} (PTC_NOPI, PCT_NOPJ)",
+    info = load_info("dim_products", f"{ITEM_FILE} + {CLIENT_FILE} (PTC_SSMI, PCT_SSMJ)",
                      len(items), rows, fixes, has_unknown_row=True)
     return rows, info
 
@@ -1024,7 +1024,7 @@ def build_tax_codes(sales_orders_raw):
 
 
 def build_stock_movement_types():
-    """Fixed list (no source file) - NOP's real document-prefix map."""
+    """Fixed list (no source file) - SS Manufacturing's real document-prefix map."""
     rows = [{"movement_type_id": i, "movement_type": name, "row_kind": kind,
              "doc_prefixes": prefixes, "direction": direction}
             for i, name, kind, prefixes, direction in MOVEMENT_TYPES]
@@ -1152,7 +1152,7 @@ def build_invoice_lines(invoices, notes, sales_orders, lookups, fixes, earlier_i
     """Sales Invoice Details lines + credit/debit note lines in ONE fact.
     Credit notes: net_* are NEGATIVE and invoice_date = the note date.
     sales_orders: every sales order line known (for the customer of an invoice);
-    earlier_invoices: invoice lines already in ai_gold (a batch's notes may
+    earlier_invoices: invoice lines already in ss_gold (a batch's notes may
     correct them) - their rows are NOT returned."""
     # (SO number, financial year) -> customer codes, from the sales order lines
     so_customers = {}
@@ -1493,7 +1493,7 @@ def run_sql(conn, statement):
 
 
 def write_gold(table_rows, infos):
-    """Create ai_gold if needed, drop + recreate every table, insert all rows."""
+    """Create ss_gold if needed, drop + recreate every table, insert all rows."""
     if os.getenv("AI_GOLD_DATABASE", GOLD_DB) != GOLD_DB:
         raise SystemExit(f"AI_GOLD_DATABASE in .env must be '{GOLD_DB}' - this loader writes nowhere else.")
     server = mysql_engine()
@@ -1531,7 +1531,7 @@ def write_gold(table_rows, infos):
 
 
 def create_reader_user():
-    """Read-only MySQL user for the AI: SELECT on ai_gold only."""
+    """Read-only MySQL user for the AI: SELECT on ss_gold only."""
     user = os.getenv("AI_DB_USER", READER_USER)
     password = os.getenv("AI_DB_PASSWORD")
     if user != READER_USER:
@@ -1568,7 +1568,7 @@ DIMENSION_KEY = {
     "dim_sales_people": lambda r: person_key(r["name_with_title"]),
     "dim_tax_codes": lambda r: r["tax_code"],
 }
-FACT_DOCUMENT = {   # fact table -> (columns read from ai_gold, document of a row)
+FACT_DOCUMENT = {   # fact table -> (columns read from ss_gold, document of a row)
     "fact_sales_order_lines": (["so_number", "order_date"],
                                lambda r: (r["so_number"], fy_start_year(r["order_date"]) if r["order_date"] else None)),
     "fact_invoice_lines": (["document_type", "invoice_number", "note_number"],
@@ -1608,9 +1608,9 @@ def read_rows(conn, sql):
 
 
 def plan_dimension(table, batch_rows, gold_rows, keep_existing):
-    """Give each batch row its id: the id of the ai_gold row with the same
+    """Give each batch row its id: the id of the ss_gold row with the same
     business key, else the next free id. keep_existing: a key already in
-    ai_gold keeps its row as it is (sales people: a name written another way
+    ss_gold keeps its row as it is (sales people: a name written another way
     must not rename the person). A key twice in the batch: first row used."""
     pk, key_of = table.primary_key, DIMENSION_KEY[table.name]
     existing = {key_of(g): g for g in gold_rows if g[pk] != UNKNOWN}
@@ -1633,7 +1633,7 @@ def plan_dimension(table, batch_rows, gold_rows, keep_existing):
 
 def plan_fact(conn, table, rows):
     """Give each batch line its id: the same (document, line no.) already in
-    ai_gold -> that id (update or skip), else the next free id (insert)."""
+    ss_gold -> that id (update or skip), else the next free id (insert)."""
     pk = table.primary_key
     columns, document_of = FACT_DOCUMENT[table.name]
     gold = read_rows(conn, f"SELECT `{pk}`, {', '.join(f'`{c}`' for c in columns)} "
@@ -1651,7 +1651,7 @@ def plan_fact(conn, table, rows):
 
 
 def same_values(table):
-    """SQL condition: staged row s has exactly the values of ai_gold row t
+    """SQL condition: staged row s has exactly the values of ss_gold row t
     (text compared byte for byte, so case and spaces count; NULL = NULL)."""
     parts = []
     for name, sql_type, _ in table.columns:
@@ -1666,7 +1666,7 @@ def same_values(table):
 
 def stage(conn, table, rows, max_old_id):
     """Copy the planned rows into a TEMPORARY table and count what merging
-    them would do. Nothing in the ai_gold tables changes here."""
+    them would do. Nothing in the ss_gold tables changes here."""
     pk, staging = table.primary_key, f"stg_{table.name}"
     run_ddl(conn, f"DROP TEMPORARY TABLE IF EXISTS `{staging}`")
     run_ddl(conn, f"CREATE TEMPORARY TABLE `{staging}` LIKE `{table.name}`")
@@ -1683,7 +1683,7 @@ def stage(conn, table, rows, max_old_id):
 
 def apply_staged(conn, table, max_old_id):
     """Update the changed rows, insert the new ones, then check that every
-    staged row is now in ai_gold with the same values."""
+    staged row is now in ss_gold with the same values."""
     pk, staging = table.primary_key, f"stg_{table.name}"
     columns = table.column_names
     sets = ", ".join(f"t.`{c}` = s.`{c}`" for c in columns if c != pk)
@@ -1700,7 +1700,7 @@ def apply_staged(conn, table, max_old_id):
 
 
 def load_batch(batch_dir):
-    """Merge ONE batch folder into the existing ai_gold (see the module docstring)."""
+    """Merge ONE batch folder into the existing ss_gold (see the module docstring)."""
     started = time.time()
     src = Source(batch_dir, reference_folder=INPUT_DIR)
     batch_name = src.folder.name
@@ -1755,7 +1755,7 @@ def load_batch(batch_dir):
 
         # ---- plan: ids for every row (nothing written yet)
         plans = []          # (table, rows, max_old_id, info, duplicates)
-        merged = {}         # dimension -> ai_gold rows with the batch rows on top
+        merged = {}         # dimension -> ss_gold rows with the batch rows on top
         for name in ("dim_customers", "dim_products", "dim_fx_rates", "dim_sales_people", "dim_tax_codes"):
             table = TABLES[name]
             gold_rows = read_rows(conn, f"SELECT * FROM `{name}` ORDER BY `{table.primary_key}`")
@@ -1901,7 +1901,7 @@ def load_full():
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Build ai_gold from inputdata/ (full load), or merge one batch folder into it.")
+        description="Build ss_gold from inputdata/ (full load), or merge one batch folder into it.")
     parser.add_argument("--batch", metavar="FOLDER",
                         help="batch folder (same file names as inputdata/) to load INCREMENTALLY")
     args = parser.parse_args()

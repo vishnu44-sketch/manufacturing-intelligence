@@ -18,7 +18,7 @@ const MONTHS: [string, string][] = [
   ['Jan 2027', '345,120,000.00'], ['Feb 2027', '362,450,980.20'], ['Mar 2027', '3,503,352,034.65'],
 ]
 export const MONTHLY = table(
-  [['nop_sales_period_no', true], ['month', false], ['net_sales_inr', true], ['period_start', false],
+  [['sales_period_no', true], ['month', false], ['net_sales_inr', true], ['period_start', false],
     ['period_end', false], ['data_from', false], ['data_to', false]],
   MONTHS.map(([month, sales], i) => [
     String(i + 1), month, sales, '21-Dec-2025', '20-Jan-2026', '21-Dec-2025', '31-Mar-2027',

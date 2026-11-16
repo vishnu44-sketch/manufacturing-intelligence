@@ -1,5 +1,5 @@
 // Knowledge graph (every user): search a customer, product, category, sales person or state, and see who buys
-// what, from whom and where - drawn from the NOP data live and read-only (0 AI tokens). Picking a search hit draws
+// what, from whom and where - drawn from the SS Manufacturing data live and read-only (0 AI tokens). Picking a search hit draws
 // its neighbourhood; a click shows a node's details in the side panel (under the graph on a phone). A double-click
 // (or Open) goes into a node: the graph shows only that node in the middle with its own links, and the path above
 // the graph (Rekha › Northern Tech › ...) grows. A click on the node in the middle, or on a name in the path, goes
@@ -796,7 +796,7 @@ export default function GraphPage() {
             <div className="text-base font-semibold text-heading">Search for a starting point</div>
             <div className="mt-1.5 max-w-[720px] text-[13px] leading-relaxed text-muted-foreground">
               Type at least 2 letters of a customer, product, category, sales person or state above and pick one: its
-              links are drawn from the NOP data - who buys what, from whom and where, and which company PDFs cover a
+              links are drawn from the SS Manufacturing data - who buys what, from whom and where, and which company PDFs cover a
               product category. Double-click a dot to go into it, and click the dot in the middle to go back. The
               numbers are net sales (credit notes subtracted), never after today. This page only reads the data and
               never asks the AI.

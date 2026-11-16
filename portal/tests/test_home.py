@@ -1,6 +1,6 @@
 """The Home page API (/api/home - home.py): sign-in, GET only, the shape of the reply, the KPI numbers only up to
 today, a part that cannot be read (MySQL down) gives a partial reply and never a 500, no secret in the JSON, the
-user's own usage numbers, the kept values, Qdrant only on our own collections, the KPI trends (whole NOP months
+user's own usage numbers, the kept values, Qdrant only on our own collections, the KPI trends (whole sales months
 up to today) with their Ask-page questions, and the user's own recent questions.
 MySQL and Qdrant are faked here (no server is needed); there is no AI call anywhere.
 Run with:  python -m pytest -q portal/tests/test_home.py
@@ -39,10 +39,10 @@ class FakeMySQL:
         self.down = False
         self.data_from = datetime.date(2025, 12, 21)   # the first invoice date (as in the real data)
         self.stock = [[datetime.date(2026, 9, 20), Decimal("23856971.91"), 52]]
-        # the top customer and product of the last complete NOP month (2.7% and 1.5% of its 1,200,000.00)
+        # the top customer and product of the last complete sales month (2.7% and 1.5% of its 1,200,000.00)
         self.top = [["customer", 101, "Allied Castings Limited", Decimal("32400.00")],
                     ["product", 202, "Coolant pump HM-445-1B", Decimal("18000.00")]]
-        # the trend query: (NOP month, its last day, net sales, customers, products, FY running total), oldest first;
+        # the trend query: (sales month, its last day, net sales, customers, products, FY running total), oldest first;
         # Jul 2026 had no sale (the LEFT JOIN gives 0)
         self.trend = [
             ["May 2026", datetime.date(2026, 5, 20), Decimal("5806675.00"), 14, 27, Decimal("11233965.00")],
@@ -78,7 +78,7 @@ class FakeMySQL:
     def rows(self, sql):
         if "UNION ALL" in sql and "JOIN dim_customers cu" in sql:
             return self.top
-        if "ORDER BY nop_sales_period_end DESC" in sql:
+        if "ORDER BY sales_period_end DESC" in sql:
             return self.trend
         if "FROM dim_calendar t" in sql:
             return [[TODAY, "Nov 2026", datetime.date(2026, 10, 21), datetime.date(2026, 11, 20), "2627", "FY 2026-27",
@@ -197,9 +197,9 @@ def test_every_user_gets_the_whole_page(client, user, mysql, qdrant):
     assert tables["fact_stock_ledger"]["note"].startswith("2 stock reports")
     assert tables["dim_customers"]["from"] == "" and tables["dim_customers"]["after_today"] is False
     lines = {line["key"]: line for line in body["connections"]}
-    assert [lines[k]["name"] for k in ("ai_gold", "docs", "pdfs", "groq")] == [
-        "MySQL ai_gold", "Qdrant mi_docs", "Qdrant mi_pdfs", "Groq AI"]
-    assert all(lines[k]["ok"] for k in ("ai_gold", "app_db", "docs", "pdfs"))
+    assert [lines[k]["name"] for k in ("ss_gold", "docs", "pdfs", "groq")] == [
+        "MySQL ss_gold", "Qdrant mi_docs", "Qdrant mi_pdfs", "Groq AI"]
+    assert all(lines[k]["ok"] for k in ("ss_gold", "app_db", "docs", "pdfs"))
     assert (lines["docs"]["note"], lines["pdfs"]["note"]) == ("91 pieces", "16 pieces")
     assert lines["groq"]["what"].startswith(agent.model_name())
     assert body["model"] == agent.model_name()
@@ -256,7 +256,7 @@ def test_mysql_down_gives_a_partial_reply_not_a_500(client, user, mysql, qdrant)
     assert body["kpis"] == [] and body["calendar"] is None and body["kpi_error"] == home.MYSQL_DOWN
     assert body["tables"] == [] and body["tables_error"] == home.MYSQL_DOWN
     lines = {line["key"]: line for line in body["connections"]}
-    assert lines["ai_gold"]["ok"] is False and lines["ai_gold"]["note"] == "Not reachable right now"
+    assert lines["ss_gold"]["ok"] is False and lines["ss_gold"]["note"] == "Not reachable right now"
     assert lines["docs"]["ok"] and lines["app_db"]["ok"]   # the rest still works
     assert body["usage"]["questions_today"] == 0 and body["usage_error"] == ""
     assert body["today"]                                    # the welcome still has today's date
@@ -285,7 +285,7 @@ def test_qdrant_down_is_a_red_dot(client, user, mysql, qdrant):
     client.force_login(user)
     lines = {line["key"]: line for line in get_home(client)["connections"]}
     assert (lines["docs"]["ok"], lines["docs"]["note"]) == (False, "Not reachable right now")
-    assert lines["ai_gold"]["ok"] is True
+    assert lines["ss_gold"]["ok"] is True
 
 
 def test_a_collection_never_built(client, user, mysql, qdrant):
@@ -402,11 +402,11 @@ def test_the_kpi_trends(client, user, mysql, qdrant):
 def test_the_trend_query_counts_whole_months_up_to_today(client, user, mysql, qdrant):
     client.force_login(user)
     get_home(client)
-    sql, params = next((s, p) for s, p in mysql.calls if "ORDER BY nop_sales_period_end DESC" in s)
+    sql, params = next((s, p) for s, p in mysql.calls if "ORDER BY sales_period_end DESC" in s)
     # the months first (one row per month - dim_calendar has one row per day), then the invoices
-    assert "SELECT DISTINCT nop_sales_month, nop_sales_period_start, nop_sales_period_end" in sql
+    assert "SELECT DISTINCT sales_month, sales_period_start, sales_period_end" in sql
     assert "LIMIT 6" in sql and "LEFT JOIN fact_invoice_lines i" in sql
-    assert "nop_sales_period_end <= CURDATE()" in sql and "i.invoice_date <= CURDATE()" in sql
+    assert "sales_period_end <= CURDATE()" in sql and "i.invoice_date <= CURDATE()" in sql
     assert "net_taxable_value" in sql and "customer_id <> -1" in sql
     # the FY start, then the KPI's last complete month (20-Oct-2026), then the FY start again
     assert params == (datetime.date(2026, 4, 1), datetime.date(2026, 10, 20), datetime.date(2026, 4, 1))
@@ -440,14 +440,14 @@ def test_each_kpi_has_its_question_for_the_ask_page(client, user, mysql, qdrant)
     client.force_login(user)
     asks = {card["key"]: card["ask"] for card in get_home(client)["kpis"]}
     assert asks == {
-        "month_sales": "Net sales of the last 6 NOP months as a line chart",
-        "fy_sales": "Net sales by NOP month of FY 2026-27 so far as a line chart",
-        "customers": "Active customers in each of the last 6 NOP months",
-        "products": "Number of products sold in each of the last 6 NOP months",
+        "month_sales": "Net sales of the last 6 sales months as a line chart",
+        "fy_sales": "Net sales by sales month of FY 2026-27 so far as a line chart",
+        "customers": "Active customers in each of the last 6 sales months",
+        "products": "Number of products sold in each of the last 6 sales months",
         "open_orders": "List the open sales orders up to today",
         "stock": "Stock value by item group on the latest stock report",
-        "top_customer": "Top 10 customers of the last NOP month by net sales",
-        "top_product": "Top 10 products of the last NOP month by net sales",
+        "top_customer": "Top 10 customers of the last sales month by net sales",
+        "top_product": "Top 10 products of the last sales month by net sales",
     }
 
 
@@ -455,7 +455,7 @@ def test_the_trends_are_kept_with_the_numbers(client, user, mysql, qdrant):
     client.force_login(user)
     get_home(client)
     get_home(client)
-    assert sum("ORDER BY nop_sales_period_end DESC" in s for s, _ in mysql.calls) == 1
+    assert sum("ORDER BY sales_period_end DESC" in s for s, _ in mysql.calls) == 1
 
 
 # ------------------------------------------------------------------ the user's recent questions
@@ -546,11 +546,11 @@ def test_the_top_customer_and_product(client, user, mysql, qdrant):
     assert customer == {
         "key": "top_customer", "label": "Top customer Oct 2026", "name": "Allied Castings Limited", "money": True,
         "value": 32400.0, "text": "INR 32,400.00",
-        "note": "21-Sep-2026 to 20-Oct-2026 (last complete NOP sales month)", "change": None, "trend": None,
-        "ask": "Top 10 customers of the last NOP month by net sales", "facts": ["2.7% of Oct 2026 sales"]}
+        "note": "21-Sep-2026 to 20-Oct-2026 (last complete sales month)", "change": None, "trend": None,
+        "ask": "Top 10 customers of the last sales month by net sales", "facts": ["2.7% of Oct 2026 sales"]}
     assert (product["label"], product["name"], product["text"]) == (
         "Top product Oct 2026", "Coolant pump HM-445-1B", "INR 18,000.00")
-    assert product["ask"] == "Top 10 products of the last NOP month by net sales" and product["change"] is None
+    assert product["ask"] == "Top 10 products of the last sales month by net sales" and product["change"] is None
 
 
 def test_the_top_query_counts_the_last_month_up_to_today(client, user, mysql, qdrant):
@@ -561,7 +561,7 @@ def test_the_top_query_counts_the_last_month_up_to_today(client, user, mysql, qd
     assert len(tops) == 1                                       # one query for both, kept with the other numbers
     sql, params = tops[0]
     month = (datetime.date(2026, 9, 21), datetime.date(2026, 10, 20))
-    assert params == month + month                              # the last complete NOP month, for both parts
+    assert params == month + month                              # the last complete sales month, for both parts
     assert "il.invoice_date <= CURDATE()" in sql and "net_taxable_value" in sql
     assert "customer_id <> -1" in sql and "product_id <> -1" in sql   # never the Unknown row
     assert "dim_calendar" not in sql                            # dates on the invoice: no day-by-day join

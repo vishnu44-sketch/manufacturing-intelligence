@@ -1,9 +1,9 @@
-"""Settings for NOP Intelligence ("Ask NOP").
+"""Settings for Manufacturing Intelligence.
 
 Secrets come from the .env file next to manage.py (never from this file).
 Django's own tables (users, sessions, saved questions) live in the MySQL
 schema APP_DB_NAME (its own user), or in SQLite (db.sqlite3) when
-APP_DB_NAME is empty. The NOP data in MySQL (ai_gold) is NOT a Django database:
+APP_DB_NAME is empty. The SS Manufacturing data in MySQL (ss_gold) is NOT a Django database:
 it is read later by separate code with a read-only user.
 """
 import os
@@ -55,9 +55,9 @@ if _env_on("DJANGO_BEHIND_HTTPS_PROXY", False):
     SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 
 # own cookie names: a browser shares cookies between ports of the same host, so another Django site
-# on 127.0.0.1 (the main NOP project on :8080) overwrote 'csrftoken' / 'sessionid' -> 403 "CSRF token incorrect"
-SESSION_COOKIE_NAME = "asknop_sessionid"
-CSRF_COOKIE_NAME = "asknop_csrftoken"
+# on 127.0.0.1 (the company project on :8080) overwrote 'csrftoken' / 'sessionid' -> 403 "CSRF token incorrect"
+SESSION_COOKIE_NAME = "ask_sessionid"
+CSRF_COOKIE_NAME = "ask_csrftoken"
 
 
 INSTALLED_APPS = [
@@ -104,7 +104,7 @@ WSGI_APPLICATION = "nopsite.wsgi.application"
 # Django's own tables only (users, sessions, Question) - a local SQLite file
 APP_DB_NAME = os.getenv("APP_DB_NAME", "").strip()
 if APP_DB_NAME:
-    # Django's own tables in MySQL, in their own schema (never ai_gold): many saves at once are
+    # Django's own tables in MySQL, in their own schema (never ss_gold): many saves at once are
     # fine and nothing is lost when the container is made again. Driver: PyMySQL standing in for
     # mysqlclient (no C compiler needed in Docker); Django checks the mysqlclient version number.
     import sys

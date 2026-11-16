@@ -1,19 +1,19 @@
-# ai_gold data dictionary
+# ss_gold data dictionary
 
-Plain-English meaning of every table and column in the MySQL database `ai_gold` (read-only for the AI).
+Plain-English meaning of every table and column in the MySQL database `ss_gold` (read-only for the AI).
 Column meanings are the MySQL column COMMENTs (the source of truth). Amounts are INR unless a column says otherwise.
 
-## ai_gold overview - star schema (fact and dimension tables)
+## ss_gold overview - star schema (fact and dimension tables)
 
-`ai_gold` is a star schema built from the synthetic NOP files by loader/load_gold.py.
+`ss_gold` is a star schema built from the synthetic SS Manufacturing files by loader/load_gold.py.
 - Fact tables (the numbers): `fact_invoice_lines` (invoice and credit note lines - sales), `fact_sales_order_lines` (sales order lines - orders booked), `fact_stock_ledger` (stock balances and movements, one snapshot per Inventory Audit Report date).
-- Dimension tables (the descriptions): `dim_calendar` (one row per day, financial year and NOP sales month), `dim_customers`, `dim_products`, `dim_fx_rates` (INR to JPY rate windows), `dim_sales_people`, `dim_tax_codes` (GST codes on sales orders), `dim_stock_movement_types` (kinds of stock ledger row).
+- Dimension tables (the descriptions): `dim_calendar` (one row per day, financial year and sales month), `dim_customers`, `dim_products`, `dim_fx_rates` (INR to JPY rate windows), `dim_sales_people`, `dim_tax_codes` (GST codes on sales orders), `dim_stock_movement_types` (kinds of stock ledger row).
 - `load_log`: load history, one row per table per load run (full load, then incremental batches): rows read / inserted / updated / skipped, Unknown keys, cleaning fixes.
 - Every fact key column is NOT NULL and has a real FOREIGN KEY to its dimension, so a plain JOIN never loses rows (Unknown keys point to the -1 row).
 - Questions about sales / revenue / invoice value use `fact_invoice_lines`; about orders, order intake or open orders use `fact_sales_order_lines`; about stock or inventory value use `fact_stock_ledger`.
 - The data grows with every load (full load, then incremental batches), so never assume a last date: check it with MIN / MAX on the date columns (business rule 'Data coverage'). Fixed starts: invoices 21-Dec-2025; sales orders 02-Apr-2024; calendar 01-Apr-2024 to 31-Mar-2027.
 
-## How the ai_gold tables join (all foreign keys)
+## How the ss_gold tables join (all foreign keys)
 
 Every relationship is a real FOREIGN KEY (17 in total). Join on exactly these columns:
 - fact_invoice_lines.customer_id = dim_customers.customer_id
@@ -52,14 +52,14 @@ All *_date_id columns hold yyyymmdd as a number (20260920 = 20-Sep-2026) and joi
 - fact_stock_ledger.report_date_id = dim_calendar.date_id (stock report snapshot date)
 - fact_stock_ledger.posting_date_id = dim_calendar.date_id (movement posting date; -1 on balance rows)
 Each fact also keeps the plain DATE column (invoice_date, order_date, delivery_date, report_date, posting_date) for simple date filters like `invoice_date BETWEEN '2026-08-01' AND '2026-08-31'`.
-Join the calendar to filter or group by calendar month (month_year), financial year (financial_year) or NOP sales month (nop_sales_month).
+Join the calendar to filter or group by calendar month (month_year), financial year (financial_year) or sales month (sales_month).
 
 ## dim_calendar - date key, calendar month and financial year columns
 
 Table `dim_calendar` (dimension, incl. the -1 Unknown row). Primary key: `date_id`.
-What one row is: One row per day from 01-Apr-2024 to 31-Mar-2027, plus the Unknown row -1. Gives every date its calendar month, Indian financial year (Apr-Mar) and NOP sales month (21st to 20th). Every *_date_id in the facts points here.
-Every *_date_id column of the fact tables joins here: join <fact>.<x>_date_id = dim_calendar.date_id, then filter or group on the calendar columns (month_year, financial_year, nop_sales_month ...).
-Calendar month ('Sep 2026' = 1st to last day) is month_year; the NOP sales month is a different column (see 'dim_calendar - NOP sales month columns').
+What one row is: One row per day from 01-Apr-2024 to 31-Mar-2027, plus the Unknown row -1. Gives every date its calendar month, Indian financial year (Apr-Mar) and sales month (21st to 20th). Every *_date_id in the facts points here.
+Every *_date_id column of the fact tables joins here: join <fact>.<x>_date_id = dim_calendar.date_id, then filter or group on the calendar columns (month_year, financial_year, sales_month ...).
+Calendar month ('Sep 2026' = 1st to last day) is month_year; the sales month is a different column (see 'dim_calendar - sales month columns').
 Joined from: fact_invoice_lines.invoice_date_id = dim_calendar.date_id; fact_invoice_lines.note_date_id = dim_calendar.date_id; fact_sales_order_lines.delivery_date_id = dim_calendar.date_id; fact_sales_order_lines.order_date_id = dim_calendar.date_id; fact_stock_ledger.posting_date_id = dim_calendar.date_id; fact_stock_ledger.report_date_id = dim_calendar.date_id.
 
 Columns:
@@ -75,26 +75,26 @@ Columns:
 - `month_year` VARCHAR(8): Calendar month label, e.g. 'Sep 2026' (1st to last day of the month).
 - `calendar_quarter` TINYINT: Calendar quarter 1-4 (1 = Jan-Mar).
 - `calendar_year` SMALLINT: Calendar year, e.g. 2026.
-- `financial_year` VARCHAR(4): Indian financial year (1-Apr to 31-Mar) as NOP writes it: '2627' = FY 2026-27 = 01-Apr-2026 to 31-Mar-2027.
+- `financial_year` VARCHAR(4): Indian financial year (1-Apr to 31-Mar) as SS Manufacturing writes it: '2627' = FY 2026-27 = 01-Apr-2026 to 31-Mar-2027.
 - `financial_year_label` VARCHAR(10): Financial year label, e.g. 'FY 2026-27'.
 - `fiscal_period` TINYINT: Month number inside the financial year: 1 = April ... 12 = March.
 - `fiscal_quarter` TINYINT: Quarter inside the financial year: 1 = Apr-Jun, 2 = Jul-Sep, 3 = Oct-Dec, 4 = Jan-Mar.
 - `is_month_end` CHAR(1): 'Y' on the last day of a calendar month, else 'N'.
 - `is_weekend` CHAR(1): 'Y' on Saturday and Sunday, else 'N'.
 
-## dim_calendar - NOP sales month columns (21st to 20th)
+## dim_calendar - sales month columns (21st to 20th)
 
 Table `dim_calendar` (dimension): one row per day (01-Apr-2024 to 31-Mar-2027) plus the Unknown row -1. Primary key: `date_id`.
-NOP sales month = 21st of the previous month to the 20th, named after the month it ENDS in: 'Oct 2026' = 21-Sep-2026 to 20-Oct-2026. Filter with dim_calendar.nop_sales_month = 'Oct 2026' after join <fact>.<x>_date_id = dim_calendar.date_id.
+sales month = 21st of the previous month to the 20th, named after the month it ENDS in: 'Oct 2026' = 21-Sep-2026 to 20-Oct-2026. Filter with dim_calendar.sales_month = 'Oct 2026' after join <fact>.<x>_date_id = dim_calendar.date_id.
 
 Columns:
-- `nop_sales_month` VARCHAR(8): NOP sales month of this date, e.g. 'Oct 2026'. A NOP sales month runs from the 21st of the previous month to the 20th and is named after the month it ENDS in (21-Sep-2026 .. 20-Oct-2026 = 'Oct 2026').
-- `nop_sales_month_name` VARCHAR(10): Month name of the NOP sales month, e.g. 'October'.
-- `nop_sales_month_no` TINYINT: Calendar month number of the NOP sales month (10 for 'Oct 2026').
-- `nop_sales_year` VARCHAR(4): Financial year of the NOP sales month, same style as financial_year: '2627' = NOP sales months Apr 2026 .. Mar 2027 (21-Mar-2026 .. 20-Mar-2027).
-- `nop_sales_period_no` TINYINT: Position of the NOP sales month in its NOP sales year: 1 = April ... 12 = March.
-- `nop_sales_period_start` DATE: First day of the NOP sales month (the 21st of the previous month).
-- `nop_sales_period_end` DATE: Last day of the NOP sales month (the 20th).
+- `sales_month` VARCHAR(8): sales month of this date, e.g. 'Oct 2026'. A sales month runs from the 21st of the previous month to the 20th and is named after the month it ENDS in (21-Sep-2026 .. 20-Oct-2026 = 'Oct 2026').
+- `sales_month_name` VARCHAR(10): Month name of the sales month, e.g. 'October'.
+- `sales_month_no` TINYINT: Calendar month number of the sales month (10 for 'Oct 2026').
+- `sales_year` VARCHAR(4): Financial year of the sales month, same style as financial_year: '2627' = sales months Apr 2026 .. Mar 2027 (21-Mar-2026 .. 20-Mar-2027).
+- `sales_period_no` TINYINT: Position of the sales month in its sales year: 1 = April ... 12 = March.
+- `sales_period_start` DATE: First day of the sales month (the 21st of the previous month).
+- `sales_period_end` DATE: Last day of the sales month (the 20th).
 
 ## dim_customers - keys, names, customer group and country
 
@@ -137,8 +137,8 @@ Columns:
 ## dim_products - keys, codes and product classification
 
 Table `dim_products` (dimension, incl. the -1 Unknown row). Primary key: `product_id`.
-What one row is: Products / items (dimension). One row per SAP item from the Item Master, with the client's product classification (PTC_NOPI / PCT_NOPJ sheets) joined on the foreign code, plus the Unknown row -1.
-product_category / product_segment_* / middle_class_* are the CLIENT (NOP Japan) classification; sap_segment is SAP's own product family. NULL product_category = not classified (show it as 'Not classified', never drop it).
+What one row is: Products / items (dimension). One row per SAP item from the Item Master, with the client's product classification (PTC_SSMI / PCT_SSMJ sheets) joined on the foreign code, plus the Unknown row -1.
+product_category / product_segment_* / middle_class_* are the CLIENT (SS Manufacturing Japan) classification; sap_segment is SAP's own product family. NULL product_category = not classified (show it as 'Not classified', never drop it).
 Joined from: fact_invoice_lines.product_id = dim_products.product_id; fact_sales_order_lines.product_id = dim_products.product_id; fact_stock_ledger.product_id = dim_products.product_id.
 
 Columns:
@@ -146,13 +146,13 @@ Columns:
 - `product_code` VARCHAR(30): SAP item number, e.g. 'FG00001'. Prefix: FG = finished goods, RM = raw material, CO = consumables, CA = capital item. 'UNKNOWN' on the -1 row.
 - `product_description` VARCHAR(255): Item description from the SAP item master.
 - `item_group` VARCHAR(50): SAP item group: 'Finished goods', 'Raw material', 'Consumables' or 'Capital Item'.
-- `foreign_code` VARCHAR(50): Client's (NOP Japan) product code for the item. 'India - No Foreign Code' when SAP has none.
-- `product_category` VARCHAR(50): Client classification - category, e.g. 'Trochoid pumps'. From the PTC_NOPI / PCT_NOPJ row whose product code = foreign_code. NULL = not classified.
+- `foreign_code` VARCHAR(50): Client's (SS Manufacturing Japan) product code for the item. 'India - No Foreign Code' when SAP has none.
+- `product_category` VARCHAR(50): Client classification - category, e.g. 'Trochoid pumps'. From the PTC_SSMI / PCT_SSMJ row whose product code = foreign_code. NULL = not classified.
 - `product_segment_code` VARCHAR(20): Client classification - product segment code, e.g. 'L-01'.
 - `product_segment_name` VARCHAR(100): Client classification - product segment name, e.g. 'L-01 Trochoid'.
 - `middle_class_code` VARCHAR(20): Client classification - middle segment code, e.g. '194'.
 - `middle_class_name` VARCHAR(100): Client classification - middle segment name, e.g. 'Trochoid group'.
-- `sales_agency` VARCHAR(10): Which client sheet classified the item: 'NOP-I' (sheet PTC_NOPI) or 'NOPJ' (sheet PCT_NOPJ). NULL = not classified.
+- `sales_agency` VARCHAR(10): Which client sheet classified the item: 'SSM-I' (sheet PTC_SSMI) or 'SSMJ' (sheet PCT_SSMJ). NULL = not classified.
 - `sap_segment` VARCHAR(50): SAP item master 'Segment' (product family), e.g. 'Trochoid pumps'.
 - `sap_product_segment` VARCHAR(20): SAP item master 'Product Segment' code, e.g. 'L-06' (can differ from the client's product_segment_code).
 - `hsn_code` VARCHAR(20): HSN code (Indian GST goods classification).
@@ -176,13 +176,13 @@ Columns:
 ## dim_fx_rates - INR to JPY exchange rate windows
 
 Table `dim_fx_rates` (dimension, incl. the -1 Unknown row). Primary key: `fx_rate_id`.
-What one row is: INR -> JPY exchange rates (dimension). One row per monthly rate window (21st of the previous month to the 20th = one NOP sales month), plus the Unknown row -1. JPY value = INR value x exchange_rate.
+What one row is: INR -> JPY exchange rates (dimension). One row per monthly rate window (21st of the previous month to the 20th = one sales month), plus the Unknown row -1. JPY value = INR value x exchange_rate.
 JPY value = INR value x dim_fx_rates.exchange_rate of the window holding the date: join fact_invoice_lines.fx_rate_id = dim_fx_rates.fx_rate_id (or fact_sales_order_lines.fx_rate_id). The first window starts on 21-Dec-2024 ('Jan 2025') and new months arrive with each load; the -1 row has exchange_rate NULL (no rate for that date).
 Joined from: fact_invoice_lines.fx_rate_id = dim_fx_rates.fx_rate_id; fact_sales_order_lines.fx_rate_id = dim_fx_rates.fx_rate_id.
 
 Columns:
 - `fx_rate_id` INT (primary key): Exchange-rate window key. -1 = Unknown (date outside every window).
-- `rate_month` VARCHAR(8): Month the rate is for, written like dim_calendar.nop_sales_month, e.g. 'Oct 2026'.
+- `rate_month` VARCHAR(8): Month the rate is for, written like dim_calendar.sales_month, e.g. 'Oct 2026'.
 - `start_date` DATE: First day the rate applies (the 21st of the previous month).
 - `end_date` DATE: Last day the rate applies (the 20th).
 - `from_currency` VARCHAR(3): Currency converted from: 'INR'.
@@ -312,7 +312,7 @@ Table `fact_invoice_lines` (fact): one row per invoice line or credit / debit no
 Export vs domestic: fact_invoice_lines.sale_type ('Domestic', 'Export', 'Service'). OEM / after-market: fact_invoice_lines.customer_type (often NULL). Link to the sales order with so_number + so_date (= fact_sales_order_lines.order_date).
 
 Columns:
-- `invoice_number` VARCHAR(30): Invoice number, e.g. 'NOPI/D/2526/169'. For notes: the ORIGINAL invoice the note corrects.
+- `invoice_number` VARCHAR(30): Invoice number, e.g. 'SSMI/D/2526/169'. For notes: the ORIGINAL invoice the note corrects.
 - `invoice_series` VARCHAR(5): Document series: D = domestic, E = export, S = service, DU = duplicate (from the invoice number); CN = credit note, DN = debit note.
 - `transaction_type` VARCHAR(30): Transaction type from the invoice file, e.g. 'GST Tax Invoice'. NULL on note rows.
 - `so_number` INT: Sales order number the line was invoiced from (notes: from the original invoice). Restarts every financial year - pair it with so_date.
@@ -389,7 +389,7 @@ Table `fact_invoice_lines` (fact): one row per invoice line or credit / debit no
 Credit note rows: document_type = 'CREDIT_NOTE', invoice_series 'CN', invoice_date = the NOTE date, invoice_number = the ORIGINAL invoice, net_quantity / net_taxable_value / net_line_total_incl_gst negative, quantity / taxable_value positive as printed.
 
 Columns:
-- `note_number` VARCHAR(30): Credit / debit note number, e.g. 'NOPI/CN/2526/1' (series prefix + suffix + note no.). NULL on invoice rows.
+- `note_number` VARCHAR(30): Credit / debit note number, e.g. 'SSMI/CN/2526/1' (series prefix + suffix + note no.). NULL on invoice rows.
 - `note_series` VARCHAR(20): Note series, e.g. 'CN/2526' (CN + financial year). NULL on invoice rows.
 - `note_date_id` INT: -> dim_calendar.date_id of note_date. -1 on invoice rows (not a note) or unknown.
 - `note_date` DATE: Date the credit / debit note was issued. NULL on invoice rows.
