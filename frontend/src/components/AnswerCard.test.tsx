@@ -418,9 +418,12 @@ describe('AnswerCard column chart (chart_kind "column")', () => {
 
     expect(await screen.findByRole('img', { name: /^Bar chart/ })).toBeInTheDocument()
     await waitFor(() => expect(lastChart()?.types()).toEqual(['bar']))
-    const option = lastChart()?.option as { xAxis: { type: string; axisLabel: { rotate: number } } }
+    const option = lastChart()?.option as {
+      xAxis: { type: string; axisLabel: { rotate: number; formatter: (text: string) => string } } }
     expect(option.xAxis.type).toBe('category')       // the names along the bottom: the bars stand upright
     expect(option.xAxis.axisLabel.rotate).toBe(30)   // written slanted, so they still fit
+    // in full up to 32 letters (17-Nov: cut at 20, "Allied Castings Lim...")
+    expect(option.xAxis.axisLabel.formatter('Supreme Machine Tools Pvt. Ltd.')).toBe('Supreme Machine Tools Pvt. Ltd.')
   })
 
   it('keeps the bars sideways for the same names without a column wish', async () => {
