@@ -6,13 +6,15 @@
 // Drawn with Tailwind + shadcn/ui (src/components/ui); the status chips, error boxes and the token
 // notice keep their app.css look (as on History). Colours are token classes only (light and dark theme).
 import { Suspense, lazy, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ChartColumnBig, ChevronRight, Table2 } from 'lucide-react'
+import { ChartColumnBig, Check, ChevronRight, Copy, ExternalLink, Table2 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { ApiError, AuthError, api, problemText } from '../api'
 import { chartAskedFromText, chartWish, namesChartKind, pickChart, unusualChartFromText, uprightWish } from '../charts/pickChart'
 import { Link } from '../router'
 import type { AiChartReply, Card, Rows, Status } from '../types'
+import { copyText } from '../lib/clipboard'
 import { ExcelLink } from './common'
+import { handOffSql } from './sqlTabModel'
 import { Button, buttonVariants } from './ui/button'
 import { Card as Box, CardContent } from './ui/card'
 import { Dots } from './ui/dots'
@@ -116,7 +118,45 @@ function AiChartAsk({ card, kind }: { card: Card; kind: string }) {
   )
 }
 
-export default function AnswerCard({ card, autoRows = false }: { card: Card; autoRows?: boolean }) {
+/** The SQL of an answer with its buttons: "Copy SQL" (everyone; a tick and "Copied" for 2 seconds) and, for
+ *  admins, "Open in SQL page" (a new browser tab with this SQL in a new editor tab, to change and run it). */
+function SqlBox({ sql, staff }: { sql: string; staff: boolean }) {
+  const [copied, setCopied] = useState<'' | 'yes' | 'no'>('')
+  useEffect(() => {
+    if (!copied) return
+    const timer = window.setTimeout(() => setCopied(''), copied === 'yes' ? 2000 : 4000)
+    return () => window.clearTimeout(timer)
+  }, [copied])
+  const copy = async () => setCopied((await copyText(sql)) ? 'yes' : 'no')
+  const open = () => {
+    if (handOffSql(sql)) window.open('/sql', '_blank', 'noopener')
+  }
+  return (
+    <div className="flex flex-col gap-1.5">
+      <div className="flex flex-wrap items-center justify-end gap-1.5">
+        {copied === 'no' && (
+          <span role="alert" className="mr-auto text-[12px] text-destructive">The SQL could not be copied in this browser.</span>
+        )}
+        <Button type="button" variant="outline" size="xs" onClick={copy} aria-label={copied === 'yes' ? 'Copied' : 'Copy SQL'}
+                className={cn('gap-1', copied === 'yes' && 'text-success hover:text-success')}>
+          {copied === 'yes'
+            ? <><Check aria-hidden="true" className="size-3.5" />Copied</>
+            : <><Copy aria-hidden="true" className="size-3.5" />Copy SQL</>}
+        </Button>
+        {staff && (
+          <Button type="button" variant="outline" size="xs" onClick={open} className="gap-1"
+                  title="Open this SQL in a new tab of the SQL page, to change and run it">
+            <ExternalLink aria-hidden="true" className="size-3.5" />Open in SQL page
+          </Button>
+        )}
+      </div>
+      <pre className="sql">{sql}</pre>
+    </div>
+  )
+}
+
+export default function AnswerCard({ card, autoRows = false, staff = false }:
+  { card: Card; autoRows?: boolean; staff?: boolean }) {
   const [rows, setRows] = useState<RowsState>({ state: 'idle' })
   const autoLoaded = useRef(false) // once only (React's dev mode runs every effect twice)
 
@@ -214,7 +254,7 @@ export default function AnswerCard({ card, autoRows = false }: { card: Card; aut
               )}
               {card.has_rows && card.sql && (
                 <Fold summary="Show SQL">
-                  <pre className="sql">{card.sql}</pre>
+                  <SqlBox sql={card.sql} staff={staff} />
                 </Fold>
               )}
               {card.sources.length > 0 && (

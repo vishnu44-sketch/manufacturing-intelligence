@@ -20,6 +20,9 @@
 import { type KeyboardEvent, type ReactNode, useCallback, useEffect, useRef, useState } from 'react'
 import { ArrowUp, Check, Copy, Ellipsis, Info, Pencil } from 'lucide-react'
 import { toast } from 'sonner'
+import { copyText } from '../lib/clipboard'
+
+export { copyText }
 import { cn } from '@/lib/utils'
 import { AuthError, StreamUnavailable, api, problemText } from '../api'
 import { ASK_PATH, Link, chatPath, useRouter } from '../router'
@@ -136,32 +139,6 @@ function Bubble({ text }: { text: string }) {
       {text}
     </div>
   )
-}
-
-/** Puts the text on the clipboard -> true when it worked. The clipboard API needs https or localhost: on a
- *  plain http address in the office the old way (a hidden text box + the browser's copy command) is used. */
-export async function copyText(text: string): Promise<boolean> {
-  try {
-    if (navigator.clipboard?.writeText) {
-      await navigator.clipboard.writeText(text)
-      return true
-    }
-  } catch {
-    // not allowed here: the old way below
-  }
-  try {
-    const box = document.createElement('textarea')
-    box.value = text
-    box.setAttribute('readonly', '')
-    box.style.cssText = 'position:fixed;top:0;left:0;opacity:0'
-    document.body.appendChild(box)
-    box.select()
-    const done = document.execCommand('copy')
-    box.remove()
-    return done
-  } catch {
-    return false
-  }
 }
 
 const HOVER_BUTTON = cn('opacity-0 transition-opacity group-hover/q:opacity-100 hover:bg-card hover:text-primary',
@@ -634,7 +611,7 @@ export default function AskPage({ me }: { me: Me }) {
                     <Bubble text={single.card.text} />
                     <QuestionTime>{single.card.created_text}</QuestionTime>
                   </div>
-                  <AnswerCard card={single.card} autoRows />
+                  <AnswerCard card={single.card} autoRows staff={me.is_staff} />
                 </div>
               )}
               {detail && route.kind === 'chat' && detail.earlier > 0 && (
@@ -648,7 +625,7 @@ export default function AskPage({ me }: { me: Me }) {
                 return (
                   <div className="chat-item" id={`q-${card.id}`} key={card.id} ref={last ? newest : undefined}>
                     <QuestionBubble card={card} me={me} editable={!pending} onEdit={edit} />
-                    <AnswerCard card={withNotice(card)} autoRows={last || card.id === justAsked} />
+                    <AnswerCard card={withNotice(card)} autoRows={last || card.id === justAsked} staff={me.is_staff} />
                   </div>
                 )
               })}

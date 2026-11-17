@@ -6,6 +6,7 @@ import type { SqlSavedQuery } from '../types'
 
 export const TABS_KEY = 'mi.sqlTabs' // localStorage: the open tabs and which one is shown
 export const OLD_TEXT_KEY = 'mi.sqlText' // sessionStorage: the text of the old single editor
+export const HANDOFF_KEY = 'mi.sqlOpen' // localStorage: the SQL an answer's "Open in SQL page" hands to this page
 
 export interface SqlTab {
   id: string // this browser's own id of the tab (not the saved query's id)
@@ -86,6 +87,47 @@ export function readTabs(): TabsState {
   }
   const first = newTab([], old)
   return { tabs: [first], active: first.id }
+}
+
+/** Leaves an answer's SQL for the SQL page ("Open in SQL page" in the Assistant): the page opens it in a new tab.
+ *  False when this browser blocks storage. */
+export function handOffSql(sql: string): boolean {
+  try {
+    window.localStorage.setItem(HANDOFF_KEY, JSON.stringify({ id: `a${Date.now().toString(36)}`, sql }))
+    return true
+  } catch {
+    return false
+  }
+}
+
+/** The tabs plus the SQL an answer handed over (handOffSql), as a new tab that is shown, "From the Assistant".
+ *  The tab takes the hand-off's id, so reading the same hand-off twice gives one tab; clearHandOff removes it. */
+export function withHandOff(state: TabsState): TabsState {
+  let handed: unknown = null
+  try {
+    handed = JSON.parse(window.localStorage.getItem(HANDOFF_KEY) ?? 'null')
+  } catch {
+    handed = null
+  }
+  if (!handed || typeof handed !== 'object') return state
+  const { id, sql } = handed as { id?: unknown; sql?: unknown }
+  if (typeof id !== 'string' || typeof sql !== 'string' || !sql.trim()) return state
+  if (state.tabs.some((tab) => tab.id === id)) return { ...state, active: id }
+  const used = new Set(state.tabs.map((tab) => tab.title))
+  let title = 'From the Assistant'
+  for (let n = 2; used.has(title); n += 1) title = `From the Assistant ${n}`
+  const tab: SqlTab = { id, title, text: sql, base: '', savedId: null, mine: true, ownerName: '' }
+  // one empty, unchanged tab is replaced instead of kept next to it
+  const tabs = state.tabs.length === 1 && isBlank(state.tabs[0]) ? [tab] : [...state.tabs, tab]
+  return { tabs, active: id }
+}
+
+export function clearHandOff() {
+  try {
+    window.localStorage.removeItem(HANDOFF_KEY)
+  } catch {
+    // storage blocked: nothing was handed over
+  }
 }
 
 export function keepTabs(state: TabsState) {

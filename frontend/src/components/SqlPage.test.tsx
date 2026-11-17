@@ -13,7 +13,7 @@ import { ASHA, BOSS, renderAt } from '../test/render'
 import type { SqlResult, SqlSavedQuery, SqlSchema } from '../types'
 import SqlPage, { filterTables, numericColumns, withRecent } from './SqlPage'
 import { filterSaved } from './SqlSaved'
-import { nextTitle, readTabs, sqlFileName } from './sqlTabModel'
+import { HANDOFF_KEY, clearHandOff, handOffSql, nextTitle, readTabs, sqlFileName, withHandOff } from './sqlTabModel'
 
 vi.mock('./SqlEditor', async () => {
   const { useImperativeHandle, useRef } = await import('react')
@@ -678,5 +678,34 @@ describe('SqlPage: the small helpers', () => {
     expect(sqlFileName('  ')).toBe('query.sql')
     window.localStorage.setItem('mi.sqlTabs', '{broken')
     expect(readTabs().tabs.map((t) => t.title)).toEqual(['Query 1'])
+  })
+})
+
+// 17-Nov: "Open in SQL page" on an answer: the answer's SQL is handed over and opens here in a new tab
+describe('SqlPage: SQL handed over by an answer', () => {
+  it('opens it in a new tab "From the Assistant", shown first, and forgets the hand-off', async () => {
+    handOffSql('SELECT customer_name FROM dim_customers')
+    page()
+
+    expect((await textBox()).value).toBe('SELECT customer_name FROM dim_customers')
+    expect(screen.getByRole('tab', { name: /^From the Assistant/ })).toHaveAttribute('aria-selected', 'true')
+    expect(tabNames()).toHaveLength(1)                                   // the empty Query 1 was replaced
+    await waitFor(() => expect(window.localStorage.getItem(HANDOFF_KEY)).toBeNull())
+  })
+
+  it('adds the tab next to the kept ones, once, with its own title', () => {
+    const tab = (title: string, text = 'SELECT 1') => ({ id: title, title, text, base: text, savedId: null, mine: true, ownerName: '' })
+    const kept = { tabs: [tab('Query 1'), tab('From the Assistant')], active: 'Query 1' }
+    expect(withHandOff(kept)).toBe(kept)                                  // nothing handed over
+    handOffSql('SELECT 2')
+    const once = withHandOff(kept)
+    expect(once.tabs.map((t) => t.title)).toEqual(['Query 1', 'From the Assistant', 'From the Assistant 2'])
+    expect(once.tabs[2].text).toBe('SELECT 2')
+    expect(once.active).toBe(once.tabs[2].id)
+    expect(withHandOff(once).tabs).toHaveLength(3)                         // read again: still one tab
+    clearHandOff()
+    expect(withHandOff(kept)).toBe(kept)
+    window.localStorage.setItem(HANDOFF_KEY, '{broken')
+    expect(withHandOff(kept)).toBe(kept)
   })
 })
