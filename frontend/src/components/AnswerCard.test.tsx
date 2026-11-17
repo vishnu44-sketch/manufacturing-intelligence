@@ -396,3 +396,40 @@ describe('AnswerCard AI chart', () => {
     await waitFor(() => expect(charts).toHaveLength(0))
   })
 })
+
+// 17-Nov: "show me colum grph of top 5 custmers by sales" drew sideways bars (long names): a column chart stands upright
+const TOP_CUSTOMERS = {
+  headers: [{ name: 'customer_name', num: false }, { name: 'net_sales_inr', num: true }],
+  rows: [['Allied Castings Limited', '630,790,102.00'], ['Quantum Machine Tools Pvt Ltd', '449,674,398.25'],
+    ['Supreme Machine Tools Pvt. Ltd.', '405,870,319.50'], ['Aravali Compressors Limited', '319,758,809.50'],
+    ['Prime Auto Components LLP', '297,219,141.50']]
+    .map(([name, value]) => [{ text: name, num: false }, { text: value, num: true }]),
+  row_count: 5, truncated: false, rows_error: '',
+}
+
+describe('AnswerCard column chart (chart_kind "column")', () => {
+  beforeAll(async () => { await import('../charts/AnswerChart') }, 30_000)
+
+  it('draws the bars upright with the long names slanted', async () => {
+    fakeFetch({ '/api/questions/7/rows': { body: TOP_CUSTOMERS } })
+
+    render(<AnswerCard card={{ ...OK, text: 'show me colum grph of top 5 custmers by sales', chart_kind: 'column' }}
+      autoRows />)
+
+    expect(await screen.findByRole('img', { name: /^Bar chart/ })).toBeInTheDocument()
+    await waitFor(() => expect(lastChart()?.types()).toEqual(['bar']))
+    const option = lastChart()?.option as { xAxis: { type: string; axisLabel: { rotate: number } } }
+    expect(option.xAxis.type).toBe('category')       // the names along the bottom: the bars stand upright
+    expect(option.xAxis.axisLabel.rotate).toBe(30)   // written slanted, so they still fit
+  })
+
+  it('keeps the bars sideways for the same names without a column wish', async () => {
+    fakeFetch({ '/api/questions/7/rows': { body: TOP_CUSTOMERS } })
+
+    render(<AnswerCard card={{ ...OK, text: 'top 5 customers by sales as a bar chart', chart_kind: 'bar' }} autoRows />)
+
+    await waitFor(() => expect(lastChart()?.types()).toEqual(['bar']))
+    const option = lastChart()?.option as { yAxis: { type: string } }
+    expect(option.yAxis.type).toBe('category')       // the names down the side
+  })
+})

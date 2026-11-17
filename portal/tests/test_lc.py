@@ -651,7 +651,7 @@ from langchain_core.documents import Document  # noqa: E402
 def test_the_real_pdfs_lose_their_running_header_and_footer(real_pages):
     for page in real_pages:
         text = page.page_content
-        assert "for testing only" not in text                              # the footer line
+        assert "Internal document" not in text                             # the footer line
         assert not re.search(r"(?m)^Page \d+$", text)                      # the page number
         assert not re.search(r"(?m)^Demo Pumps Pvt\. Ltd\.  -  ", text)    # the running header
     chunks = pdfs.split_pages(real_pages)

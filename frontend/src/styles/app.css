@@ -189,34 +189,79 @@ code { background: var(--tint); border-radius: 6px; padding: 2px 6px; font-size:
 }
 
 /* ------------------------------------------------------------ login
-   One card in the middle (like the healthcare app): the SSAGE mark and name, a line on what it is for, the form. */
+   One card in the middle (like the healthcare app): the SSAGE mark and name, a line on what it is for, the form.
+   The spacing is kept tight enough that the card and the footer fit a laptop window (1366 x 660) without
+   scrolling; on a very low window the page simply scrolls. */
 .login-page { min-height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center;
-  gap: 18px; padding: 40px 16px 24px; position: relative; overflow: hidden;
+  gap: 12px; padding: 22px 16px 14px; position: relative; overflow: hidden;
   background:
     radial-gradient(900px 520px at 12% 8%, color-mix(in srgb, var(--brand) 13%, transparent), transparent 62%),
     radial-gradient(760px 480px at 92% 96%, color-mix(in srgb, var(--brand2) 11%, transparent), transparent 60%),
     var(--bg); }
 .login-card { width: 440px; max-width: 100%; background: var(--surface); border-radius: 20px;
-  border: 1px solid var(--line2); padding: 32px 34px 24px;
+  border: 1px solid var(--line2); padding: 24px 32px 18px; position: relative; z-index: 1;
   box-shadow: 0 30px 70px -32px color-mix(in srgb, var(--shadow-c) 55%, transparent),
     0 2px 6px -2px color-mix(in srgb, var(--shadow-c) 12%, transparent);
-  display: flex; flex-direction: column; gap: 16px;
+  display: flex; flex-direction: column; gap: 13px;
   animation: cardIn .5s cubic-bezier(.2,.8,.2,1) both; }
 .lc-brand { display: flex; align-items: center; justify-content: center; gap: 13px; }
 .lc-brand-text { display: flex; flex-direction: column; line-height: 1.15; }
 .lc-name { font-size: 25px; font-weight: 800; letter-spacing: .06em; color: var(--head); }
 .lc-sub { font-size: 10.5px; font-weight: 600; letter-spacing: .16em; text-transform: uppercase; color: var(--muted);
   margin-top: 3px; }
-.lc-text { margin: 0; text-align: center; font-size: 14.5px; line-height: 1.55; color: var(--text-2); }
-.lc-pills { display: flex; justify-content: center; flex-wrap: wrap; gap: 8px; }
+.lc-text { margin: 0; text-align: center; font-size: 14px; line-height: 1.45; color: var(--text-2);
+  text-wrap: balance; }
+.lc-pills { display: flex; justify-content: center; flex-wrap: wrap; gap: 6px 8px; }
 .lc-pills span { font-size: 12px; font-weight: 500; color: var(--brand); background: var(--brand-bg);
-  border: 1px solid color-mix(in srgb, var(--brand) 22%, transparent); border-radius: 999px; padding: 4px 12px; }
-.lc-form { display: flex; flex-direction: column; gap: 15px; margin-top: 4px; }
-.lc-submit { padding: 13px 0; font-size: 15px; border-radius: 12px;
+  border: 1px solid color-mix(in srgb, var(--brand) 22%, transparent); border-radius: 999px; padding: 3px 12px; }
+.lc-form { display: flex; flex-direction: column; gap: 12px; margin-top: 2px; }
+.lc-form label.f { margin-bottom: 5px; }
+.lc-form input { padding-top: 9px; padding-bottom: 9px; }
+.lc-submit { padding: 12px 0; font-size: 15px; border-radius: 12px;
   box-shadow: 0 10px 22px -12px color-mix(in srgb, var(--brand) 85%, transparent); }
-.lc-note { border-top: 1px solid var(--line); padding-top: 14px; text-align: center; font-size: 12.5px;
-  line-height: 1.5; color: var(--muted); }
-.login-foot { font-size: 11.5px; color: var(--muted); text-align: center; }
+.lc-note { border-top: 1px solid var(--line); padding-top: 11px; text-align: center; font-size: 12.5px;
+  line-height: 1.4; color: var(--muted); }
+/* the footer sits on the skyline, so it gets a soft patch of the page ground behind it */
+.login-foot { position: relative; z-index: 1; font-size: 11.5px; color: var(--muted); text-align: center;
+  padding: 3px 12px; border-radius: 12px; background: color-mix(in srgb, var(--bg) 82%, transparent); }
+
+/* the factory blueprint behind the card (LoginBackground.tsx): every line is currentColor (the brand blue, the
+   lighter blue in the dark theme), the fills are the page ground with a touch of blue, and all of it is faint so
+   the card and its text keep their contrast. --lb-a is how strong the lines are. */
+.login-bg { position: absolute; inset: 0; z-index: 0; pointer-events: none; overflow: hidden;
+  color: var(--brand); --lb-a: .3; }
+:root[data-theme="dark"] .login-bg { --lb-a: .24; }
+.login-bg svg { position: absolute; display: block; overflow: visible; }
+.login-bg path, .login-bg circle { vector-effect: non-scaling-stroke; stroke-width: 1.2px; stroke-opacity: var(--lb-a); }
+.login-bg .lb-fill { fill: color-mix(in srgb, var(--brand) 5%, var(--bg)); }
+.login-bg .lb-thin { stroke-opacity: calc(var(--lb-a) * .6); stroke-width: 1px; }
+.login-bg .lb-dim { stroke-opacity: calc(var(--lb-a) * .55); stroke-width: 1px; }
+.login-bg .lb-smoke circle { stroke-opacity: calc(var(--lb-a) * .35); stroke-dasharray: 3 5; }
+/* the grid: the whole page, fading out towards the top corners */
+.login-bg .lb-grid { inset: 0; width: 100%; height: 100%;
+  -webkit-mask-image: radial-gradient(140% 100% at 50% 100%, black 35%, transparent 100%);
+  mask-image: radial-gradient(140% 100% at 50% 100%, black 35%, transparent 100%); }
+.login-bg .lb-grid-minor { fill: none; stroke: currentColor; stroke-width: 1px; stroke-opacity: calc(var(--lb-a) * .22); }
+.login-bg .lb-grid-major { fill: none; stroke: currentColor; stroke-width: 1px; stroke-opacity: calc(var(--lb-a) * .42); }
+/* the skyline: a strip along the bottom; the drawing keeps its shape and is cut at the sides when narrow */
+.login-bg .lb-skyline { left: 0; bottom: 0; width: 100%; height: clamp(140px, 32vh, 290px); overflow: hidden; }
+/* the pipe: a wide line with a narrower one in the fill colour on top makes a hollow tube; the liquid is dashes */
+.login-bg .lb-pipe { stroke-width: 9px; }
+.login-bg .lb-pipe-in { stroke: color-mix(in srgb, var(--brand) 5%, var(--bg)); stroke-opacity: 1; stroke-width: 6.5px; }
+.login-bg .lb-flow { stroke-opacity: calc(var(--lb-a) * .7); stroke-dasharray: 6 10; }
+/* the gears: a pair half out of the top-right corner, one half out of the left side */
+.login-bg .lb-gears-corner { top: -62px; right: -58px; width: clamp(170px, 23vw, 320px); aspect-ratio: 162 / 182; }
+.login-bg .lb-gears-side { left: -52px; top: 24%; width: clamp(110px, 13vw, 190px); aspect-ratio: 1; }
+.login-bg [data-part="gear"] { transform-box: view-box; transform-origin: 0 0; }
+@media (prefers-reduced-motion: no-preference) {
+  /* a gear: one slow turn in its own time (--lb-turn), clockwise or the other way (--lb-dir) */
+  .login-bg .lb-turn { animation: lbTurn var(--lb-turn, 90s) linear infinite; animation-direction: var(--lb-dir, normal); }
+  /* the liquid creeps along the pipe */
+  .login-bg .lb-flow { animation: lbFlow 6s linear infinite; }
+}
+@keyframes lbTurn { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+@keyframes lbFlow { from { stroke-dashoffset: 0; } to { stroke-dashoffset: -32; } }
+
 /* the mark: a factory on the blue tile with a green "live" dot (top bar and sign-in) */
 .brand-tile { position: relative; display: inline-grid; place-items: center; flex: none; border-radius: 28%;
   color: var(--on-brand); background: linear-gradient(135deg, var(--brand), var(--brand2));
@@ -225,8 +270,11 @@ code { background: var(--tint); border-radius: 6px; padding: 2px 6px; font-size:
   background: var(--live); box-shadow: 0 0 0 2px var(--brand); animation: brandPulse 2.4s ease-in-out infinite; }
 @keyframes brandPulse { 0%, 100% { opacity: 1; } 50% { opacity: .45; } }
 @media (max-width: 480px) {
-  .login-card { padding: 26px 20px 20px; }
+  .login-card { padding: 22px 20px 16px; }
   .lc-name { font-size: 22px; }
+  /* on a phone the card fills the width: only the corner pair stays, smaller */
+  .login-bg .lb-gears-side { display: none; }
+  .login-bg .lb-gears-corner { width: 150px; top: -54px; right: -50px; }
 }
 
 /* ------------------------------------------------------------ Manufacturing Intelligence + History */

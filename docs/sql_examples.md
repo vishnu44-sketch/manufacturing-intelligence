@@ -918,7 +918,7 @@ ORDER BY pc.sales_in_period DESC;
 ```
 
 Why: month names are sales months, looked up by name: "between Jan 2026 and Jun 2026" = 21-Dec-2025 to 20-Jun-2026; "nothing since Oct 2026" = no invoice on or after the FIRST day of Oct 2026 (21-Sep-2026) - October itself counts, so never compare with the month's last day. Buying = an INVOICE line; a later credit / debit note is not a purchase. The Unknown customer (-1) is not a customer and gets no row. The answer states the three dates and matching_customers.
-Expected: (data of 13-Oct-2026) 5 customers, no invoice on or after 21-Sep-2026: Demo Pump Japan Co., Ltd. 1,255,250.00 (last invoice 08-Aug-2026); Tejas Machine Tools LLC 1,188,155.00; Zenith Precision Components LLP 975,200.00; Coral Fluid Power Pvt. Ltd. 180,840.00; Pioneer Star Grinding Machines Inc. 68,000.00.
+Expected: (data of 13-Oct-2026) 5 customers, no invoice on or after 21-Sep-2026: Sakura Pump Japan Co., Ltd. 1,255,250.00 (last invoice 08-Aug-2026); Tejas Machine Tools LLC 1,188,155.00; Zenith Precision Components LLP 975,200.00; Coral Fluid Power Pvt. Ltd. 180,840.00; Pioneer Star Grinding Machines Inc. 68,000.00.
 
 ## Q: Which items had the biggest increase in stock value between 20-Sep-2026 and 20-Mar-2027?
 

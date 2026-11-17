@@ -1,9 +1,11 @@
 // The sign-in page (/login, and any page while signed out): one card in the middle - the SSAGE mark and name,
-// what it is for, then the form. It signs in through POST /api/login (a session cookie).
+// what it is for, then the form - on a faded factory-blueprint picture (LoginBackground.tsx). It signs in through
+// POST /api/login (a session cookie).
 import { type FormEvent, useState } from 'react'
 import { ApiError, api } from '../api'
-import { APP_NAME, APP_SUBTITLE, FOOTER_TEXT } from '../lib/brand'
+import { APP_NAME, APP_SUBTITLE, LOGIN_FOOTER_TEXT } from '../lib/brand'
 import BrandMark from './BrandMark'
+import LoginBackground from './LoginBackground'
 
 export default function Login({ onSignedIn }: { onSignedIn: () => void }) {
   const [username, setUsername] = useState('')
@@ -27,6 +29,7 @@ export default function Login({ onSignedIn }: { onSignedIn: () => void }) {
 
   return (
     <div className="login-page">
+      <LoginBackground />
       <main className="login-card">
         <div className="lc-brand">
           <BrandMark size={46} />
@@ -70,7 +73,7 @@ export default function Login({ onSignedIn }: { onSignedIn: () => void }) {
           Authorised users only. For access or a new password, contact your administrator.
         </div>
       </main>
-      <footer className="login-foot">© {new Date().getFullYear()} {FOOTER_TEXT}</footer>
+      <footer className="login-foot">© {new Date().getFullYear()} {LOGIN_FOOTER_TEXT}</footer>
     </div>
   )
 }

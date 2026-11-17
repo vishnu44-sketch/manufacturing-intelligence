@@ -191,7 +191,7 @@ OTHER_TABLES_NOTE = ("\n\nThe rest of the ss_gold schema (the tables whose colum
 # ------------------------------------------------------------------ prompts
 # 05-Nov: "most valuable customer past months" took LIMIT 3 of dim_calendar rows (3 DAYS, all in Oct 2026), and the
 # line chart of it joined the sales to those 3 days of one month (sales counted 3 times): rule 17 + the end of rule 16
-SQL_SYSTEM_PROMPT = """You are the SQL writer of "Manufacturing Intelligence", the data assistant of a pump manufacturer ("SS Manufacturing", demo data).
+SQL_SYSTEM_PROMPT = """You are the SQL writer of "Manufacturing Intelligence", the data assistant of a pump manufacturer ("SS Manufacturing").
 You turn ONE question about SS Manufacturing's business data into ONE read-only MySQL 8 query on the database ss_gold.
 
 The users are SS Manufacturing business people, not technical people. They type casually, with spelling mistakes ("revanu", "perstange"), short forms and sometimes several questions in one. Read the meaning, fix obvious typos in your head, and answer every part that ss_gold CAN answer - never give up on a business question because one part of it is impossible.
@@ -200,7 +200,7 @@ NOT in ss_gold (no data for these): profit, margin or the cost of the items sold
 A "profit %" or "profit growth" BETWEEN two periods (e.g. this year vs last year): answer with the revenue of both periods and the revenue growth % (column revenue_growth_pct, calculated in SQL, same dates in both years) and write the MISSING line for true profit - the user gets a useful number instead of only "not available". A profit % of ONE period (no comparison) stays NO_DATA, with a TRY line for the revenue growth vs last year.
 
 Reply in exactly one of these four ways, with nothing else (no explanation):
-A) one SQL query inside a ```sql code block. If ONE PART of the question needs data that is not in ss_gold, write first one line "MISSING: <that part> - <why, in plain words>", then the ```sql block for the parts that can be answered. Write a MISSING line ONLY for something the question itself asks for - never for things it does not mention. When the question (or "Written out in full") asks for a chart / graph / plot / diagram of any kind, in any words or with typos ("bar chat", "barchrt", "show as columns", "pie"), also write first one line "CHART: <kind>", kind one of: bar, horizontal bar, line, area, stacked area, stacked bar, grouped bar, pie, scatter, heatmap, treemap, waterfall, funnel, radar (no chart asked: no CHART line). Also first, only when they apply: "ASKS_FOR: <customers / products / sales people / states / countries>" when it asks for a ranking or list of those (not a name filter, not a count), and "PERIODS: <n>" when it asks for several periods ("last 6 months" = 6);
+A) one SQL query inside a ```sql code block. If ONE PART of the question needs data that is not in ss_gold, write first one line "MISSING: <that part> - <why, in plain words>", then the ```sql block for the parts that can be answered. Write a MISSING line ONLY for something the question itself asks for - never for things it does not mention. When the question (or "Written out in full") asks for a chart / graph / plot / diagram of any kind, in any words or with typos ("bar chat", "barchrt", "show as columns", "pie"), also write first one line "CHART: <kind>", kind one of: bar, column (upright bars), horizontal bar, line, area, stacked area, stacked bar, grouped bar, pie, scatter, heatmap, treemap, waterfall, funnel, radar (no chart asked: no CHART line). Also first, only when they apply: "ASKS_FOR: <customers / products / sales people / states / countries>" when it asks for a ranking or list of those (not a name filter, not a count), and "PERIODS: <n>" when it asks for several periods ("last 6 months" = 6);
 B) when the question is about SS Manufacturing's business but NOTHING in it can be answered from ss_gold (a profit % between two periods is NOT this case - use A with the revenue growth, as said above): one line "NO_DATA: <why, in plain words>", optionally followed by one line "TRY: <a similar question ss_gold can answer>";
 In MISSING / NO_DATA / TRY lines write for a business user: never mention table, column or database names (say "the SS Manufacturing data", not "ss_gold").
 Follow-up questions: when "Earlier in this chat" is given, the new question was already written out in full ("Written out in full: ..."). Answer that full question, and reuse the period, customer, product and filters of the earlier questions' SQL where it builds on them. In NO_DATA / MISSING reasons name that period / customer, so the user sees the chat was followed.
@@ -248,7 +248,7 @@ RETRY_PROMPT = """That did not work: {problem}
 Write a corrected query for the same question, following all the rules.
 Reply with ONE ```sql block only (with the UNDERSTOOD / MISSING / CHART / ASKS_FOR / PERIODS lines first when they apply), or NO_DATA / NO_SQL / REMEMBER / FORGET."""
 
-REWRITE_SYSTEM_PROMPT = """You help "Manufacturing Intelligence", the business-data assistant of a pump manufacturer ("SS Manufacturing", demo data). A business user typed a new question in a chat.
+REWRITE_SYSTEM_PROMPT = """You help "Manufacturing Intelligence", the business-data assistant of a pump manufacturer ("SS Manufacturing"). A business user typed a new question in a chat.
 A message that asks to remember, note, save, update or forget something for later answers ("update your memory ...") is NOT a follow-up: reply with it unchanged.
 First decide: does the new question BUILD ON the earlier questions? It does only when it is incomplete without them or points back to them, e.g. "and for Japan?", "what about export", "same for Oct", "by state", "the above with profit %", "those customers", "in that month".
 - It builds on them: rewrite it as ONE complete question that can be understood on its own - take what it leaves out (period, financial year, month, customer, product, measure, filters) from the LATEST earlier question (the last one, marked "latest"); use an older question only for what the latest one does not have. Keep what the user asks for (also parts the data may not have, e.g. profit); fix obvious spelling mistakes. Reply with that question only: one line, no quotes, no explanation.
@@ -271,7 +271,7 @@ CONTEXT_SIZE = 3          # earlier questions of the same chat sent with a follo
 CONTEXT_SQL_CHARS = 1200  # each earlier SQL is cut to this length (tokens!)
 CONTEXT_ANSWER_CHARS = 300
 
-EXPLAIN_SYSTEM_PROMPT = """You are "Manufacturing Intelligence", the data assistant of a pump manufacturer ("SS Manufacturing", demo data).
+EXPLAIN_SYSTEM_PROMPT = """You are "Manufacturing Intelligence", the data assistant of a pump manufacturer ("SS Manufacturing").
 A user asked a question, a read-only SQL query ran on SS Manufacturing's database, and you get the rows it returned.
 Write the answer for the user in 2 to 5 short plain-English sentences.
 
@@ -317,7 +317,7 @@ From the company documents (the pieces closest to the question - the question al
 
 Answer the part of the question about the data from the rows above, and the part about rules, terms or policies from these pieces only (copy their numbers and words exactly, and name the document and page, e.g. "(Sales Terms and Discount Policy, page 1)"). Never use the pieces for numbers about the data."""
 
-ROUTE_SYSTEM_PROMPT = """You route the questions of "Manufacturing Intelligence", the assistant of a pump manufacturer ("SS Manufacturing", demo data). It can answer from two places:
+ROUTE_SYSTEM_PROMPT = """You route the questions of "Manufacturing Intelligence", the assistant of a pump manufacturer ("SS Manufacturing"). It can answer from two places:
 - data: SS Manufacturing's business database - sales, invoices, credit / debit notes, sales orders, customers, products, stock, exchange rates, sales people and GST codes. For numbers, totals, lists and comparisons of what happened, e.g. "top 5 customers in FY 2026-27", "how many sales orders are open", "stock value on 20-Mar-2027".
 - documents: the company documents (policies, sales terms, product catalogue, warranty, maintenance guide). For rules, conditions, specifications and advice written in them, e.g. "how long is the warranty on gear pumps", "who approves a 12% discount", "max pressure of the HP-700", "why is my pump noisy".
 - both: the data AND the documents in one question, e.g. "top 3 export customers and their payment terms".
@@ -332,7 +332,7 @@ Question: {question}
 
 Your reply (data, documents or both):"""
 
-DOCS_SYSTEM_PROMPT = """You are "Manufacturing Intelligence", the assistant of a pump manufacturer ("SS Manufacturing", demo data).
+DOCS_SYSTEM_PROMPT = """You are "Manufacturing Intelligence", the assistant of a pump manufacturer ("SS Manufacturing").
 A user asked a question about the company documents, and you get the pieces of those documents closest to it.
 Write the answer in 1 to 4 short plain-English sentences.
 
@@ -1433,7 +1433,10 @@ def data_notes(reply):
 # AI call); our code turns its words into the chart keys of the Ask page (frontend/src/charts: the contract).
 # The words are written without spaces or dashes here ("Horizontal Bar", "stacked-bar" -> "horizontalbar", "stackedbar").
 CHART_KINDS = {
-    "bar": "bar", "bars": "bar", "column": "bar", "columns": "bar", "verticalbar": "bar", "verticalcolumn": "bar",
+    "bar": "bar", "bars": "bar",
+    # 17-Nov: "colum grph of top 5 custmers" drew sideways bars (long names): a column chart = bars standing upright
+    "column": "column", "columns": "column", "verticalbar": "column", "verticalbars": "column",
+    "verticalcolumn": "column", "uprightbar": "column", "uprightbars": "column",
     "horizontalbar": "hbar", "horizontalbars": "hbar", "horizontalcolumn": "hbar", "hbar": "hbar", "barh": "hbar",
     "line": "line", "lines": "line",
     "area": "area",
@@ -1453,7 +1456,7 @@ CHART_KINDS = {
 
 def chart_kind_line(reply):
     """The chart the AI said the question asks for, from its "CHART: <kind>" line, as the Ask page's key ("bar",
-    "hbar", "line", "area", "stackedArea", "stacked", "grouped", "pie", "scatter", "heatmap", "treemap",
+    "column" (bars standing upright), "hbar", "line", "area", "stackedArea", "stacked", "grouped", "pie", "scatter", "heatmap", "treemap",
     "waterfall", "funnel", "radar"); '' when there is no CHART line, "CHART: none" or words we do not know."""
     text = re.sub(r"<think>.*?</think>", "", reply or "", flags=re.S)
     match = re.search(r"(?im)^\W*CHART\s*:\s*(.+)$", text)

@@ -96,7 +96,25 @@ export function chartKindFromText(text: string): ChartKind | null {
  *  replies, an older server) - or null (then pickChart chooses). pickChart still swaps a kind the rows
  *  cannot show for one that fits. */
 export function chartWish(chartKind: string | null | undefined, text: string): ChartKind | null {
+  if (chartKind === 'column') return 'bar' // bars standing upright (uprightWish)
   return isChartKind(chartKind) ? chartKind : chartKindFromText(text)
+}
+
+/** True when the AI (card.chart_kind) or the question's words name a chart kind: a "column" chart counts too. */
+export function namesChartKind(chartKind: string | null | undefined): boolean {
+  return chartKind === 'column' || isChartKind(chartKind)
+}
+
+// a column chart in words, typos too ("colum grph", "column chart", "vertical bars", "as columns")
+const UPRIGHT = new RegExp(`\\b(colu?mn|colum|coloumn|vertical|upright)s?\\s*(bar|${CHART_WORD})s?\\b` +
+  '|\\bvertical\\s*bars?\\b|\\bas\\s+colu?mns\\b', 'i')
+
+/** True when a column chart is asked for: bars standing upright even with long names (17-Nov: "colum grph of top
+ *  5 custmers" drew them sideways). The AI's "column" first; another kind the AI named wins over the words. */
+export function uprightWish(chartKind: string | null | undefined, text: string): boolean {
+  if (chartKind === 'column') return true
+  if (isChartKind(chartKind) && chartKind !== 'bar') return false
+  return UPRIGHT.test(text ?? '')
 }
 
 // any chart wish in words - a kind ("bar chart", "pie") or just "chart" / "graph" / "plot": when the rows fit
@@ -457,7 +475,7 @@ function topShare(t: Table): number {
  *  that way, else the best kind for the rows with a short note why. hide = the "Hide / Show" button for a
  *  catch-all group (null: hidden when it holds more than 70% of the total). Hiding changes only the chart. */
 export function pickChart(headers: Header[], rows: Cell[][], want: ChartKind | null = null,
-  hide: boolean | null = null): ChartPick | null {
+  hide: boolean | null = null, upright = false): ChartPick | null {
   const all = readTable(headers, rows)
   if (!all) return null
   if (all.time && all.points.length > MAX_LINE_POINTS) return null // too many points for any chart
@@ -479,8 +497,9 @@ export function pickChart(headers: Header[], rows: Cell[][], want: ChartKind | n
   const uneven = want === null && !t.time && topShare(t) > UNEVEN_SHARE
   const best = uneven && bestKind(t) === 'pie' ? 'bar' : bestKind(t)
   const longest = (points: ChartPoint[]) => Math.max(...points.map((p) => p.label.length))
-  // bars run left to right for long names or many bars; months stay upright, in their order
-  const autoHorizontal = !t.time && (longest(t.points.slice(0, MAX_BARS)) > 12 || Math.min(t.points.length, MAX_BARS) > 12)
+  // bars run left to right for long names or many bars; months stay upright, in their order; a column chart
+  // asked for (upright) stays upright, its long names written slanted (chartOption)
+  const autoHorizontal = !upright && !t.time && (longest(t.points.slice(0, MAX_BARS)) > 12 || Math.min(t.points.length, MAX_BARS) > 12)
 
   // every kind these rows fit, the best first; one "Bar" button only (a horizontal one when bars stand upright)
   const options = [best, ...ORDER.filter((k) => k !== best)].filter((k) => !misfit(k, t))

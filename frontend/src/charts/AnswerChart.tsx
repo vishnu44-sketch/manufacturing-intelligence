@@ -26,11 +26,12 @@ export interface AnswerChartProps {
   title?: string // shown above the chart and in the PNG
   onShowTable?: () => void // the "Table" button (the table itself stays in AnswerCard)
   kind?: ChartKind | null // the kind the question asked for ("as a treemap"); null = pickChart's best kind
+  upright?: boolean // a column chart was asked for: bars stand upright even with long names
 }
 
-export default function AnswerChart({ headers, rows, title = '', onShowTable, kind = null }: AnswerChartProps) {
+export default function AnswerChart({ headers, rows, title = '', onShowTable, kind = null, upright = false }: AnswerChartProps) {
   const [hide, setHide] = useState<boolean | null>(null) // the catch-all group: null = hidden when it is over 70%
-  const pick = useMemo(() => pickChart(headers, rows, kind, hide), [headers, rows, kind, hide])
+  const pick = useMemo(() => pickChart(headers, rows, kind, hide, upright), [headers, rows, kind, hide, upright])
   const theme = useThemeName()
   const colours = useMemo(() => readColours(theme), [theme])
   const [width, setWidth] = useState(0)
