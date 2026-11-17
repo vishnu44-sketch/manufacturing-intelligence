@@ -1,7 +1,9 @@
-// The sign-in page (/login, and any page while signed out), the look of the old Django one: the brand
-// banner on the left, the card on the right. It signs in through POST /api/login (a session cookie).
+// The sign-in page (/login, and any page while signed out): one card in the middle - the SSAGE mark and name,
+// what it is for, then the form. It signs in through POST /api/login (a session cookie).
 import { type FormEvent, useState } from 'react'
 import { ApiError, api } from '../api'
+import { APP_NAME, APP_SUBTITLE, FOOTER_TEXT } from '../lib/brand'
+import BrandMark from './BrandMark'
 
 export default function Login({ onSignedIn }: { onSignedIn: () => void }) {
   const [username, setUsername] = useState('')
@@ -24,73 +26,51 @@ export default function Login({ onSignedIn }: { onSignedIn: () => void }) {
   }
 
   return (
-    <div className="login-split">
-      <div className="login-brand">
-        <div className="lb-top">
-          <div className="brand-mark lb-logo">MI</div>
-          <div className="lb-sub">MANUFACTURING INTELLIGENCE</div>
-        </div>
-        <div className="lb-mid">
-          <div className="lb-tag">
-            Ask in plain English. <span>Get</span> the numbers.
-          </div>
-          <div className="lb-text">
-            Type a question about sales, invoices or stock and get a short answer, the rows behind it and the SQL
-            that was run.
-          </div>
-          <div className="lb-pills">
-            <span>Plain-English questions</span>
-            <span>Answer + rows</span>
-            <span>SQL shown</span>
-            <span>Excel download</span>
+    <div className="login-page">
+      <main className="login-card">
+        <div className="lc-brand">
+          <BrandMark size={46} />
+          <div className="lc-brand-text">
+            <div className="lc-name">{APP_NAME}</div>
+            <div className="lc-sub">{APP_SUBTITLE}</div>
           </div>
         </div>
-        <div className="lb-foot">Demo project · synthetic data</div>
-      </div>
+        <p className="lc-text">
+          Ask about sales, orders, stock and company documents across SS Manufacturing - in plain English.
+        </p>
+        <div className="lc-pills" aria-label="What you can ask about">
+          <span>Sales &amp; invoices</span>
+          <span>Orders &amp; stock</span>
+          <span>Company PDFs</span>
+        </div>
 
-      <div className="login-side">
-        <div className="login-card">
+        {error && (
+          <div className="errbox" role="alert">
+            {error}
+          </div>
+        )}
+
+        <form onSubmit={submit} className="lc-form">
           <div>
-            <div style={{ fontSize: 21, fontWeight: 600, color: '#32353A' }}>Sign in</div>
-            <div style={{ fontSize: 13, color: '#6C757D', margin: '4px 0 8px' }}>
-              Manufacturing Intelligence — authorised users only
-            </div>
-            <div
-              style={{ height: 4, width: 64, borderRadius: 3, background: 'linear-gradient(90deg,#C00000,#E84545)' }}
-            />
+            <label className="f" htmlFor="id_username">User ID</label>
+            <input type="text" id="id_username" autoFocus autoComplete="username" required value={username}
+                   placeholder="Enter your user ID" onChange={(e) => setUsername(e.target.value)} />
           </div>
-
-          {error && (
-            <div className="errbox" role="alert">
-              {error}
-            </div>
-          )}
-
-          <form onSubmit={submit} style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-            <div>
-              <label className="f" htmlFor="id_username">User ID</label>
-              <input type="text" id="id_username" autoFocus autoComplete="username" required value={username}
-                     onChange={(e) => setUsername(e.target.value)} />
-            </div>
-            <div>
-              <label className="f" htmlFor="id_password">Password</label>
-              <input type="password" id="id_password" autoComplete="current-password" required value={password}
-                     onChange={(e) => setPassword(e.target.value)} />
-            </div>
-            <button type="submit" className={`btn primary block${busy ? ' loading' : ''}`} disabled={busy}
-                    style={{ padding: '13px 0', fontSize: 15 }}>
-              {busy && <span className="spin" />}Sign in
-            </button>
-          </form>
-
-          <div style={{ textAlign: 'center', fontSize: 12.5, color: '#6C757D' }}>
-            Forgot password? Contact the administrator.
+          <div>
+            <label className="f" htmlFor="id_password">Password</label>
+            <input type="password" id="id_password" autoComplete="current-password" required value={password}
+                   placeholder="Enter your password" onChange={(e) => setPassword(e.target.value)} />
           </div>
+          <button type="submit" className={`btn primary block lc-submit${busy ? ' loading' : ''}`} disabled={busy}>
+            {busy && <span className="spin" />}Sign in
+          </button>
+        </form>
+
+        <div className="lc-note">
+          Authorised users only. For access or a new password, contact your administrator.
         </div>
-        <footer className="app-foot login-foot">
-          <span>© {new Date().getFullYear()} Manufacturing Intelligence · demo project with synthetic data</span>
-        </footer>
-      </div>
+      </main>
+      <footer className="login-foot">© {new Date().getFullYear()} {FOOTER_TEXT}</footer>
     </div>
   )
 }
