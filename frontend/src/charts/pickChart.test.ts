@@ -1,7 +1,8 @@
 // pickChart: which chart (or none) the answer rows get, from the texts the table shows.
 import { describe, expect, it } from 'vitest'
 import {
-  chartAskedFromText, chartKindFromText, chartWish, isCatchAll, isChartKind, parseNumber, pickChart, shortIndian,
+  chartAskedFromText, chartKindFromText, chartWish, isCatchAll, isChartKind, namesChartKind, parseNumber, pickChart,
+  shortIndian, uprightWish,
   unusualChartFromText,
 } from './pickChart'
 import { CATEGORY_SALE_TYPE, MONTHLY, SALE_TYPES, TOP5, table } from './testRows'
@@ -587,5 +588,34 @@ describe('chart words with typos', () => {
     for (const text of ['start a new chat', 'what did I ask in this chat?', 'chat']) {
       expect(chartAskedFromText(text), text).toBe(false)
     }
+  })
+})
+
+// 17-Nov: "show me colum grph of top 5 custmers by sales" drew sideways bars: long names turn bars sideways, but a
+// column chart means bars standing upright. The AI names it "column"; the words are the fallback.
+describe('a column chart (bars standing upright)', () => {
+  it('is read from the AI first, else from the words, typos too', () => {
+    expect(uprightWish('column', 'top 5 customers')).toBe(true)
+    expect(uprightWish('', 'show me colum grph of top 5 custmers by sales')).toBe(true)
+    expect(uprightWish(undefined, 'top products as a column chart')).toBe(true)
+    expect(uprightWish('bar', 'vertical bars of sales by customer')).toBe(true)   // the AI said bar: the words add upright
+    expect(uprightWish('hbar', 'column chart of sales')).toBe(false)             // another kind the AI named wins
+    expect(uprightWish('', 'top 5 customers bar chart')).toBe(false)
+    expect(uprightWish('', 'show the column names of the invoice table')).toBe(false)
+  })
+
+  it('is drawn as bars, and counts as a chart wish', () => {
+    expect(chartWish('column', '')).toBe('bar')
+    expect(namesChartKind('column')).toBe(true)
+    expect(namesChartKind('gizmo')).toBe(false)
+  })
+
+  it('keeps bars of long names upright, with the sideways bars one button away', () => {
+    const upright = pickChart(TOP5.headers, TOP5.rows, 'bar', null, true)
+    expect(upright?.kind).toBe('bar')
+    expect(upright?.horizontal).toBe(false)
+    expect(upright?.options).toContain('hbar')
+    // without the column wish: sideways, as before
+    expect(pickChart(TOP5.headers, TOP5.rows, 'bar')?.horizontal).toBe(true)
   })
 })

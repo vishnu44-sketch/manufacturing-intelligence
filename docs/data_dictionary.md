@@ -5,7 +5,7 @@ Column meanings are the MySQL column COMMENTs (the source of truth). Amounts are
 
 ## ss_gold overview - star schema (fact and dimension tables)
 
-`ss_gold` is a star schema built from the synthetic SS Manufacturing files by loader/load_gold.py.
+`ss_gold` is a star schema built from the SS Manufacturing files by loader/load_gold.py.
 - Fact tables (the numbers): `fact_invoice_lines` (invoice and credit note lines - sales), `fact_sales_order_lines` (sales order lines - orders booked), `fact_stock_ledger` (stock balances and movements, one snapshot per Inventory Audit Report date).
 - Dimension tables (the descriptions): `dim_calendar` (one row per day, financial year and sales month), `dim_customers`, `dim_products`, `dim_fx_rates` (INR to JPY rate windows), `dim_sales_people`, `dim_tax_codes` (GST codes on sales orders), `dim_stock_movement_types` (kinds of stock ledger row).
 - `load_log`: load history, one row per table per load run (full load, then incremental batches): rows read / inserted / updated / skipped, Unknown keys, cleaning fixes.

@@ -30,14 +30,16 @@ pytestmark = pytest.mark.django_db
 
 TYPO_QUESTION = "can you create plot bar chat last 6 months sales"
 BAR_REPLY = "CHART: bar\n" + TREND_SQL
-KEYS = {"bar", "hbar", "line", "area", "stackedArea", "stacked", "grouped", "pie", "scatter", "heatmap", "treemap",
+KEYS = {"bar", "column", "hbar", "line", "area", "stackedArea", "stacked", "grouped", "pie", "scatter", "heatmap", "treemap",
         "waterfall", "funnel", "radar"}  # the Ask page's chart keys (frontend/src/charts: the contract)
 
 
 # ---------- the words of the CHART line ----------
 
 @pytest.mark.parametrize("line, key", [
-    ("CHART: bar", "bar"), ("chart: Bar", "bar"), ("CHART: bar chart", "bar"), ("CHART: columns", "bar"),
+    ("CHART: bar", "bar"), ("chart: Bar", "bar"), ("CHART: bar chart", "bar"), ("CHART: columns", "column"),
+    ("CHART: column", "column"), ("CHART: column graph", "column"), ("CHART: vertical bar", "column"),
+    ("CHART: upright bars", "column"),
     ("CHART: horizontal bar", "hbar"), ("CHART: Horizontal Bar", "hbar"), ("CHART: horizontal-bar chart", "hbar"),
     ("CHART: line", "line"), ("CHART: line graph", "line"), ("CHART: area", "area"),
     ("CHART: stacked area", "stackedArea"), ("CHART: Stacked-Area", "stackedArea"),
@@ -80,7 +82,7 @@ def test_the_prompt_asks_for_the_chart_line_but_the_mcp_rules_do_not():
     prompt = agent.SQL_SYSTEM_PROMPT
     assert 'write first one line "CHART: <kind>"' in prompt
     assert '"bar chat", "barchrt", "show as columns", "pie"' in prompt
-    assert ("bar, horizontal bar, line, area, stacked area, stacked bar, grouped bar, pie, scatter, heatmap, treemap, "
+    assert ("bar, column (upright bars), horizontal bar, line, area, stacked area, stacked bar, grouped bar, pie, scatter, heatmap, treemap, "
             "waterfall, funnel, radar") in prompt
     assert "CHART" in agent.RETRY_PROMPT
     assert "CHART" not in mcp_server.SQL_RULES  # the MCP caller's LLM gets the SQL rules only, as before

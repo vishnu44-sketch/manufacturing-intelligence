@@ -1,7 +1,9 @@
 // The sign-in form: it gets the CSRF cookie first, posts the user and password as JSON with the
-// X-CSRFToken header, and shows the friendly message when they do not match.
+// X-CSRFToken header, and shows the friendly message when they do not match. Behind the card: the factory
+// blueprint picture (only for the eye); under it the company footer line.
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
+import { LOGIN_FOOTER_TEXT } from '../lib/brand'
 import { fakeFetch } from '../test/fakeFetch'
 import Login from './Login'
 
@@ -43,5 +45,20 @@ describe('Login', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('did not match')
     expect(onSignedIn).not.toHaveBeenCalled()
     expect(screen.getByRole('button', { name: 'Sign in' })).not.toBeDisabled() // can try again
+  })
+
+  it('has the blueprint picture behind the card (hidden from screen readers) and the company footer', () => {
+    const { container } = render(<Login onSignedIn={vi.fn()} />)
+
+    const picture = container.querySelector('[data-slot="login-background"]')
+    expect(picture).not.toBeNull()
+    expect(picture).toHaveAttribute('aria-hidden', 'true')
+    expect(picture!.querySelectorAll('svg').length).toBeGreaterThanOrEqual(3) // grid, gears, skyline
+    expect(picture!.querySelectorAll('[data-part="gear"]')).toHaveLength(3)
+
+    const footer = screen.getByRole('contentinfo')
+    expect(footer).toHaveTextContent(`© ${new Date().getFullYear()} ${LOGIN_FOOTER_TEXT}`)
+    expect(footer.textContent).not.toMatch(/demo/i)
+    expect(screen.getByLabelText('User ID')).toBeInTheDocument() // the form is still there
   })
 })

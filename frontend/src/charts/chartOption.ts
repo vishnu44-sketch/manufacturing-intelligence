@@ -394,6 +394,8 @@ export function buildOption(pick: ChartPick, colours: Colours, narrow: boolean, 
       const negative = pick.data.some((p) => p.values.some((v) => v !== null && v < 0))
       const horizontal = pick.horizontal || (narrow && n > 5)
       const labelChars = narrow ? 12 : 22
+      // upright bars with long names (a column chart asked for): the names are written slanted, so they still fit
+      const slant = !horizontal && !pick.time && pick.data.some((p) => p.label.length > (narrow ? 8 : 14))
       // rounded at the outer end (not stacked: the segments would be rounded in the middle), light at the end
       // and darker at the axis, a soft shadow; the value on each bar only when there are few bars
       const radius = negative || stacked ? 0 : horizontal ? [0, 6, 6, 0] : [6, 6, 0, 0]
@@ -421,10 +423,10 @@ export function buildOption(pick: ChartPick, colours: Colours, narrow: boolean, 
             color: colours.muted, fontSize: 11, interval: 0, formatter: (text: string) => cutText(String(text), labelChars) } }) }
         : { ...base, grid: barGrid, tooltip: axisTip, yAxis: valueAxis(), series,
           xAxis: categoryAxis(narrow ? 8 : 14, { axisLabel: {
-            color: colours.muted, fontSize: 11, interval: 0, hideOverlap: true,
-            formatter: (text: string) => cutText(String(text), narrow ? 8 : 14) } }) }
+            color: colours.muted, fontSize: 11, interval: 0, hideOverlap: !slant, rotate: slant ? 30 : 0,
+            formatter: (text: string) => cutText(String(text), slant ? (narrow ? 12 : 20) : narrow ? 8 : 14) } }) }
       const perBar = 12 * (stacked ? 1 : s) + 14
-      const height = horizontal ? Math.max(220, n * perBar + 50) : narrow ? 240 : 300
+      const height = horizontal ? Math.max(220, n * perBar + 50) : (narrow ? 240 : 300) + (slant ? 40 : 0)
       return { option, height: height + legendSpace }
     }
 
