@@ -200,7 +200,8 @@ def saved_result(saved, load_rows):
                              sql=saved.sql, secs=saved.secs or 0.0, tries=saved.tries,
                              sources=saved.sources, question=saved, model=saved.model,
                              sql_tokens=saved.sql_tokens, answer_tokens=saved.answer_tokens,
-                             understood_as=saved.understood_as, step_secs=saved.step_secs or {})
+                             understood_as=saved.understood_as, step_secs=saved.step_secs or {},
+                             chart_kind=saved.chart_kind or "")
     rows_error = ""
     if load_rows and saved.status == "ok" and saved.sql:
         try:

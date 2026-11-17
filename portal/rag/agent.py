@@ -200,7 +200,7 @@ NOT in ss_gold (no data for these): profit, margin or the cost of the items sold
 A "profit %" or "profit growth" BETWEEN two periods (e.g. this year vs last year): answer with the revenue of both periods and the revenue growth % (column revenue_growth_pct, calculated in SQL, same dates in both years) and write the MISSING line for true profit - the user gets a useful number instead of only "not available". A profit % of ONE period (no comparison) stays NO_DATA, with a TRY line for the revenue growth vs last year.
 
 Reply in exactly one of these four ways, with nothing else (no explanation):
-A) one SQL query inside a ```sql code block. If ONE PART of the question needs data that is not in ss_gold, write first one line "MISSING: <that part> - <why, in plain words>", then the ```sql block for the parts that can be answered. Write a MISSING line ONLY for something the question itself asks for - never for things it does not mention;
+A) one SQL query inside a ```sql code block. If ONE PART of the question needs data that is not in ss_gold, write first one line "MISSING: <that part> - <why, in plain words>", then the ```sql block for the parts that can be answered. Write a MISSING line ONLY for something the question itself asks for - never for things it does not mention. When the question (or "Written out in full") asks for a chart / graph / plot / diagram of any kind, in any words or with typos ("bar chat", "barchrt", "show as columns", "pie"), also write first one line "CHART: <kind>", kind one of: bar, horizontal bar, line, area, stacked area, stacked bar, grouped bar, pie, scatter, heatmap, treemap, waterfall, funnel, radar (no chart asked: no CHART line). Also first, only when they apply: "ASKS_FOR: <customers / products / sales people / states / countries>" when it asks for a ranking or list of those (not a name filter, not a count), and "PERIODS: <n>" when it asks for several periods ("last 6 months" = 6);
 B) when the question is about SS Manufacturing's business but NOTHING in it can be answered from ss_gold (a profit % between two periods is NOT this case - use A with the revenue growth, as said above): one line "NO_DATA: <why, in plain words>", optionally followed by one line "TRY: <a similar question ss_gold can answer>";
 In MISSING / NO_DATA / TRY lines write for a business user: never mention table, column or database names (say "the SS Manufacturing data", not "ss_gold").
 Follow-up questions: when "Earlier in this chat" is given, the new question was already written out in full ("Written out in full: ..."). Answer that full question, and reuse the period, customer, product and filters of the earlier questions' SQL where it builds on them. In NO_DATA / MISSING reasons name that period / customer, so the user sees the chat was followed.
@@ -246,7 +246,7 @@ Question: {question}"""
 
 RETRY_PROMPT = """That did not work: {problem}
 Write a corrected query for the same question, following all the rules.
-Reply with ONE ```sql block only (with the UNDERSTOOD / MISSING lines first when they apply), or NO_DATA / NO_SQL / REMEMBER / FORGET."""
+Reply with ONE ```sql block only (with the UNDERSTOOD / MISSING / CHART / ASKS_FOR / PERIODS lines first when they apply), or NO_DATA / NO_SQL / REMEMBER / FORGET."""
 
 REWRITE_SYSTEM_PROMPT = """You help "Manufacturing Intelligence", the business-data assistant of a pump manufacturer ("SS Manufacturing", demo data). A business user typed a new question in a chat.
 A message that asks to remember, note, save, update or forget something for later answers ("update your memory ...") is NOT a follow-up: reply with it unchanged.
@@ -432,6 +432,7 @@ class AskResult:
     notes: list = field(default_factory=list)    # extra facts for the answer call (e.g. a name matched but no rows)
     understood_as: str = ""                      # a follow-up written out on its own ('' = understood on its own)
     step_secs: dict = field(default_factory=dict)  # seconds per step of STEP_NAMES (empty = not measured)
+    chart_kind: str = ""                         # the chart the SQL call said was asked for (CHART_KINDS key; '' = none)
 
     @property
     def row_count(self):
@@ -564,6 +565,7 @@ def ask_events(question, user, context=None, use_memories=True, streaming=True):
             result.answer = UNEXPECTED
     if result.status != "ok":  # rows are only kept for a full answer
         result.sql, result.columns, result.rows, result.truncated = "", [], [], False
+        result.chart_kind = ""  # no rows, no chart
     result.secs = round(time.perf_counter() - started, 2)
     if result.step_secs:  # the rest of the total, e.g. the notes for the answer (saving the row is not in it)
         result.add_secs("other", result.secs - sum(result.step_secs.values()))
@@ -586,6 +588,7 @@ def ask_events(question, user, context=None, use_memories=True, streaming=True):
         total_tokens=result.total_tokens,
         understood_as=result.understood_as,
         step_secs=result.step_secs or None,
+        chart_kind=result.chart_kind,
     )
     memory = memory or result.memory  # saved by the rules above, or by the AI's REMEMBER reply
     if memory is not None:  # the memory points to the question that said "Remember ..."
@@ -1314,9 +1317,10 @@ def fy_labels(text):
 def read_sql_reply(reply):
     """What the AI wrote: ('no_sql', '') / ('no_data', '') / ('empty', '') / ('sql', the SQL text) /
     ('remember', the fact to save for the user) / ('forget', the memory to remove).
-    The NO_DATA reason and a MISSING line are read by data_notes()."""
+    The NO_DATA reason and a MISSING line are read by data_notes(), a CHART line by chart_kind_line(), the
+    ASKS_FOR / PERIODS lines by portal/ai_hints.py."""
     text = re.sub(r"<think>.*?</think>", "", reply or "", flags=re.S).strip()  # some models think aloud
-    text = re.sub(r"(?im)^\W*(?:MISSING|UNDERSTOOD):.*$", "", text).strip()  # notes, not SQL
+    text = re.sub(r"(?im)^\W*(?:MISSING|UNDERSTOOD|CHART|ASKS_FOR|PERIODS)\s*:.*$", "", text).strip()  # notes, not SQL
     bare = strip_fences(text).strip().strip("`'\".").strip()
     if not bare:
         return "empty", ""
@@ -1422,6 +1426,44 @@ def data_notes(reply):
         found = plain_text(match.group(1)).strip(" `*")[:300] if match else ""
         return "" if re.fullmatch(r"(?i)\W*(none|nothing|nil|n/?a|not applicable)\W*", found) else found
     return line("NO_DATA"), line("TRY"), line("MISSING")
+
+
+# 17-Nov: "can you create plot bar chat last 6 months sales" got a LINE chart - the page picked the chart from fixed
+# words and missed the typo. The SQL call now names the chart it understood ("CHART: bar", SQL_SYSTEM_PROMPT, no extra
+# AI call); our code turns its words into the chart keys of the Ask page (frontend/src/charts: the contract).
+# The words are written without spaces or dashes here ("Horizontal Bar", "stacked-bar" -> "horizontalbar", "stackedbar").
+CHART_KINDS = {
+    "bar": "bar", "bars": "bar", "column": "bar", "columns": "bar", "verticalbar": "bar", "verticalcolumn": "bar",
+    "horizontalbar": "hbar", "horizontalbars": "hbar", "horizontalcolumn": "hbar", "hbar": "hbar", "barh": "hbar",
+    "line": "line", "lines": "line",
+    "area": "area",
+    "stackedarea": "stackedArea",
+    "stackedbar": "stacked", "stackedbars": "stacked", "stackedcolumn": "stacked", "stacked": "stacked",
+    "groupedbar": "grouped", "groupedbars": "grouped", "groupedcolumn": "grouped", "grouped": "grouped",
+    "clusteredbar": "grouped", "clusteredcolumn": "grouped",
+    "pie": "pie", "donut": "pie", "doughnut": "pie",
+    "scatter": "scatter",
+    "heatmap": "heatmap",
+    "treemap": "treemap",
+    "waterfall": "waterfall",
+    "funnel": "funnel",
+    "radar": "radar", "spider": "radar",
+}
+
+
+def chart_kind_line(reply):
+    """The chart the AI said the question asks for, from its "CHART: <kind>" line, as the Ask page's key ("bar",
+    "hbar", "line", "area", "stackedArea", "stacked", "grouped", "pie", "scatter", "heatmap", "treemap",
+    "waterfall", "funnel", "radar"); '' when there is no CHART line, "CHART: none" or words we do not know."""
+    text = re.sub(r"<think>.*?</think>", "", reply or "", flags=re.S)
+    match = re.search(r"(?im)^\W*CHART\s*:\s*(.+)$", text)
+    if not match:
+        return ""
+    words = re.split(r"\s[-–]\s|[(,;:]", plain_text(match.group(1)))[0].lower()  # "bar - monthly sales" -> "bar"
+    words = re.sub(r"[^a-z]+", " ", words).split()
+    while words and words[-1] in ("chart", "charts", "graph", "graphs", "plot", "plots", "diagram", "diagrams"):
+        words.pop()  # "bar chart" -> "bar"
+    return CHART_KINDS.get("".join(words), "")
 
 
 def order_months_by_date(sql):

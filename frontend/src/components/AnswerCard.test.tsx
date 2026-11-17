@@ -215,6 +215,89 @@ describe('AnswerCard chart wish', () => {
   })
 })
 
+// 17-Nov: "can you create plot bar chat last 6 months sales" drew a line - now the AI names the kind (chart_kind)
+const SIX_MONTHS = {
+  headers: [{ name: 'sales_month', num: false }, { name: 'net_sales_inr', num: true }],
+  rows: [['Jun 2026', '205,330,410.00'], ['Jul 2026', '240,118,900.75'], ['Aug 2026', '260,700,001.00'],
+    ['Sep 2026', '255,980,450.00'], ['Oct 2026', '290,442,120.30'], ['Nov 2026', '310,005,600.00']]
+    .map(([month, value]) => [{ text: month, num: false }, { text: value, num: true }]),
+  row_count: 6, truncated: false, rows_error: '',
+}
+
+describe('AnswerCard chart kind from the AI (chart_kind)', () => {
+  beforeAll(async () => { await import('../charts/AnswerChart') }, 30_000)
+
+  it('draws the 17-Nov question as bars when the AI names "bar"', async () => {
+    fakeFetch({ '/api/questions/7/rows': { body: SIX_MONTHS } })
+
+    render(<AnswerCard card={{ ...OK, text: 'can you create plot bar chat last 6 months sales',
+      understood_as: 'Net sales for each of the last 6 sales months.', chart_kind: 'bar' }} autoRows />)
+
+    expect(await screen.findByRole('img', { name: /^Bar chart/ })).toBeInTheDocument()   // not the line
+    await waitFor(() => expect(lastChart()?.types()).toEqual(['bar']))
+  })
+
+  it('lets chart_kind win over the words', async () => {
+    fakeFetch({ '/api/questions/7/rows': { body: SIX_MONTHS } })
+
+    render(<AnswerCard card={{ ...OK, text: 'last 6 months sales as a line chart', chart_kind: 'bar' }} autoRows />)
+
+    expect(await screen.findByRole('img', { name: /^Bar chart/ })).toBeInTheDocument()
+  })
+
+  it('falls back to the words for an unknown or missing chart_kind', async () => {
+    fakeFetch({ '/api/questions/7/rows': { body: SIX_MONTHS } })
+
+    const { unmount } = render(<AnswerCard card={{ ...OK, text: 'last 6 months sales as a bar chart', chart_kind: 'gizmo' }}
+      autoRows />)
+    expect(await screen.findByRole('img', { name: /^Bar chart/ })).toBeInTheDocument()
+    unmount()
+
+    // an older server sends no chart_kind: the words, as before (and no words: the best kind, a line for months)
+    const { unmount: unmount2 } = render(<AnswerCard card={{ ...OK, text: 'last 6 months sales as a bar chart' }} autoRows />)
+    expect(await screen.findByRole('img', { name: /^Bar chart/ })).toBeInTheDocument()
+    unmount2()
+    render(<AnswerCard card={{ ...OK, text: 'last 6 months sales', chart_kind: '' }} autoRows />)
+    expect(await screen.findByRole('img', { name: /^Line chart/ })).toBeInTheDocument()
+  })
+
+  it('draws a chart that fits when the rows cannot show the named kind', async () => {
+    const WITH_MINUS = {
+      ...ROWS, row_count: 3,
+      rows: [['Aurora', '1,000.00'], ['Meridian', '-250.00'], ['Lotus', '500.00']]
+        .map(([name, value]) => [{ text: name, num: false }, { text: value, num: true }]),
+    }
+    fakeFetch({ '/api/questions/7/rows': { body: WITH_MINUS } })
+
+    render(<AnswerCard card={{ ...OK, text: 'net sales by customer', chart_kind: 'pie' }} autoRows />)
+
+    expect(await screen.findByRole('img', { name: /^Bar chart/ })).toBeInTheDocument()
+    expect(screen.getByText('A donut needs up to 12 positive parts of one amount - showing bars.')).toBeInTheDocument()
+  })
+
+  it('says why there is no chart when the AI named a kind and only 1 row came back', async () => {
+    const ONE_ROW = { ...ROWS, rows: ROWS.rows.slice(0, 1), row_count: 1 }
+    fakeFetch({ '/api/questions/7/rows': { body: ONE_ROW } })
+
+    render(<AnswerCard card={{ ...OK, text: 'Invoice value of Aurora in Oct 2026', chart_kind: 'bar' }} autoRows />)
+
+    expect(await screen.findByText('Only 1 row, so no chart can be drawn.')).toBeInTheDocument()
+    expect(screen.getByText('1,730,000.00')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Make this chart with AI' })).not.toBeInTheDocument()
+  })
+
+  it('adds no note for an unknown chart_kind or a question that only says "chat"', async () => {
+    const ONE_ROW = { ...ROWS, rows: ROWS.rows.slice(0, 1), row_count: 1 }
+    fakeFetch({ '/api/questions/7/rows': { body: ONE_ROW } })
+
+    render(<AnswerCard card={{ ...OK, text: 'in this chat, invoice value of Aurora in Oct 2026', chart_kind: 'gizmo' }}
+      autoRows />)
+
+    expect(await screen.findByText('1,730,000.00')).toBeInTheDocument()
+    expect(screen.queryByText(/no chart can be drawn|can't be drawn as a chart/)).not.toBeInTheDocument()
+  })
+})
+
 // the real answer "net sales by product category and sale type": 2 labels + an amount
 const PIVOT_ROWS = { ...CATEGORY_SALE_TYPE, row_count: 17, truncated: false, rows_error: '' }
 const PIVOT: Card = { ...OK, text: 'Net sales by product category and sale type', understood_as: '' }

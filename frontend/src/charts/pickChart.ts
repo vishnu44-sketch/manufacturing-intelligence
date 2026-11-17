@@ -56,9 +56,17 @@ export interface ChartPick {
   catchAll: CatchAll | null // a catch-all group of the label (the "Hide / Show" button), else null
 }
 
+/** True for one of the kinds the app draws itself ('bar', 'pie' ...); false for '', null or any other text. */
+export function isChartKind(value: unknown): value is ChartKind {
+  return typeof value === 'string' && (ORDER as string[]).includes(value)
+}
+
 // the chart a question asks for in words. "line" alone is not enough (invoice lines, order lines): it needs
 // chart / graph / plot / trend; "area" alone is a place (sales by area); "grouped" alone is "grouped by".
 // The more exact wishes come first ("stacked area" before "stacked", "horizontal bar" before "bar").
+// After "bar", "line" or "area" a typo of chart / graph counts too (17-Nov: "plot bar chat" drew a line):
+// "chat" alone never counts ("new chat", "this chat"), only right after one of these kind words.
+const CHART_WORD = '(chart|graph|plot|diagram|chat|chrt|cahrt|chrat|graf|grph)'
 const WANTS: [ChartKind, RegExp][] = [
   ['waterfall', /\bwaterfall\b|\bbridge\s*(chart|graph)\b/i],
   ['funnel', /\bfunnel\b/i],
@@ -67,18 +75,28 @@ const WANTS: [ChartKind, RegExp][] = [
   ['heatmap', /\bheat\s*-?\s*maps?\b|\bheat\s*(chart|grid|table)s?\b/i],
   ['scatter', /\bscatter(\s*(chart|graph|plot|diagram))?s?\b|\bx\s*-?\s*y\s*(chart|graph|plot)s?\b/i],
   ['stackedArea', /\bstacked\s*area\b/i],
-  ['area', /\barea\s*(chart|graph|plot|diagram)s?\b/i],
+  ['area', new RegExp(`\\barea\\s*${CHART_WORD}s?\\b`, 'i')],
   ['stacked', /\bstacked\b/i],
   ['grouped', /\b(grouped|clustered|side[\s-]*by[\s-]*side)\s*(bar|column)s?\b|\b(grouped|clustered)\s*(chart|graph)s?\b/i],
   ['hbar', /\bhorizontal\s*(bar|column)s?\b|\bhorizontal\s*(chart|graph)s?\b|\bsideways\s*bars?\b/i],
   ['pie', /\b(pie|donut|doughnut)s?\b/i],
-  ['bar', /\b(bar|column)s?\s*(chart|graph|plot|diagram)s?\b|\bbars\b|\bbar\s+(view|form)\b/i],
-  ['line', /\b(line|trend)\s*(chart|graph|plot|diagram)s?\b|\btrend\s*line\b|\bmulti[\s-]*lines?\b/i],
+  // also "plot a bar", "draw bar", "as columns"
+  ['bar', new RegExp(`\\b(bar|column)s?\\s*${CHART_WORD}s?\\b|\\bbars\\b|\\bbar\\s+(view|form)\\b` +
+    '|\\b(plot|draw)\\s+(it\\s+)?(as\\s+)?(a\\s+|the\\s+)?bar\\b|\\bas\\s+columns\\b', 'i')],
+  ['line', new RegExp(`\\b(line|trend)\\s*${CHART_WORD}s?\\b|\\btrend\\s*line\\b|\\bmulti[\\s-]*lines?\\b`, 'i')],
 ]
 
 /** The chart kind the question asks for in words, or null when it names none (then pickChart chooses). */
 export function chartKindFromText(text: string): ChartKind | null {
   return WANTS.find(([, words]) => words.test(text ?? ''))?.[0] ?? null
+}
+
+/** The chart kind to draw first: the one the AI named when it wrote the SQL (the answer's chart_kind) when it
+ *  is a kind the app draws, else the one the question asks for in words (old answers, documents, memory
+ *  replies, an older server) - or null (then pickChart chooses). pickChart still swaps a kind the rows
+ *  cannot show for one that fits. */
+export function chartWish(chartKind: string | null | undefined, text: string): ChartKind | null {
+  return isChartKind(chartKind) ? chartKind : chartKindFromText(text)
 }
 
 // any chart wish in words - a kind ("bar chart", "pie") or just "chart" / "graph" / "plot": when the rows fit
