@@ -21,7 +21,9 @@ import type { SqlEditorHandle } from './SqlEditor'
 import { type SaveRequest, SqlSaveDialog } from './SqlSaveDialog'
 import { type SavedActions, SqlSaved } from './SqlSaved'
 import { SqlTabs } from './SqlTabs'
-import { type SqlTab, type TabsState, isBlank, isDirty, keepTabs, newTab, readTabs, savedTab, sqlFileName } from './sqlTabModel'
+import {
+  type SqlTab, type TabsState, clearHandOff, isBlank, isDirty, keepTabs, newTab, readTabs, savedTab, sqlFileName, withHandOff,
+} from './sqlTabModel'
 import { Button } from './ui/button'
 import { Input } from './ui/input'
 import { Popover, PopoverContent, PopoverTrigger } from './ui/popover'
@@ -322,7 +324,9 @@ export default function SqlPage() {
   const [schema, setSchema] = useState<SqlSchema | null>(null)
   const [schemaError, setSchemaError] = useState('')
   const [forbidden, setForbidden] = useState(false)
-  const [{ tabs, active }, setTabsState] = useState<TabsState>(readTabs)
+  // the kept tabs, plus the SQL an answer's "Open in SQL page" handed over (a new tab, shown first)
+  const [{ tabs, active }, setTabsState] = useState<TabsState>(() => withHandOff(readTabs()))
+  useEffect(() => clearHandOff(), []) // the hand-off is a tab now (kept with the tabs)
   const [outputs, setOutputs] = useState<Record<string, TabOutput>>({})
   const [runningTab, setRunningTab] = useState<string | null>(null)
   const busy = useRef(false) // a second Ctrl+Enter before the first answer does nothing

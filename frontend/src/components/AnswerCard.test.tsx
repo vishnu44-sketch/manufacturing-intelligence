@@ -1,7 +1,7 @@
 // The answer card: an answered data question shows its SQL (folded), its rows and the Excel link;
 // a documents answer shows its PDF pages (📄) and no SQL, rows or Excel; a saved memory shows its chip only.
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeAll, describe, expect, it, onTestFinished, vi } from 'vitest'
 import { CATEGORY_SALE_TYPE } from '../charts/testRows'
 import { charts, lastChart } from '../test/fakeEcharts'
 import { callsTo, fakeFetch } from '../test/fakeFetch'
@@ -434,5 +434,34 @@ describe('AnswerCard column chart (chart_kind "column")', () => {
     await waitFor(() => expect(lastChart()?.types()).toEqual(['bar']))
     const option = lastChart()?.option as { yAxis: { type: string } }
     expect(option.yAxis.type).toBe('category')       // the names down the side
+  })
+})
+
+// 17-Nov: the AI's SQL can be copied (everyone) and opened in the SQL page (admins)
+describe('AnswerCard SQL buttons', () => {
+  it('copies the whole SQL and says "Copied"', async () => {
+    fakeFetch({})
+    const writeText = vi.fn(() => Promise.resolve())
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true })
+    onTestFinished(() => { Reflect.deleteProperty(navigator, 'clipboard') })
+
+    render(<AnswerCard card={OK} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Copy SQL' }))
+
+    expect(await screen.findByRole('button', { name: 'Copied' })).toBeInTheDocument()
+    expect(writeText).toHaveBeenCalledWith(OK.sql)
+    expect(screen.queryByRole('button', { name: /Open in SQL page/ })).not.toBeInTheDocument()   // not an admin
+  })
+
+  it('opens the SQL in the SQL page for an admin', () => {
+    fakeFetch({})
+    const open = vi.spyOn(window, 'open').mockImplementation(() => null)
+    onTestFinished(() => { open.mockRestore(); window.localStorage.removeItem('mi.sqlOpen') })
+
+    render(<AnswerCard card={OK} staff />)
+    fireEvent.click(screen.getByRole('button', { name: /Open in SQL page/ }))
+
+    expect(open).toHaveBeenCalledWith('/sql', '_blank', 'noopener')
+    expect(JSON.parse(window.localStorage.getItem('mi.sqlOpen') ?? '{}').sql).toBe(OK.sql)
   })
 })
