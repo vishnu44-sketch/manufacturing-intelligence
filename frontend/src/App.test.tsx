@@ -72,7 +72,7 @@ describe('App', () => {
     expect(await screen.findByText('No audit lines match these filters.')).toBeInTheDocument()
     expect(screen.getByRole('link', { name: /Audit/ })).toHaveAttribute('aria-current', 'page')
     expect(screen.getByRole('link', { name: /Audit/ })).toHaveAttribute('href', '/audit')
-    expect(document.title).toBe('Audit log · Manufacturing Intelligence')
+    expect(document.title).toBe('Audit log · SSAGE')
     expect(parseRoute('/audit', '?page=3&user=asha')).toEqual(
       { kind: 'audit', page: 3, user: 'asha', action: '', from: '', to: '', q: '' })
   })
@@ -84,7 +84,7 @@ describe('App', () => {
 
     expect(await screen.findByText('What I remember about you')).toBeInTheDocument()
     expect(screen.getByRole('link', { name: 'Memory' })).toHaveAttribute('aria-current', 'page')
-    expect(document.title).toBe('Memory · Manufacturing Intelligence')
+    expect(document.title).toBe('Memory · SSAGE')
     expect(parseRoute('/memory')).toEqual({ kind: 'memory' })
   })
 
@@ -102,7 +102,7 @@ describe('App', () => {
     expect(screen.getByRole('link', { name: /Users/ })).toHaveAttribute('href', '/users')
     expect(screen.getByRole('link', { name: /Documents/ })).toHaveAttribute('href', '/documents')
     expect(await screen.findByText('Records in each table')).toBeInTheDocument()
-    expect(document.title).toBe('Data · Manufacturing Intelligence')
+    expect(document.title).toBe('Data · SSAGE')
   })
 
   it('moves between pages without a page load', async () => {
@@ -156,7 +156,7 @@ describe('App', () => {
     expect(links[0]).toHaveAccessibleName('Home')
     expect(links[0]).toHaveAttribute('aria-current', 'page')
     expect(links[1]).toHaveAccessibleName('Assistant')
-    expect(document.title).toBe('Home · Manufacturing Intelligence')
+    expect(document.title).toBe('Home · SSAGE')
     expect(callsTo(fetch, '/api/home', 'GET')).toHaveLength(1)
     expect(callsTo(fetch, '/api/chats', 'GET')).toHaveLength(0)   // the Ask page is not opened
 
@@ -164,7 +164,7 @@ describe('App', () => {
 
     await askPage()
     expect(window.location.pathname).toBe('/ask')
-    expect(document.title).toBe('Assistant · Manufacturing Intelligence')
+    expect(document.title).toBe('Assistant · SSAGE')
     // 16-Nov: the Assistant has no title row either - the conversation gets the room
     expect(screen.queryByRole('heading', { level: 1, name: 'Assistant' })).not.toBeInTheDocument()
     expect(document.querySelector('.mi-shell-title')).toBeNull()
@@ -185,13 +185,13 @@ describe('App', () => {
     fireEvent.click(menu().getByRole('link', { name: 'Assistant' }))      // /ask opens the latest chat
 
     await waitFor(() => expect(window.location.pathname).toBe('/c/1'))
-    await waitFor(() => expect(document.title).toBe('Net sales by month · Manufacturing Intelligence'))
+    await waitFor(() => expect(document.title).toBe('Net sales by month · SSAGE'))
     expect(document.querySelector('.mi-shell-title')).toBeNull()
     expect(screen.getByRole('button', { name: 'Options for this chat' })).toBeInTheDocument()
 
     fireEvent.click(menu().getByRole('link', { name: 'Memory' }))
     expect(await screen.findByRole('heading', { level: 1, name: 'Memory' })).toBeInTheDocument()
-    await waitFor(() => expect(document.title).toBe('Memory · Manufacturing Intelligence'))
+    await waitFor(() => expect(document.title).toBe('Memory · SSAGE'))
   })
 
   it('the top bar opens a new chat and the History page', async () => {

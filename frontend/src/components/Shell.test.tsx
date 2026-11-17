@@ -54,7 +54,7 @@ describe('Shell: the menu (05-Nov)', () => {
     expect(links[0]).toHaveAttribute('title', 'Home')                       // the name on hover in the small menu
     expect(links[0].querySelector('svg')).not.toBeNull()
     expect(menu().getByRole('link', { name: 'Assistant' })).toHaveAttribute('href', '/ask')
-    expect(document.title).toBe('Home · Manufacturing Intelligence')
+    expect(document.title).toBe('Home · SSAGE')
   })
 
   it('is in groups: Home, Intelligence, Tools - and Administration for staff only (12-Nov)', () => {
@@ -85,15 +85,15 @@ describe('Shell: the page title row (06-Nov)', () => {
     expect(container.querySelector('.mi-shell-title')).toBeNull()
     expect(screen.queryByRole('heading', { level: 1 })).not.toBeInTheDocument()
     expect(screen.getByText('Page')).toBeInTheDocument()
-    expect(document.title).toBe('Home · Manufacturing Intelligence')
+    expect(document.title).toBe('Home · SSAGE')
   })
 })
 
 describe('Shell: the top bar (12-Nov)', () => {
   it('has the brand, "New chat" to /new and "History" to /history', () => {
     page()
-    expect(topBar().getByText('Manufacturing Intelligence')).toBeInTheDocument()
-    expect(topBar().getByText('Intelligence Platform')).toBeInTheDocument()
+    expect(topBar().getByText('SSAGE')).toBeInTheDocument()
+    expect(topBar().getByText('Manufacturing Intelligence Platform')).toBeInTheDocument()
     expect(topBar().getByRole('link', { name: 'New chat' })).toHaveAttribute('href', '/new')
     expect(topBar().getByRole('link', { name: 'History' })).toHaveAttribute('href', '/history')
 

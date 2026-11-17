@@ -71,7 +71,7 @@ describe('AskPage chat actions', () => {
     expect(document.querySelector('.conv-title')).toBeNull()
     expect(screen.queryByText(/2 questions · started/)).not.toBeInTheDocument()
     expect(screen.queryByText('Net sales by month')).not.toBeInTheDocument()       // the title is in the tab only
-    await waitFor(() => expect(document.title).toBe('Net sales by month · Manufacturing Intelligence'))
+    await waitFor(() => expect(document.title).toBe('Net sales by month · SSAGE'))
     // the "..." button floats at the top right of the conversation, over the scrolled thread
     const menu = screen.getByRole('button', { name: 'Options for this chat' }).closest('.conv-menu') as HTMLElement
     expect(menu.parentElement).toHaveClass('conv-scroll', 'has-menu')
@@ -138,7 +138,7 @@ describe('AskPage chat actions', () => {
     fireEvent.click(within(menu).getByRole('button', { name: 'Rename' }))
 
     await waitFor(() => expect(callsTo(fetch, '/api/chats/1/rename')).toEqual([{ title: 'Sales per month' }]))
-    await waitFor(() => expect(document.title).toBe('Sales per month · Manufacturing Intelligence'))   // the tab follows
+    await waitFor(() => expect(document.title).toBe('Sales per month · SSAGE'))   // the tab follows
   })
 
   it('removes the open chat and says where its questions are', async () => {

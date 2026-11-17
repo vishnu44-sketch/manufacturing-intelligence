@@ -1,4 +1,4 @@
-/* Manufacturing Intelligence - the look of the old (non-Tailwind) pages.
+/* SSAGE - the look of the old (non-Tailwind) pages.
    Brand: Poppins, blue #0B5FB3 (darker #094C91, soft tint #E8F1FB), a light grey ground, white surfaces.
    Red is kept only for errors and deleting (--danger). Every colour is a variable: the light values are
    in :root, the dark values in :root[data-theme="dark"] (Shell.tsx sets data-theme on <html>). */
@@ -20,7 +20,7 @@
   --sidebar-bg: #FFFFFF; --sidebar-fg: #212529; --sidebar-muted: #6B7480; --sidebar-accent: #EEF3FA;
   --shadow-c: #111827; --overlay: rgba(15,20,32,.45);
   /* the sign-in picture panel is dark in both modes */
-  --on-dark: #FFFFFF; --brand-on-dark: #6FB1FF;
+  --on-dark: #FFFFFF; --brand-on-dark: #6FB1FF; --live: #22C55E;
   --panel-1: #1F4274; --panel-2: #12274A; --panel-3: #0A1526;
 }
 /* the dark colours: navy / charcoal grounds, light text, a lighter blue (dark text on brand buttons) */
@@ -38,7 +38,7 @@
   --purple: #B79CFF; --purple-bg: #2A2145;
   --sidebar-bg: #131927; --sidebar-fg: #E6EAF2; --sidebar-muted: #8592A6; --sidebar-accent: #1E2638;
   --shadow-c: #000000; --overlay: rgba(0,0,0,.6);
-  --on-dark: #FFFFFF; --brand-on-dark: #6FB1FF;
+  --on-dark: #FFFFFF; --brand-on-dark: #6FB1FF; --live: #22C55E;
   --panel-1: #1F4274; --panel-2: #12274A; --panel-3: #0A1526;
 }
 /* the old names: the brand was red once; anything that still says --red gets the brand blue */
@@ -189,46 +189,44 @@ code { background: var(--tint); border-radius: 6px; padding: 2px 6px; font-size:
 }
 
 /* ------------------------------------------------------------ login
-   Split sign-in: SS Manufacturing's own banner and logo on the left, the card on the right. */
-.login-split { display: flex; min-height: 100vh; }
-.login-card { width: 430px; max-width: 100%; background: var(--surface); border-radius: 18px;
-  padding: 34px 38px 30px; box-shadow: 0 30px 70px -30px color-mix(in srgb, var(--shadow-c) 65%, transparent);
-  display: flex; flex-direction: column; gap: 18px;
+   One card in the middle (like the healthcare app): the SSAGE mark and name, a line on what it is for, the form. */
+.login-page { min-height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 18px; padding: 40px 16px 24px; position: relative; overflow: hidden;
+  background:
+    radial-gradient(900px 520px at 12% 8%, color-mix(in srgb, var(--brand) 13%, transparent), transparent 62%),
+    radial-gradient(760px 480px at 92% 96%, color-mix(in srgb, var(--brand2) 11%, transparent), transparent 60%),
+    var(--bg); }
+.login-card { width: 440px; max-width: 100%; background: var(--surface); border-radius: 20px;
+  border: 1px solid var(--line2); padding: 32px 34px 24px;
+  box-shadow: 0 30px 70px -32px color-mix(in srgb, var(--shadow-c) 55%, transparent),
+    0 2px 6px -2px color-mix(in srgb, var(--shadow-c) 12%, transparent);
+  display: flex; flex-direction: column; gap: 16px;
   animation: cardIn .5s cubic-bezier(.2,.8,.2,1) both; }
-.login-brand { flex: 1.15; position: relative; color: var(--on-dark); padding: 44px 52px;
-  display: flex; flex-direction: column; justify-content: space-between;
-  background: var(--panel-3) center / cover no-repeat; isolation: isolate; }
-.login-brand::before { content: ""; position: absolute; inset: 0;
-  background: linear-gradient(100deg, color-mix(in srgb, var(--panel-3) 92%, transparent) 35%, color-mix(in srgb, var(--panel-3) 35%, transparent) 100%); }
-.login-brand > * { position: relative; }
-.lb-logo { height: 52px; display: block; }
-.lb-sub { font-size: 12px; letter-spacing: .14em; font-weight: 600; color: color-mix(in srgb, var(--on-dark) 70%, transparent); margin-top: 8px; }
-.lb-tag { font-size: 34px; font-weight: 800; line-height: 1.15; max-width: 520px; }
-.lb-tag span { color: var(--brand-on-dark); }
-.lb-text { font-size: 15px; color: color-mix(in srgb, var(--on-dark) 75%, transparent); margin-top: 14px; max-width: 480px; }
-.lb-pills { display: flex; gap: 10px; margin-top: 28px; flex-wrap: wrap; }
-.lb-pills span { border: 1px solid color-mix(in srgb, var(--on-dark) 28%, transparent); border-radius: 20px; padding: 6px 14px;
-  font-size: 12.5px; color: color-mix(in srgb, var(--on-dark) 85%, transparent); }
-.lb-foot { font-size: 12px; color: color-mix(in srgb, var(--on-dark) 55%, transparent); }
-/* banner slider: pictures sit under the dark shade and the text */
-.login-brand > .lb-slides { position: absolute; inset: 0; z-index: -1; }
-.lb-slide { position: absolute; inset: 0; background: center / cover no-repeat;
-  opacity: 0; transition: opacity 1.2s ease; }
-.lb-slide.on { opacity: 1; }
-.lb-now { display: flex; align-items: center; gap: 14px; margin-bottom: 10px;
-  font-size: 13px; font-weight: 600; color: color-mix(in srgb, var(--on-dark) 85%, transparent); }
-.lb-dots { display: flex; gap: 7px; }
-.lb-dots button { width: 8px; height: 8px; border-radius: 50%; border: none; padding: 0;
-  background: color-mix(in srgb, var(--on-dark) 35%, transparent); cursor: pointer; transition: all .3s; }
-.lb-dots button.on { background: var(--brand-on-dark); width: 20px; border-radius: 4px; }
-.login-side { flex: 1; display: flex; align-items: center; justify-content: center;
-  background: var(--bg); padding: 40px; position: relative; }
-.lb-top, .lb-mid { animation: fadeUp .5s ease both; }
-@media (max-width: 900px) {
-  .login-split { flex-direction: column; }
-  .login-brand { padding: 28px 24px; min-height: 0; }
-  .lb-mid { display: none; }
-  .login-side { padding: 24px 16px; }
+.lc-brand { display: flex; align-items: center; justify-content: center; gap: 13px; }
+.lc-brand-text { display: flex; flex-direction: column; line-height: 1.15; }
+.lc-name { font-size: 25px; font-weight: 800; letter-spacing: .06em; color: var(--head); }
+.lc-sub { font-size: 10.5px; font-weight: 600; letter-spacing: .16em; text-transform: uppercase; color: var(--muted);
+  margin-top: 3px; }
+.lc-text { margin: 0; text-align: center; font-size: 14.5px; line-height: 1.55; color: var(--text-2); }
+.lc-pills { display: flex; justify-content: center; flex-wrap: wrap; gap: 8px; }
+.lc-pills span { font-size: 12px; font-weight: 500; color: var(--brand); background: var(--brand-bg);
+  border: 1px solid color-mix(in srgb, var(--brand) 22%, transparent); border-radius: 999px; padding: 4px 12px; }
+.lc-form { display: flex; flex-direction: column; gap: 15px; margin-top: 4px; }
+.lc-submit { padding: 13px 0; font-size: 15px; border-radius: 12px;
+  box-shadow: 0 10px 22px -12px color-mix(in srgb, var(--brand) 85%, transparent); }
+.lc-note { border-top: 1px solid var(--line); padding-top: 14px; text-align: center; font-size: 12.5px;
+  line-height: 1.5; color: var(--muted); }
+.login-foot { font-size: 11.5px; color: var(--muted); text-align: center; }
+/* the mark: a factory on the blue tile with a green "live" dot (top bar and sign-in) */
+.brand-tile { position: relative; display: inline-grid; place-items: center; flex: none; border-radius: 28%;
+  color: var(--on-brand); background: linear-gradient(135deg, var(--brand), var(--brand2));
+  box-shadow: 0 6px 14px -6px color-mix(in srgb, var(--brand) 80%, transparent); }
+.brand-tile-dot { position: absolute; top: 14%; right: 14%; width: 22%; height: 22%; border-radius: 50%;
+  background: var(--live); box-shadow: 0 0 0 2px var(--brand); animation: brandPulse 2.4s ease-in-out infinite; }
+@keyframes brandPulse { 0%, 100% { opacity: 1; } 50% { opacity: .45; } }
+@media (max-width: 480px) {
+  .login-card { padding: 26px 20px 20px; }
+  .lc-name { font-size: 22px; }
 }
 
 /* ------------------------------------------------------------ Manufacturing Intelligence + History */
@@ -478,7 +476,6 @@ pre.doc-text { margin: 10px 0 2px; background: var(--tint); border-radius: 8px; 
   font-size: 11.5px; color: var(--muted); }
 .app-foot img { height: 34px; width: auto; mix-blend-mode: multiply; }
 :root[data-theme="dark"] .app-foot img { mix-blend-mode: normal; }
-.login-foot { position: absolute; left: 0; right: 0; bottom: 0; }
 .doc-db{margin-top:8px;}
 
 /* ------------------------------------------------------------ phone width
@@ -504,9 +501,3 @@ pre.doc-text { margin: 10px 0 2px; background: var(--tint); border-radius: 8px; 
 }
 .answer-card .understood { margin: 2px 0 8px; font-size: 12px; font-style: italic; }
 
-/* text logo (Manufacturing Intelligence) instead of a company logo picture */
-.brand-mark { display: inline-flex; align-items: center; justify-content: center; width: 40px; height: 40px;
-  border-radius: 10px; background: linear-gradient(135deg, var(--brand), var(--brand2)); color: var(--on-brand);
-  font-weight: 700; font-size: 16px; letter-spacing: .04em; }
-.lb-logo.brand-mark { width: 56px; height: 56px; font-size: 22px; }
-.login-brand { background: radial-gradient(circle at 20% 15%, var(--panel-1) 0%, var(--panel-2) 55%, var(--panel-3) 100%); }

@@ -2,7 +2,7 @@
 // right "New chat", "History", the dark-mode button and the user's round badge, which opens a small menu with
 // the name, the role and "Sign out"), and under it the light menu on the left, in groups: Home (Home, Assistant),
 // Intelligence (Knowledge graph), Tools (History, Memory) and - for staff only - Administration (Users,
-// Documents, Data, SQL, Audit). The page it is on is a filled pill. The browser tab shows "<page> · Manufacturing Intelligence".
+// Documents, Data, SQL, Audit). The page it is on is a filled pill. The browser tab shows "<page> · SSAGE".
 // Above the page is a row with its title (a page can go without it: header={false}, as Home and the Assistant do).
 // The « button under the menu makes it small (icons only, the name on hover) on every page; » opens it again. The
 // choice is kept in this browser (localStorage). On a phone the menu is a drawer, opened by the ☰ button in the top bar.
@@ -16,6 +16,8 @@ import { cn } from '@/lib/utils'
 import { useTheme } from '@/lib/theme'
 import { Link, useRouter } from '../router'
 import type { Me } from '../types'
+import { APP_NAME, APP_SUBTITLE, FOOTER_TEXT, tabTitle } from '../lib/brand'
+import BrandMark from './BrandMark'
 import { Popover, PopoverContent, PopoverTrigger } from './ui/popover'
 import './shell.css'
 
@@ -106,7 +108,7 @@ function MenuLink({ entry, active, slim }: { entry: Entry; active: MenuItem; sli
 export default function Shell({ me, title, active, onSignOut, header = true, children }:
   { me: Me; title: string; active: MenuItem; onSignOut: () => void; header?: boolean; children: ReactNode }) {
   useEffect(() => {
-    document.title = `${title} · Manufacturing Intelligence`
+    document.title = tabTitle(title)
   }, [title])
 
   const [slim, setSlim] = useState(readSlim)
@@ -144,10 +146,10 @@ export default function Shell({ me, title, active, onSignOut, header = true, chi
           <Menu size={19} strokeWidth={1.8} />
         </button>
         <Link to="/" className="mi-shell-link flex min-w-0 items-center gap-2.5 rounded-lg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring">
-          <span aria-hidden="true" className="grid size-9 flex-none place-items-center rounded-[10px] bg-primary text-[13px] font-bold tracking-wide text-primary-foreground">MI</span>
+          <BrandMark size={36} />
           <span className="mi-shell-brand flex min-w-0 flex-col leading-tight">
-            <span className="truncate text-[15px] font-semibold">Manufacturing Intelligence</span>
-            <span className="text-[10px] font-semibold uppercase tracking-[.14em] text-muted-foreground">Intelligence Platform</span>
+            <span className="truncate text-[16px] font-extrabold tracking-[.06em]">{APP_NAME}</span>
+            <span className="text-[10px] font-semibold uppercase tracking-[.14em] text-muted-foreground">{APP_SUBTITLE}</span>
           </span>
         </Link>
 
@@ -220,7 +222,7 @@ export default function Shell({ me, title, active, onSignOut, header = true, chi
           )}
           <div className="content">{children}</div>
           <footer className="app-foot">
-            <span>© {new Date().getFullYear()} Manufacturing Intelligence · demo project with synthetic data</span>
+            <span>© {new Date().getFullYear()} {FOOTER_TEXT}</span>
           </footer>
         </div>
       </div>

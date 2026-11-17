@@ -35,6 +35,7 @@ import { Popover, PopoverContent, PopoverTrigger } from './ui/popover'
 import { Toaster } from './ui/sonner'
 import { Spinner } from './ui/spinner'
 import { Textarea } from './ui/textarea'
+import { tabTitle } from '../lib/brand'
 
 /** What History's "Ask again" passes along when it opens this page. */
 export interface AskAgain {
@@ -539,13 +540,13 @@ export default function AskPage({ me }: { me: Me }) {
   // the box grows with the text: on the start screen up to 220 px, under a conversation up to 6 rows
   useEffect(() => { grow(box.current, 0, start ? 220 : SMALL_BOX_MOST) }, [question, start])
 
-  // the browser tab shows the open chat's title ("<chat title> · Manufacturing Intelligence"); the frame's
-  // "Assistant · Manufacturing Intelligence" comes back when the chat is closed
+  // the browser tab shows the open chat's title ("<chat title> · SSAGE"); the frame's
+  // "Assistant · SSAGE" comes back when the chat is closed
   const chatTitle = chat?.title ?? ''
   useEffect(() => {
     if (!chatTitle) return
     const before = document.title
-    document.title = `${chatTitle} · Manufacturing Intelligence`
+    document.title = tabTitle(chatTitle)
     return () => { document.title = before }
   }, [chatTitle])
 
