@@ -119,7 +119,7 @@ describe('SqlPage: the menu and the address', () => {
     const admin = within(screen.getByRole('group', { name: 'Administration' })).getAllByRole('link').map((a) => a.textContent)
     expect(admin).toEqual(['Users', 'Documents', 'Data', 'SQL', 'Audit'])
     expect(await screen.findByText('dim_customers')).toBeInTheDocument()
-    expect(document.title).toBe('SQL · SSAGE')
+    expect(document.title).toBe('SQL · SS Manufacturing')
     expect(screen.getByText(/Read-only: SELECT queries on ss_gold, max 500 rows, 30 s limit\. Every query is in the Audit log\./))
       .toBeInTheDocument()
   })

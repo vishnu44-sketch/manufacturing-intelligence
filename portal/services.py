@@ -28,7 +28,7 @@ EXAMPLES = [
     "Top 5 customers by invoice value in Aug 2026?",
     "What were net sales in each sales month of FY 2026-27?",
     "How many sales orders are open and what is their value?",
-    "What is the stock value as on 20-Sep-2026?",
+    "What is the stock value as on 30-Sep-2026?",
 ]
 
 # the Data page: what each ss_gold table holds, in plain words (a new table shows with its name only)

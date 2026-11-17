@@ -1,8 +1,8 @@
 # Example questions with their correct SQL (ss_gold, MySQL 8)
 
 Each example: the question, the correct read-only SELECT, why it is written that way, and the key result
-it returns on the BASE data (inputdata/ only, loaded by `load_gold.py` without --batch; checked as ss_ai_reader).
-After an incremental batch is loaded most totals are bigger: reuse the SQL pattern, never copy an Expected
+it returns on the data loaded on 17-Nov-2026 (invoices 02-Apr-2024 to 31-Oct-2026; checked as ss_ai_reader).
+A newer load changes the totals: reuse the SQL pattern, never copy an Expected
 number into an answer - every number in an answer must come from the rows the query returns.
 
 ## Q: What were net sales in each sales month of FY 2026-27?
@@ -22,7 +22,7 @@ ORDER BY c.sales_period_no;
 ```
 
 Why: net sales = SUM(net_taxable_value) (credit notes already negative); a FY split by sales month filters sales_year so each month (21st to 20th) is complete.
-Expected: (base data) 6 rows - Apr 2026 7,950,880.00; May 2026 5,806,675.00; Jun 2026 12,767,485.00; Jul 2026 5,424,475.00; Aug 2026 7,604,315.00; Sep 2026 1,955,500.00 (total 41,509,330.00; no invoices after 13-Sep-2026).
+Expected: 8 rows - Apr 2026 506,116,320.50; May 2026 459,457,491.70; Jun 2026 514,347,284.15; Jul 2026 434,659,336.50; Aug 2026 466,556,045.75; Sep 2026 472,683,542.23; Oct 2026 517,494,492.75; Nov 2026 189,269,525.00 (only 21-31 Oct: the data ends on 31-Oct-2026).
 
 ## Q: What was the sales value including freight in sales month Sep 2026?
 
@@ -40,7 +40,7 @@ WHERE c.sales_month = 'Sep 2026';
 ```
 
 Why: sales value incl. freight = net_taxable_value + freight_amount (freight is NULL on credit notes); sales month 'Sep 2026' = 21-Aug-2026 to 20-Sep-2026.
-Expected: (base data) 2026-08-21 to 2026-09-20 - net sales 1,955,500.00 + freight 8,000.00 = sales value 1,963,500.00.
+Expected: 21-Aug-2026 to 20-Sep-2026: net sales 472,683,542.23 + freight 304,500.00 = 472,988,042.23.
 
 ## Q: Who were the top 5 customers by invoice value in Aug 2026?
 
@@ -59,7 +59,7 @@ LIMIT 5;
 ```
 
 Why: a month name means the sales month (21-Jul-2026 to 20-Aug-2026); invoice value = SUM(net_taxable_value); customer name from dim_customers.
-Expected: (base data) Aurora Fluid Power Limited 1,730,000.00; Meridian Engineering Works Private Limited 1,316,700.00; Pioneer Star Precision Components GmbH 1,238,350.00; Meridian Hydraulics Limited 747,750.00; Tejas Industrial Solutions Private Limited 450,000.00.
+Expected: Crescent Tech Industries Limited 16,264,499.50; Sakura Pump Japan Co., Ltd. 12,319,318.00; Delta Forgings LLP 9,405,952.50; Lotus Hydraulics Limited 9,392,120.00; Everest Tooling Limited 7,780,526.50.
 
 ## Q: What were the total net sales in each financial year?
 
@@ -79,8 +79,8 @@ GROUP BY c.financial_year, c.financial_year_label
 ORDER BY c.financial_year;
 ```
 
-Why: a FY total uses dim_calendar.financial_year (1-Apr to 31-Mar) of the invoice date; credit and debit notes count in the FY of the note date, so invoiced + credit notes (negative) + debit notes = net sales. data_from / data_to are the first and last invoice date of each FY in the data: FY 2025-26 has invoices only from 21-Dec-2025 and the current FY is not over, so the answer must say which dates each total covers.
-Expected: (base data) FY 2025-26 net 33,851,075.00 (invoiced 34,125,455.00, credit notes -274,380.00, debit notes 0.00; invoices only from 21-Dec-2025); FY 2026-27 net 38,985,740.00 (invoiced 39,260,620.00, credit notes -274,880.00, debit notes 0.00). (data of 14-Oct-2026, base + batch_001) FY 2026-27 net 21,490,309,878.78 = invoiced 21,518,589,799.00, credit notes -28,333,209.22, debit notes 53,289.00 (data 01-Apr-2026 to 20-Mar-2027).
+Why: a FY total uses dim_calendar.financial_year (1-Apr to 31-Mar) of the invoice date; credit and debit notes count in the FY of the note date, so invoiced + credit notes (negative) + debit notes = net sales. data_from / data_to are the first and last invoice date of each FY in the data: the first FY starts with the data (invoices from 02-Apr-2024) and the current FY is not over, so the answer must say which dates each total covers.
+Expected: FY 2024-25 net 4,412,464,971.85 (02-Apr-2024 to 31-Mar-2025; invoiced 4,415,883,077.00, credit notes -3,440,000.32, debit notes 21,895.17); FY 2025-26 net 5,169,611,634.51 (01-Apr-2025 to 31-Mar-2026); FY 2026-27 net 3,360,017,609.08 (01-Apr-2026 to 31-Oct-2026, the year is not over).
 
 ## Q: How many sales orders are open and what is their value?
 
@@ -99,7 +99,7 @@ WHERE s.status = 'Open'
 ```
 
 Why: an order = so_number + financial year (SO numbers restart every FY); order value before GST = total_amount; only orders dated up to today (the data also has test orders dated after today) - the answer says "as of" today's date.
-Expected: (base data) 27 open orders, 50 lines, 16,547,240.00 INR before GST (18,834,723.20 incl. GST). (02-Nov-2026, base + batch data) 10 open orders, 14 lines, 5,335,415.00 before GST (6,059,202.20 incl. GST) - without the date filter 2,198 orders, most of them dated after today.
+Expected: (17-Nov-2026) 429 open orders, 1,326 lines, 198,408,619.50 INR before GST (225,243,962.97 incl. GST).
 
 ## Q: Which customers have open sales orders, and for how much?
 
@@ -120,7 +120,7 @@ ORDER BY open_value_before_gst_inr DESC;
 ```
 
 Why: open = status 'Open', only orders dated up to today; orders counted by so_number + financial year; value before GST.
-Expected: (base data) 16 customers (total 16,547,240.00); top 3 Zenith Precision Components LLP 2 orders 2,934,000.00; Everest Engineering Works Ltd 3 orders 2,502,125.00; Apex Machine Tools Private Limited 5 orders 2,276,140.00; smallest Neptune Fluid Power Limited 1 order 5,000.00.
+Expected: (17-Nov-2026) 310 customers; biggest Sakura Pump Japan Co., Ltd. 21 orders 11,436,172.50; Prithvi Motors Pvt. Ltd. 6 orders 4,950,897.50; Delta Forgings LLP 10 orders 4,931,435.00.
 
 ## Q: Which credit notes (sales returns and rate differences) were issued in FY 2026-27?
 
@@ -143,7 +143,7 @@ ORDER BY il.note_date;
 ```
 
 Why: credit notes are fact_invoice_lines rows with document_type 'CREDIT_NOTE'; their invoice_date is the note date; taxable_value is the positive printed amount (net_taxable_value is the negative one).
-Expected: (base data) 3 notes - SSMI/CN/2627/1 2026-04-25 Delta Engineering Works Limited 145,000.00 (171,100.00 incl. GST); SSMI/CN/2627/2 2026-05-04 Delta Engineering Works Limited 6,630.00 (7,823.40); SSMI/CN/2627/3 2026-06-24 Granite Automation Pvt Ltd 123,250.00 (145,435.00); total 274,880.00.
+Expected: 63 credit note lines in FY 2026-27; the first SSMI/CN/2627/1 on 06-Apr-2026, Pioneer Valves LLC, 225,024.00 (invoice SSMI/E/2526/2327).
 
 ## Q: What were export, domestic and service sales in FY 2026-27?
 
@@ -160,7 +160,7 @@ ORDER BY net_sales_inr DESC;
 ```
 
 Why: fact_invoice_lines.sale_type splits Domestic / Export / Service (credit notes keep the original invoice's sale_type).
-Expected: (base data) Domestic 31,652,385.00; Export 7,289,105.00; Service 44,250.00 (total 38,985,740.00).
+Expected: Domestic 2,678,153,563.78; Export 680,651,545.30; Service 1,212,500.00.
 
 ## Q: How did each sales person perform in FY 2026-27?
 
@@ -179,7 +179,7 @@ ORDER BY net_sales_inr DESC;
 ```
 
 Why: sales by person = net_taxable_value per fact_invoice_lines.sales_person_id; invoices counted only on INVOICE rows.
-Expected: (base data) Karthik Menon 30 invoices 11,723,880.00; Rahul Verma 29 invoices 8,778,175.00; Divya Nair 24 invoices 5,453,135.00; Sanjay Kulkarni 14 invoices 5,208,300.00; Priya Iyer 18 invoices 3,962,740.00; Arjun Rao 15 invoices 3,859,510.00.
+Expected: 31 rows (30 sales people + Unknown); top Divya Nair 867 invoices 397,631,278.00; Karthik Menon 296,294,877.50; Rahul Verma 267,747,072.48.
 
 ## Q: What were net sales by product category in FY 2026-27?
 
@@ -198,11 +198,11 @@ ORDER BY net_sales_inr DESC;
 ```
 
 Why: product_category is the client classification; NULL (not classified, incl. service lines with product_id -1) is shown as 'Not classified', never dropped.
-Expected: (base data) Not classified 9,605,035.00; YTH-PARTS 6,527,120.00; GCI 5,072,375.00; Trochoid pumps 4,704,775.00; Hydraulic motors 4,667,350.00; Coolant pumps 4,348,725.00; Procon Pumps 2,306,800.00; Coolant Units 1,753,560.00 (total 38,985,740.00).
+Expected: 8 categories; Not classified 1,126,760,793.20; GCI 404,260,334.50; Procon Pumps 357,916,886.50; YTH-PARTS 347,939,763.00; Trochoid pumps 315,554,003.23 ...
 
-## Q: What is the stock value as on 20-Sep-2026?
+## Q: What is the stock value as on 30-Sep-2026?
 
-Also asked as: inventory value on 20 Sep 2026; closing stock value on a given report date.
+Also asked as: inventory value on 30 Sep 2026; closing stock value on a given report date.
 
 ```sql
 SELECT sl.report_date,
@@ -212,12 +212,12 @@ SELECT sl.report_date,
 FROM fact_stock_ledger sl
 JOIN dim_stock_movement_types t ON t.movement_type_id = sl.movement_type_id
 WHERE t.movement_type = 'Closing balance'
-  AND sl.report_date = '2026-09-20'
+  AND sl.report_date = '2026-09-30'
 GROUP BY sl.report_date;
 ```
 
 Why: stock value on a date = SUM(cumulative_value) of the 'Closing balance' rows of that report_date only (never SUM every row).
-Expected: (base data) 52 items, stock quantity 542.000, stock value 23,856,971.91 INR.
+Expected: 1,612 items, stock quantity 166,536.000, stock value 601,031,749.01 INR.
 
 ## Q: What is our current stock value (latest stock report)?
 
@@ -236,11 +236,11 @@ GROUP BY sl.report_date;
 ```
 
 Why: "current" / "latest" stock, or stock without a date, = the newest stock report (MAX(report_date)); new reports arrive with each load, so never hard-code a report date here. The answer names the report date used.
-Expected: (base data) report 2026-09-20 - 52 items, stock quantity 542.000, stock value 23,856,971.91 INR (with batch_001 loaded: report 2027-03-20 - 5,010 items, 374,137.000 units, 13,997,769,323.98 INR).
+Expected: report 2026-10-31 - 1,613 items, 167,232.000 units, stock value 595,717,536.93 INR (stock reports are quarterly: 30-Jun, 30-Sep, 31-Dec, 31-Mar, plus 31-Oct-2026).
 
-## Q: What was the COGS (cost of goods sold) in the stock report as on 20-Sep-2026?
+## Q: What was the COGS (cost of goods sold) in the stock report as on 30-Sep-2026?
 
-Also asked as: COGS in the 20-Sep-2026 stock report; COGS rate per item on a given report date.
+Also asked as: COGS in the 30-Sep-2026 stock report; COGS rate per item on a given report date.
 
 ```sql
 SELECT COUNT(*) AS cogs_rows,
@@ -249,11 +249,11 @@ SELECT COUNT(*) AS cogs_rows,
 FROM fact_stock_ledger sl
 JOIN dim_stock_movement_types t ON t.movement_type_id = sl.movement_type_id
 WHERE t.movement_type = 'COGS'
-  AND sl.report_date = '2026-09-20';
+  AND sl.report_date = '2026-09-30';
 ```
 
 Why: COGS = movements whose document prefix is IN / CN / DN / RE (movement_type 'COGS'); COGS value = SUM(-transaction_value), rate = SUM(-transaction_value) / SUM(-quantity).
-Expected: (base data) 0 COGS rows, COGS value 0.00, rate NULL - the report's stock-outs are 'SI' documents = Production (-1,181,063.91), not COGS.
+Expected: 1,931 COGS rows, 669,299,878.23 INR, 30,793.65 per unit.
 
 ## Q: What were net sales in Japanese yen for each sales month of FY 2026-27?
 
@@ -273,7 +273,7 @@ ORDER BY c.sales_period_no;
 ```
 
 Why: JPY = INR x dim_fx_rates.exchange_rate of the window holding the invoice date (fact_invoice_lines.fx_rate_id); each window is one sales month.
-Expected: (base data) Apr 2026 rate 1.69 13,436,987.20 JPY; May 2026 1.79 10,393,948.25; Jun 2026 1.64 20,938,675.40; Jul 2026 1.72 9,330,097.00; Aug 2026 1.65 12,547,119.75; Sep 2026 1.69 3,304,795.00.
+Expected: 8 rows - Apr 2026 rate 1.69, 855,336,581.65 JPY; ...; Oct 2026 rate 1.79, 926,315,142.02 JPY; Nov 2026 (21-31 Oct only) rate 1.74, 329,328,973.50 JPY.
 
 ## Q: Are there invoice or sales order lines with an Unknown customer or Unknown product?
 
@@ -291,7 +291,7 @@ FROM fact_sales_order_lines;
 ```
 
 Why: a code not found in the master gets key -1 (Unknown) and the row is kept; count them with SUM(key = -1).
-Expected: (base data) fact_invoice_lines 343 lines - 0 Unknown customer, 14 Unknown product (service lines); fact_sales_order_lines 1,098 lines - 0 Unknown customer, 36 Unknown product (service lines).
+Expected: invoice lines 100,770 (81 Unknown customer, 990 Unknown product); sales order lines 99,701 (92 Unknown customer, 1,042 Unknown product).
 
 ## Q: What was the order intake (sales orders booked, excluding cancelled) in each financial year?
 
@@ -309,7 +309,7 @@ ORDER BY c.financial_year;
 ```
 
 Why: order intake = SUM(total_amount) of fact_sales_order_lines by order date, without 'Canceled' lines; orders counted by so_number + financial year.
-Expected: (base data) FY 2024-25 264 orders 103,113,900.00; FY 2025-26 288 orders 100,822,640.00; FY 2026-27 135 orders 52,835,870.00.
+Expected: FY 2024-25 11,067 orders 4,525,951,700.00; FY 2025-26 12,461 orders 5,192,894,810.00; FY 2026-27 (to 31-Oct-2026) 7,747 orders 3,420,600,879.00.
 
 ## Q: What were net sales by country segment in FY 2026-27?
 
@@ -327,7 +327,7 @@ ORDER BY segment;
 ```
 
 Why: the client's country segment is dim_customers.country_segment, joined through fact_invoice_lines.customer_id.
-Expected: (base data) 1.JAPAN 2,802,640.00; 2.ASIA 31,689,510.00; 3.AMERICA 321,500.00; 4.EUROPE 527,750.00; 5.MIDDLE EAST 3,644,340.00.
+Expected: 2.ASIA 2,789,541,998.28; 1.JAPAN 213,926,499.25; 3.AMERICA 111,981,011.30; 5.MIDDLE EAST 109,561,715.25; 4.EUROPE 54,629,344.00; 8.OTHER 29,753,438.50; Unknown 50,623,602.50.
 
 ## Q: How much did OEM and after-market (AFT) customers buy in FY 2026-27?
 
@@ -345,7 +345,7 @@ ORDER BY net_sales_inr DESC;
 ```
 
 Why: OEM / AFT is fact_invoice_lines.customer_type and is often blank - blanks are shown as 'Not given', not dropped, also when the user names only OEM and AFT (never filter customer_type IN ('OEM', 'AFT')): 'Not given' is more than half of the sales, and the answer mentions it.
-Expected: (base data) Not given 136 lines 28,834,295.00; OEM 48 lines 9,462,245.00; AFT 5 lines 689,200.00.
+Expected: Not given 1,769,842,430.33 (12,896 lines); OEM 870,891,421.25 (6,720 lines); AFT 719,283,757.50 (5,292 lines).
 
 ## Q: Show the lines of sales order 50 of FY 2026-27.
 
@@ -373,7 +373,7 @@ ORDER BY s.sales_order_line_id;
 ```
 
 Why: SO numbers restart every FY (SO 50 also exists in FY 2024-25 and FY 2025-26), so the FY must be in the filter.
-Expected: (base data) 3 lines, order date 2026-06-05, status Closed, Granite Automation Pvt Ltd - FG00007 123,250.00; FG00047 76,500.00; FG00063 183,600.00 (order total 383,350.00 before GST).
+Expected: 2 lines, order date 2026-04-02, status Closed, Pioneer Precision Components LLP - FG02231 12,500.00; FG00654 250,000.00 (order total 262,500.00 before GST).
 
 ## Q: How many invoices were issued in calendar month August 2026 (1 to 31 Aug), and for what value?
 
@@ -389,9 +389,9 @@ WHERE il.document_type = 'INVOICE'
 ```
 
 Why: the user asked for the calendar month, so dim_calendar.month_year (1st to last day) is used instead of the sales month; invoices are counted on INVOICE rows only.
-Expected: (base data) 17 invoices, 5,440,490.00 INR.
+Expected: 1,176 invoices, 481,828,141.00 INR.
 
-## Q: Which 5 items had the highest stock value on 20-Sep-2026?
+## Q: Which 5 items had the highest stock value on 30-Sep-2026?
 
 Also asked as: top items by stock value; most valuable items in stock; biggest inventory items.
 
@@ -404,13 +404,13 @@ FROM fact_stock_ledger sl
 JOIN dim_stock_movement_types t ON t.movement_type_id = sl.movement_type_id
 JOIN dim_products p ON p.product_id = sl.product_id
 WHERE t.movement_type = 'Closing balance'
-  AND sl.report_date = '2026-09-20'
+  AND sl.report_date = '2026-09-30'
 ORDER BY sl.cumulative_value DESC
 LIMIT 5;
 ```
 
 Why: the stock of each item on the report date is its 'Closing balance' row (cumulative_qty / cumulative_value).
-Expected: (base data) FG00013 40 units 4,508,274.80; FG00097 33 units 4,274,468.55; FG00078 23 units 2,639,677.11; FG00040 20 units 1,620,174.20; FG00066 13 units 1,603,787.77.
+Expected: FG01484 GCI TX-675-3A 0.4kW 7,696,934.93; FG00542 5,759,696.49; FG01116 5,652,256.17; RM0130 5,142,443.80; FG01656 4,878,600.34.
 
 ## Q: How did each customer's sales grow or drop this year compared with last year?
 
@@ -490,9 +490,9 @@ ORDER BY CASE lb.highlight WHEN 'Highest growth' THEN 1 WHEN 'Biggest decline' T
 ```
 
 Why: this year / last year = the current FY (2026-27) and the previous FY (2025-26). The two FYs have data for different lengths of time, so the query compares the SAME dates in both years (the dates where both have data, shifted by one year) and returns those four dates. Growth % only where last year > 0, with both amounts shown; 'New' / 'Lost' customers are counted with window functions instead of being dropped. The `highlight` column is worked out in SQL with ROW_NUMBER() per customer_status ('Highest growth' and 'Biggest decline' among the both-years customers, 'Biggest lost customer' by last year's sales, 'Biggest new customer' by this year's sales), and those rows come first - the answer names them from the labels, never by scanning the list.
-Expected: (base data) no rows - the base data has no dates with sales in both years (last year's invoices start 21-Dec-2025, this year's end 13-Sep-2026). With batch_001 loaded: 21-Dec-2025 to 20-Mar-2026 vs 21-Dec-2026 to 20-Mar-2027; 24 customers in both years, 3,370 new, 12 lost; Highest growth Everest Engineering Works Ltd 2,500.00 -> 9,795,712.50 (391,728.50 %); Biggest decline Coral Industrial Solutions Pvt. Ltd. 616,000.00 -> 2,500.00 (-99.59 %); Biggest lost customer Orion Precision Components Pvt. Ltd. 1,006,150.00 -> 0.00; Biggest new customer Allied Castings Limited 0.00 -> 370,019,228.00.
+Expected: (17-Nov-2026) this year 01-Apr-2026 to 31-Oct-2026 vs the same dates last year (01-Apr-2025 to 31-Oct-2025): 1,147 customers in both years, 1,497 new, 693 lost; highest growth Summit Coolant Systems Pvt. Ltd. 4,320.00 -> 2,460,260.00; biggest lost Sunrise Fluid Power Pvt Ltd 13,952,041.00 -> 0.00; biggest new Quantum Power Systems Co., Ltd. 4,337,455.00.
 
-## Q: How much did Allied Castings buy in Feb 2027?
+## Q: How much did Allied Castings buy in Aug 2026?
 
 Also asked as: sales to Everest Engineering this year; how much did we sell to Everest Engineering in FY 2026-27; sales to <part of a customer name> this financial year; how much did <part of a customer name> buy; sales of a customer whose name is typed partly; customer name search.
 
@@ -503,14 +503,14 @@ SELECT cu.customer_name,
 FROM dim_customers cu
 LEFT JOIN fact_invoice_lines il
        ON il.customer_id = cu.customer_id
-      AND il.invoice_date_id IN (SELECT c.date_id FROM dim_calendar c WHERE c.sales_month = 'Feb 2027')
+      AND il.invoice_date_id IN (SELECT c.date_id FROM dim_calendar c WHERE c.sales_month = 'Aug 2026')
 WHERE cu.customer_name LIKE '%Allied Castings%'
 GROUP BY cu.customer_id, cu.customer_name
 ORDER BY net_sales_inr DESC;
 ```
 
 Why: the user's name is partial, so LIKE '%...%' finds every customer whose name contains it; starting from dim_customers with a LEFT JOIN keeps matching customers without sales (0); customers_matched tells the answer how many customers the name matched, so it names each one instead of adding them up. For a whole financial year use `c.financial_year = '2627'` inside the same ON - still one row per matching customer.
-Expected: (base data) no rows - no base customer is called 'Allied Castings'. With batch_001 loaded: 2 customers matched - Allied Castings Limited 134,734,470.50; Allied Castings Pvt Ltd 1,332,000.00 (sales month Feb 2027 = 21-Jan-2027 to 20-Feb-2027). Same SQL for 'Everest Engineering' in FY 2026-27: 4 matched - 15,796,419.50 / 300,630.00 / 0.00 / 0.00.
+Expected: 2 customers matched - Allied Castings Limited 675,200.00; Allied Castings Pvt Ltd 0.00.
 
 ## Q: What is our COGS (cost of goods sold) now, in the latest stock report?
 
@@ -531,7 +531,7 @@ GROUP BY r.report_date;
 ```
 
 Why: "now" / "current" = the newest stock report (MAX(report_date)); COGS = movements with movement_type 'COGS', value SUM(-transaction_value). The LEFT JOIN from the report date returns one row even when that report has no COGS rows (then 0).
-Expected: (base data) report 2026-09-20 - 0 COGS rows, 0.00 (its stock-outs are 'SI' = Production). With batch_001 loaded: report 2027-03-20 - 31,667 rows, 168,348.000 units, 6,402,963,668.89 INR, rate 38,034.09 per unit.
+Expected: report 2026-10-31 - 638 COGS rows, 7,918.000 units, 253,254,756.67 INR, 31,984.69 per unit.
 
 ## Q: When was the data last loaded, and how many rows did that load add?
 
@@ -553,11 +553,11 @@ GROUP BY l.run_id, l.run_type, l.batch_name;
 ```
 
 Why: load_log has one row per table per load run; the latest run = MAX(run_id). Totals per run come from SUM over its tables, and inserted_per_table names each table with its own count, so the answer never lists bare numbers. On a FULL run inserted_rows = the rows loaded.
-Expected: (base data) run 1 FULL from 'inputdata', 10 tables, 2,929 rows inserted, 0 updated, 0 skipped. With batch_001 loaded: run 2 INCREMENTAL 'batch_001' at 2026-10-06 19:10:45, 8 tables, 318,461 inserted, 57 updated, 573 skipped (fact_invoice_lines +100,377; fact_sales_order_lines +100,162; fact_stock_ledger +108,084; dim_customers +4,957; dim_products +4,850 ...).
+Expected: run 1 FULL from 'inputdata' on 17-Nov-2026, 10 tables, 307,850 rows inserted, 0 updated, 0 skipped (one full load, no incremental runs).
 
-## Q: How much GST did we collect in Jan 2027?
+## Q: How much GST did we collect in Jan 2026?
 
-Also asked as: GST in Jan 2027; total GST (IGST + CGST + SGST + cess) for a month; net GST after credit notes; tax collected in a sales month.
+Also asked as: GST in Jan 2026; total GST (IGST + CGST + SGST + cess) for a month; net GST after credit notes; tax collected in a sales month.
 
 ```sql
 SELECT MIN(c.sales_period_start) AS period_start,
@@ -567,11 +567,11 @@ SELECT MIN(c.sales_period_start) AS period_start,
                     + COALESCE(il.sgst_amount, 0) + COALESCE(il.cess_amount, 0))), 2) AS net_gst_inr
 FROM fact_invoice_lines il
 JOIN dim_calendar c ON c.date_id = il.invoice_date_id
-WHERE c.sales_month = 'Jan 2027';
+WHERE c.sales_month = 'Jan 2026';
 ```
 
-Why: a month name means the sales month (here 21-Dec-2026 to 20-Jan-2027), also for GST; GST = igst + cgst + sgst + cess; these amounts are positive as printed on credit notes too, so credit note rows are subtracted (CASE ... THEN -1).
-Expected: (base data) no invoices in sales month Jan 2027 (base invoices end 13-Sep-2026) - net_gst_inr NULL. With batch_001 loaded: 2026-12-21 to 2027-01-20, net GST 565,748,776.09 INR (the calendar month 1-31 Jan would give 565,689,314.54 - a different figure).
+Why: a month name means the sales month (here 21-Dec-2025 to 20-Jan-2026), also for GST; GST = igst + cgst + sgst + cess; these amounts are positive as printed on credit notes too, so credit note rows are subtracted (CASE ... THEN -1).
+Expected: 21-Dec-2025 to 20-Jan-2026: net GST 63,237,972.34 INR.
 
 ## Q: What were the INR to JPY rates for the last 6 rate months?
 
@@ -591,7 +591,7 @@ ORDER BY last6.start_date;
 ```
 
 Why: rate months come straight from dim_fx_rates (one row per rate month), newest 6 by start_date, then shown oldest first; joining dim_calendar would repeat each month once per day.
-Expected: (base data) May 2026 1.79; Jun 2026 1.64; Jul 2026 1.72; Aug 2026 1.65; Sep 2026 1.69; Oct 2026 1.79. With batch_001 loaded: Oct 2026 1.79; Nov 2026 1.74; Dec 2026 1.77; Jan 2027 1.71; Feb 2027 1.68; Mar 2027 1.73.
+Expected: Jun 2026 1.64; Jul 2026 1.72; Aug 2026 1.65; Sep 2026 1.69; Oct 2026 1.79; Nov 2026 1.74 (window 21-Oct-2026 to 31-Oct-2026).
 
 ## Q: What were total net sales this year and last year, and how much did they grow?
 
@@ -632,8 +632,8 @@ CROSS JOIN compare_window w
 CROSS JOIN same_dates sd;
 ```
 
-Why: "this year" / "last year" = the current and the previous FY. The query gives BOTH: each FY's total with the dates the data covers (FY 2025-26 has invoice data only from 21-Dec-2025, and the current FY is not over), and a fair growth % on the SAME dates in both years (the dates where both years have data, shifted by one year), calculated in SQL (revenue_growth_pct). The answer gives the two FY totals with their dates first, then the same-dates growth. When the user said "profit %", the reply also has the line "MISSING: true profit - the SS Manufacturing data has selling prices but not the cost of the items sold", and the answer calls the % revenue growth, never profit.
-Expected: (base + batch_001, 08-Oct-2026) FY 2025-26 INR 33,851,075.00 (21-Dec-2025 to 31-Mar-2026); FY 2026-27 INR 21,490,309,878.78 (01-Apr-2026 to 20-Mar-2027); same dates 21-Dec-2025 to 20-Mar-2026 INR 31,327,485.00 vs 21-Dec-2026 to 20-Mar-2027 INR 11,320,219,385.78, revenue_growth_pct 36,035.10.
+Why: "this year" / "last year" = the current and the previous FY. The query gives BOTH: each FY's total with the dates the data covers (the current FY is not over), and a fair growth % on the SAME dates in both years (the dates where both years have data, shifted by one year), calculated in SQL (revenue_growth_pct). The answer gives the two FY totals with their dates first, then the same-dates growth. When the user said "profit %", the reply also has the line "MISSING: true profit - the SS Manufacturing data has selling prices but not the cost of the items sold", and the answer calls the % revenue growth, never profit.
+Expected: (17-Nov-2026) FY 2025-26 5,169,611,634.51 (01-Apr-2025 to 31-Mar-2026); FY 2026-27 3,360,017,609.08 (01-Apr-2026 to 31-Oct-2026); same dates 01-Apr..31-Oct: 2,798,457,848.67 last year vs 3,360,017,609.08 this year = +20.07%.
 
 ## Q: How many new customers did we get in FY 2026-27, and how much did they buy?
 
@@ -671,8 +671,8 @@ JOIN first_invoice fi ON fi.customer_id = ps.customer_id
 GROUP BY fy.fy_start, fy.fy_end;
 ```
 
-Why: a new customer = the customer's FIRST invoice line in the data falls in the period; their sales = net sales in the period. Always return invoice_history_starts (where the invoice data starts, 21-Dec-2025): "first" is checked against all invoices since that date (a customer who bought only before it looks new). The answer says e.g. "4,158 customers bought for the first time in FY 2026-27 (checked against all invoices since 21-Dec-2025, where our data starts)" - never that the period's data starts on that date. The Unknown customer (-1) is not counted as a customer; its sales are shown separately (unknown_customer_sales_inr). customers_buying and all_sales_inr show how big the new customers are compared with everyone who bought.
-Expected: (base + batch_001, 08-Oct-2026) 01-Apr-2026 to 31-Mar-2027, invoice_history_starts 21-Dec-2025: 4,158 new customers, INR 21,261,429,447.28, out of 4,196 customers buying and INR 21,490,309,878.78 in all; Unknown customer INR 62,652,560.00.
+Why: a new customer = the customer's FIRST invoice line in the data falls in the period; their sales = net sales in the period. Always return invoice_history_starts (where the invoice data starts, 02-Apr-2024): "first" is checked against all invoices since that date (a customer who bought only before it looks new). The answer says e.g. "876 customers bought for the first time in FY 2026-27 (checked against all invoices since 02-Apr-2024, where our data starts)" - never that the period's data starts on that date. The Unknown customer (-1) is not counted as a customer; its sales are shown separately (unknown_customer_sales_inr). customers_buying and all_sales_inr show how big the new customers are compared with everyone who bought.
+Expected: 01-Apr-2026 to 31-Mar-2027, invoice_history_starts 02-Apr-2024: 876 new customers, 517,895,758.50 INR, out of 2,643 customers buying and 3,360,017,609.08 INR.
 
 ## Q: Which customers stopped buying from us?
 
@@ -706,8 +706,8 @@ WHERE pc.last_invoice_date < l.cutoff_date
 ORDER BY pc.sales_inr DESC;
 ```
 
-Why: "stopped buying" = the customer bought before but has no invoice in the last 3 months of the data: no invoice on or after no_invoice_on_or_after (the newest invoice date minus 3 months; days_before_newest_invoice = how many days that is), unless the user gives another period (then change INTERVAL 3 MONTH). The newest invoice date comes from the data (MAX(invoice_date)), never a fixed date. The Unknown customer (-1) is not a customer. Biggest customers first; stopped_customers is the count of all of them (also when the list is longer than the rows shown). The answer says e.g. "786 customers bought before but have no invoice on or after 20-Dec-2026 (90 days before the newest invoice, 20-Mar-2027)" and that the period can be changed.
-Expected: (base + batch_001, 08-Oct-2026) newest invoice 20-Mar-2027, no invoice on or after 20-Dec-2026 (90 days before): 786 customers; biggest Nova Robotics LLP (last invoice 14-Dec-2026, INR 10,792,380.00), then Vertex Equipment Limited (03-Dec-2026, INR 9,221,710.00).
+Why: "stopped buying" = the customer bought before but has no invoice in the last 3 months of the data: no invoice on or after no_invoice_on_or_after (the newest invoice date minus 3 months; days_before_newest_invoice = how many days that is), unless the user gives another period (then change INTERVAL 3 MONTH). The newest invoice date comes from the data (MAX(invoice_date)), never a fixed date. The Unknown customer (-1) is not a customer. Biggest customers first; stopped_customers is the count of all of them (also when the list is longer than the rows shown). The answer says e.g. "2,482 customers bought before but have no invoice on or after 31-Jul-2026 (92 days before the newest invoice, 31-Oct-2026)" and that the period can be changed.
+Expected: newest invoice 31-Oct-2026, no invoice on or after 31-Jul-2026 (92 days before): 2,482 customers; biggest Aurora Fluid Power Limited (last invoice 17-Jul-2026, 119,592,664.50 in the data).
 
 ## Q: How many items have zero stock right now?
 
@@ -726,7 +726,7 @@ GROUP BY sl.report_date;
 ```
 
 Why: "right now" = the newest stock report (MAX(report_date)); count the 'Closing balance' rows of that report by cumulative_qty = 0 (and < 0 for negative stock). Always return report_date - the answer must say which stock report was used.
-Expected: (base + batch_001) report 2027-03-20: 31 items with zero stock, 0 negative, 5,010 items in the report (base data: report 2026-09-20 - 6 zero of 52).
+Expected: report 2026-10-31: 0 items with zero stock, 0 negative, 1,613 items in the report.
 
 ## Q: What were last month's sales, and which customer bought the most?
 
@@ -759,7 +759,7 @@ LIMIT 1;
 ```
 
 Why: "last month" is worked out from TODAY (CURDATE()) in dim_calendar - never from the newest invoice and never by sorting sales_month, which is text ('Sep 2026' sorts after 'Mar 2027'). Last month = the sales month that ends the day before today's sales month starts: on 12-Oct-2026 today is in 'Oct 2026', so last month = 'Sep 2026' (21-Aug-2026 to 20-Sep-2026). For "this month" use the SQL of the example "What are our sales this month so far?" (only up to today). The answer states the month and its dates.
-Expected: (asked on 12-Oct-2026) Sep 2026, 21-Aug-2026 to 20-Sep-2026: net sales 1,955,500.00; top customer Meridian Hydraulics Limited 1,070,100.00.
+Expected: (17-Nov-2026) Oct 2026 (21-Sep-2026 to 20-Oct-2026) 517,494,492.75; top customer Sakura Pump Japan Co., Ltd. 28,239,876.00.
 
 ## Q: What are our sales this month so far?
 
@@ -782,7 +782,7 @@ GROUP BY tm.sales_month, tm.sales_period_start, tm.so_far_to;
 ```
 
 Why: this month is not over yet, so it counts only from its first day up to TODAY (CURDATE()) - never to the month's last day: data dated after today must not be counted. The answer says "so far" with both dates, e.g. "In sales month Nov 2026 so far (21-Oct-2026 to 27-Oct-2026) net sales were ...". For a top customer, a product or a split, keep the same dates (invoice_date BETWEEN period_from AND period_to).
-Expected: (asked on 27-Oct-2026) Nov 2026, 21-Oct-2026 to 27-Oct-2026: net sales so far 827,149,042.00 (the whole month in the test data, to 20-Nov-2026, would be 3,869,959,327.00 - wrong).
+Expected: (17-Nov-2026) Nov 2026, 21-Oct-2026 to 17-Nov-2026: 189,269,525.00 from 456 invoices (the data ends on 31-Oct-2026).
 
 ## Q: Who are our new customers this month so far?
 
@@ -822,7 +822,7 @@ ORDER BY ms.sales_inr DESC, cu.customer_name;
 ```
 
 Why: this month is not over yet, so the month counts only up to TODAY (LEAST(sales_period_end, CURDATE())) - invoices dated after today must not be counted, neither as a first invoice nor as sales. A new customer = the customer's FIRST invoice line in the data falls in the period (see "How many new customers did we get in FY 2026-27"); the Unknown customer (-1) is not a customer. One row per new customer, the biggest sales first, with the count of all of them in new_customers (COUNT(*) OVER (), so it is right even when only the first 500 rows are shown). The answer says "so far" with both dates and that "first" is checked against all invoices since invoice_history_starts.
-Expected: (asked on 16-Nov-2026) Nov 2026 so far, 21-Oct-2026 to 16-Nov-2026: 967 new customers; the biggest Sunrise Precision Components Ltd INR 10,301,300.00, then Lotus Automation Pvt. Ltd. INR 8,103,125.00 and Agni Machine Tools Pvt. Ltd. INR 6,412,752.50 (counting the whole month to 20-Nov-2026 would give 1,088 - wrong, those days are still to come).
+Expected: (17-Nov-2026) Nov 2026 so far: 31 new customers; biggest Royal Fabricators Private Limited (first invoice 28-Oct-2026, 1,960,650.00).
 
 ## Q: Who were our new customers last month?
 
@@ -863,11 +863,11 @@ ORDER BY ms.sales_inr DESC, cu.customer_name;
 ```
 
 Why: "last month" is the sales month before today's one, worked out from CURDATE() in dim_calendar (as in "What were last month's sales"). It is over, so its whole period counts. A new customer = the customer's FIRST invoice line in the data falls in that month; one row per new customer, the biggest first, with the count of all of them in new_customers.
-Expected: (asked on 16-Nov-2026) Oct 2026, 21-Sep-2026 to 20-Oct-2026: 1,403 new customers; the biggest Allied Castings Limited INR 63,648,019.00, then Crescent Motors (Pvt) Ltd INR 46,500,692.00 and Supreme Machine Tools Pvt. Ltd. INR 39,841,730.50.
+Expected: (17-Nov-2026) Oct 2026: 109 new customers; biggest Ganga Gear Works Pvt Ltd (first invoice 12-Oct-2026, 1,337,810.00).
 
-## Q: Show net sales month by month from Jan 2026 to Mar 2027.
+## Q: Show net sales month by month from Jan 2026 to Oct 2026.
 
-Also asked as: monthly sales from Jan 2026 to Mar 2027; month by month sales between two months; month-wise net sales from Apr 2026 to Sep 2026 after credit and debit notes; monthly sales trend from one month to another; sales of each month in a range of months.
+Also asked as: monthly sales from Jan 2026 to Oct 2026; month by month sales between two months; month-wise net sales from Apr 2026 to Sep 2026 after credit and debit notes; monthly sales trend from one month to another; sales of each month in a range of months.
 
 ```sql
 SELECT c.sales_month,
@@ -877,13 +877,13 @@ SELECT c.sales_month,
 FROM fact_invoice_lines il
 JOIN dim_calendar c ON c.date_id = il.invoice_date_id
 WHERE c.sales_period_start >= (SELECT MIN(sales_period_start) FROM dim_calendar WHERE sales_month = 'Jan 2026')
-  AND c.sales_period_end <= (SELECT MAX(sales_period_end) FROM dim_calendar WHERE sales_month = 'Mar 2027')
+  AND c.sales_period_end <= (SELECT MAX(sales_period_end) FROM dim_calendar WHERE sales_month = 'Oct 2026')
 GROUP BY c.sales_month, c.sales_period_start, c.sales_period_end
 ORDER BY c.sales_period_start;
 ```
 
-Why: a range of named months is a range of sales months (21st to 20th), one row per sales month: 'Jan 2026' starts on 21-Dec-2025 and 'Mar 2027' ends on 20-Mar-2027. The first and last month are looked up by name (no date arithmetic). period_start / period_end are the sales month's own dates from dim_calendar - never MIN / MAX of the invoice dates. Order by sales_period_start, never by the month text. net_taxable_value already has credit notes negative and debit notes positive. Use calendar months (c.month_year) only when the user says "calendar month" or gives exact dates.
-Expected: (data of 13-Oct-2026) 15 rows from Jan 2026 (21-Dec-2025 to 20-Jan-2026) 13,356,235.00 to Mar 2027 (21-Feb-2027 to 20-Mar-2027) 3,503,352,034.65; lowest Sep 2026 1,955,500.00; highest Jan 2027 3,953,546,625.88.
+Why: a range of named months is a range of sales months (21st to 20th), one row per sales month: 'Jan 2026' starts on 21-Dec-2025 and 'Oct 2026' ends on 20-Oct-2026. The first and last month are looked up by name (no date arithmetic). period_start / period_end are the sales month's own dates from dim_calendar - never MIN / MAX of the invoice dates. Order by sales_period_start, never by the month text. net_taxable_value already has credit notes negative and debit notes positive. Use calendar months (c.month_year) only when the user says "calendar month" or gives exact dates.
+Expected: 10 rows from Jan 2026 (21-Dec-2025 to 20-Jan-2026) 470,037,262.50 to Oct 2026 (21-Sep-2026 to 20-Oct-2026) 517,494,492.75; highest Mar 2026 534,303,216.00; lowest Jul 2026 434,659,336.50.
 
 ## Q: Which customers bought from us between Jan 2026 and Jun 2026 but have bought nothing since Oct 2026?
 
@@ -918,20 +918,20 @@ ORDER BY pc.sales_in_period DESC;
 ```
 
 Why: month names are sales months, looked up by name: "between Jan 2026 and Jun 2026" = 21-Dec-2025 to 20-Jun-2026; "nothing since Oct 2026" = no invoice on or after the FIRST day of Oct 2026 (21-Sep-2026) - October itself counts, so never compare with the month's last day. Buying = an INVOICE line; a later credit / debit note is not a purchase. The Unknown customer (-1) is not a customer and gets no row. The answer states the three dates and matching_customers.
-Expected: (data of 13-Oct-2026) 5 customers, no invoice on or after 21-Sep-2026: Sakura Pump Japan Co., Ltd. 1,255,250.00 (last invoice 08-Aug-2026); Tejas Machine Tools LLC 1,188,155.00; Zenith Precision Components LLP 975,200.00; Coral Fluid Power Pvt. Ltd. 180,840.00; Pioneer Star Grinding Machines Inc. 68,000.00.
+Expected: 1,669 customers bought 21-Dec-2025 to 20-Jun-2026 and have no invoice on or after 21-Sep-2026; biggest Aurora Fluid Power Limited 23,158,082.50 (last invoice 17-Jul-2026).
 
-## Q: Which items had the biggest increase in stock value between 20-Sep-2026 and 20-Mar-2027?
+## Q: Which items had the biggest increase in stock value between 30-Jun-2026 and 31-Oct-2026?
 
 Also asked as: stock value change per item between two stock reports; items whose stock grew the most; compare stock of two report dates; which items' inventory dropped the most (ORDER BY increase_inr ASC).
 
 ```sql
 WITH v AS (
   SELECT sl.product_id,
-         SUM(CASE WHEN sl.report_date = '2026-09-20' THEN sl.cumulative_value END) AS value_before,
-         SUM(CASE WHEN sl.report_date = '2027-03-20' THEN sl.cumulative_value END) AS value_after
+         SUM(CASE WHEN sl.report_date = '2026-06-30' THEN sl.cumulative_value END) AS value_before,
+         SUM(CASE WHEN sl.report_date = '2026-10-31' THEN sl.cumulative_value END) AS value_after
   FROM fact_stock_ledger sl
   JOIN dim_stock_movement_types t ON t.movement_type_id = sl.movement_type_id
-  WHERE t.movement_type = 'Closing balance' AND sl.report_date IN ('2026-09-20', '2027-03-20')
+  WHERE t.movement_type = 'Closing balance' AND sl.report_date IN ('2026-06-30', '2026-10-31')
   GROUP BY sl.product_id
 )
 SELECT p.product_code, p.product_description,
@@ -948,10 +948,10 @@ ORDER BY increase_inr DESC
 LIMIT 5;
 ```
 
-Why: stock on a date = the 'Closing balance' rows of that report. Only items in BOTH reports can be compared - the 20-Sep-2026 report has far fewer items than the 20-Mar-2027 one - so return items_in_both_reports and the items found in one report only, and the answer says e.g. "only 52 items are in both stock reports (4,949 are only in the 20-Mar-2027 report)".
-Expected: (data of 13-Oct-2026) 52 items in both reports, 4,949 only in the newer one, 0 only in the older one; biggest increase FG00013 Hydraulic motor GX-981-3A 0.4kW from 4,508,274.80 to 15,666,254.93 (+11,157,980.13), then FG00031 (+11,100,168.72) and FG00027 (+10,185,379.94).
+Why: stock on a date = the 'Closing balance' rows of that report. Only items in BOTH reports can be compared - an item can be missing from one report - so return items_in_both_reports and the items found in one report only, and the answer says e.g. "1,604 items are in both stock reports (9 are only in the 31-Oct-2026 report)".
+Expected: 1,604 items in both reports, 9 only in the newer one, 0 only in the older one; biggest increase CO00045 Packing tape 45 from 1,519,817.20 to 5,173,657.97 (+3,653,840.77), then RM0135 (+2,525,280.61) and CO00222 (+2,524,647.51).
 
-## Q: Which items were in stock on 20-Mar-2027 but had no sales between 21-Sep-2026 and 20-Mar-2027?
+## Q: Which items were in stock on 31-Oct-2026 but had no sales between 01-May-2026 and 31-Oct-2026?
 
 Also asked as: unsold stock; slow-moving or dead stock; items in stock with no sales; stock not sold since a date; non-moving inventory; finished goods in stock but not sold.
 
@@ -961,14 +961,14 @@ WITH stock AS (
   FROM fact_stock_ledger sl
   JOIN dim_stock_movement_types t ON t.movement_type_id = sl.movement_type_id
   JOIN dim_products p ON p.product_id = sl.product_id
-  WHERE t.movement_type = 'Closing balance' AND sl.report_date = '2027-03-20'
+  WHERE t.movement_type = 'Closing balance' AND sl.report_date = '2026-10-31'
     AND sl.cumulative_qty > 0 AND sl.product_id <> -1
 ),
 unsold AS (
   SELECT st.product_id, st.cumulative_qty, st.cumulative_value, st.product_code, st.product_description, st.item_group
   FROM stock st
   WHERE NOT EXISTS (SELECT 1 FROM fact_invoice_lines il
-                    WHERE il.product_id = st.product_id AND il.invoice_date BETWEEN '2026-09-21' AND '2027-03-20')
+                    WHERE il.product_id = st.product_id AND il.invoice_date BETWEEN '2026-05-01' AND '2026-10-31')
 ),
 summary AS (
   SELECT (SELECT COUNT(*) FROM stock WHERE item_group = 'Finished goods') AS finished_goods_in_stock,
@@ -989,7 +989,7 @@ ORDER BY u.cumulative_value DESC;
 ```
 
 Why: only finished goods are sold - raw materials, consumables and capital items are never invoiced, so listing them as "unsold" is noise. The rows are the finished goods in stock with no invoice in the period (biggest stock value first); the summary columns always come back (one row with empty item columns when every finished good sold), so the answer can say e.g. "all 4,097 finished goods in stock were sold in this period; the 872 other items in stock are raw materials, consumables and capital items, which are not for sale". finished_goods_sold_in_period and finished_goods_result say the same as a plain count and a sentence, so 0 without sales is never read as "no sales" (27-Oct: it was). Dates the user gives are exact dates.
-Expected: (data of 13-Oct-2026) 4,097 finished goods in stock on 20-Mar-2027, 4,097 sold and 0 without sales from 21-Sep-2026 (13 without sales from 21-Dec-2026, biggest FG02641 Trochoid pump TX-676-2C 0.75kW, 6,739,600.00); 872 other items not sold.
+Expected: 820 finished goods in stock on 31-Oct-2026: 808 sold and 12 without sales from 01-May-2026 (biggest FG01434 Coolant Unit CP-294-1B 0.75kW, 466,320.00); 793 other items not sold.
 
 ## Q: How much of our net sales were invoices, credit notes and debit notes?
 
@@ -1008,7 +1008,7 @@ FROM fact_invoice_lines il;
 ```
 
 Why: net sales already include the notes - net_taxable_value is negative on credit notes and positive on debit notes - so net_sales_inr = invoices_inr - credit_notes_inr + debit_notes_inr (credit notes shown as a positive amount from taxable_value). ONE summary row answers "were the notes deducted?"; never list every customer for it (thousands of rows, cut at 500). data_from / data_to say which dates the totals cover.
-Expected: (data of 14-Oct-2026, base + batch_001) 21-Dec-2025 to 20-Mar-2027: invoices 21,552,715,254.00; credit notes 28,607,589.22 (232 notes); debit notes 53,289.00 (14 notes); net sales 21,524,160,953.78 = 21,552,715,254.00 - 28,607,589.22 + 53,289.00. One customer: Prime Auto Components LLP invoices 300,477,802.50, credit notes 1,911,325.00 (8 notes), net 298,566,477.50.
+Expected: 02-Apr-2024 to 31-Oct-2026: invoices 12,953,990,174.50; credit notes 11,964,477.14 (213 notes); debit notes 68,518.08 (19 notes); net sales 12,942,094,215.44 = 12,953,990,174.50 - 11,964,477.14 + 68,518.08.
 
 ## Q: Which dates does Q1 of FY 2026-27 cover?
 
@@ -1056,4 +1056,4 @@ GROUP BY l.report_date;
 ```
 
 Why: the minimum level IS in the SS Manufacturing data: dim_products.minimum_inventory_qty, the minimum set in SAP, where 0 means no minimum is set for that item - never write a MISSING line for it. Compare it with the stock of the newest stock report ('Closing balance' rows; an item with no closing row has 0 stock). ONE summary row, also when nothing is below: items_with_a_minimum_set tells "no item has a minimum set in SAP" (0) apart from "every item is above its minimum". Always return report_date.
-Expected: (data of 22-Oct-2026) stock report 20-Mar-2027: 0 items with a minimum set (minimum_inventory_qty is 0 for all 5,001 items), so no item is below its minimum - the answer says no minimum levels are set in SAP yet.
+Expected: report 2026-10-31: 1,545 items with a minimum set, 122 below their minimum (CO00001, CO00006, CO00013 ...).
