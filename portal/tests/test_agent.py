@@ -1413,13 +1413,13 @@ def test_highest_and_lowest_skip_ids_years_periods_and_summary_columns():
 def test_end_to_end_net_sales_month_by_month_over_a_range(real_services, monkeypatch, user):
     """13-Oct: "month by month from Jan 2026 to Mar 2027" ran on calendar months, with the first / last
     invoice day as the period dates. Now: sales months with their own dates, in date order."""
-    question = "Show net sales month by month from Jan 2026 to Mar 2027."
+    question = "Show net sales month by month from Jan 2026 to Oct 2026."   # 17-Nov: the data ends on 31-Oct-2026
     result, fake = ask_with_example_sql(monkeypatch, user, question)
 
     assert result.columns == ["sales_month", "period_start", "period_end", "net_sales_inr"]
     months = [row[0] for row in result.rows]
-    assert months[0] == "Jan 2026" and months[-1] == "Mar 2027"
-    assert result.rows[0][1] == date(2025, 12, 21) and result.rows[-1][2] == date(2027, 3, 20)
+    assert months[0] == "Jan 2026" and months[-1] == "Oct 2026"
+    assert result.rows[0][1] == date(2025, 12, 21) and result.rows[-1][2] == date(2026, 10, 20)
     for month, start, end, _ in result.rows:  # each sales month: 21st of the previous month to the 20th
         assert start.day == 21 and end.day == 20 and end.strftime("%b %Y") == month
     starts = [row[1] for row in result.rows]
@@ -1594,14 +1594,14 @@ def test_stock_warehouse_delivery_date_and_gst_rules_are_in_the_prompts():
 
 
 def test_end_to_end_stock_change_between_two_reports_counts_the_items_in_both(real_services, monkeypatch, user):
-    question = "Which items had the biggest increase in stock value between 20-Sep-2026 and 20-Mar-2027?"
+    question = "Which items had the biggest increase in stock value between 30-Jun-2026 and 31-Oct-2026?"
     result, fake = ask_with_example_sql(monkeypatch, user, question)
 
     in_both, only_newer, only_older = result.rows[0][5:8]
     check = warehouse.run_select(
         "SELECT COUNT(DISTINCT sl.product_id) FROM fact_stock_ledger sl JOIN dim_stock_movement_types t "
         "ON t.movement_type_id = sl.movement_type_id WHERE t.movement_type = 'Closing balance' "
-        "AND sl.report_date IN ('2026-09-20', '2027-03-20')")
+        "AND sl.report_date IN ('2026-06-30', '2026-10-31')")
     assert in_both + only_newer + only_older == check["rows"][0][0]
     assert 0 < in_both and len(result.rows) <= 5
     increases = [row[4] for row in result.rows]
@@ -1611,7 +1611,7 @@ def test_end_to_end_stock_change_between_two_reports_counts_the_items_in_both(re
 
 
 def test_end_to_end_unsold_stock_is_finished_goods_only(real_services, monkeypatch, user):
-    question = "Which items were in stock on 20-Mar-2027 but had no sales between 21-Sep-2026 and 20-Mar-2027?"
+    question = "Which items were in stock on 31-Oct-2026 but had no sales between 01-May-2026 and 31-Oct-2026?"
     result, fake = ask_with_example_sql(monkeypatch, user, question)
 
     assert result.columns[:4] == ["finished_goods_in_stock", "finished_goods_without_sales", "other_items_not_sold",

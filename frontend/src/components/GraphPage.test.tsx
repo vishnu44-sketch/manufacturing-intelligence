@@ -106,7 +106,7 @@ describe('GraphPage', () => {
     render(<App />)
     const link = await screen.findByRole('link', { name: 'Knowledge graph' }, { timeout: 4000 }) // the whole app loads first
     expect(link).toHaveAttribute('aria-current', 'page')
-    await waitFor(() => expect(document.title).toBe('Knowledge graph · SSAGE'))
+    await waitFor(() => expect(document.title).toBe('Knowledge graph · SS Manufacturing'))
     expect(screen.getByText('Search for a starting point')).toBeInTheDocument()
   })
 

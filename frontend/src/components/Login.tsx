@@ -1,4 +1,4 @@
-// The sign-in page (/login, and any page while signed out): one card in the middle - the SSAGE mark and name,
+// The sign-in page (/login, and any page while signed out): one card in the middle - the mark and the company's name,
 // what it is for, then the form - on a faded factory-blueprint picture (LoginBackground.tsx). It signs in through
 // POST /api/login (a session cookie).
 import { type FormEvent, useState } from 'react'
@@ -39,7 +39,7 @@ export default function Login({ onSignedIn }: { onSignedIn: () => void }) {
           </div>
         </div>
         <p className="lc-text">
-          Ask about sales, orders, stock and company documents across SS Manufacturing - in plain English.
+          Ask about your sales, orders, stock and company documents - in plain English.
         </p>
         <div className="lc-pills" aria-label="What you can ask about">
           <span>Sales &amp; invoices</span>

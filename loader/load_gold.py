@@ -1414,8 +1414,17 @@ def build_stock_ledger(lookups, src, batch=False):
         rows, ["report_date_id", "product_id", "movement_type_id", "posting_date_id"], fixes,
         {"movement_type_id": "document prefix not in the movement map"},
         skip=lambda row, col: col == "posting_date_id" and row["movement_type_id"] in balance)
-    info = load_info("fact_stock_ledger", " + ".join(names), source_rows, rows, fixes, unknown)
+    info = load_info("fact_stock_ledger", files_text(names), source_rows, rows, fixes, unknown)
     return rows, info
+
+
+def files_text(names, most=255):
+    """The stock files for load_log.source_file (at most 255 characters): all names joined with " + ", or for
+    many files (17-Nov: 11 quarterly reports) the first .. the last and how many."""
+    joined = " + ".join(names)
+    if len(joined) <= most or len(names) < 2:
+        return joined[:most]
+    return f"{names[0]} .. {names[-1]} ({len(names)} files)"[:most]
 
 
 # ============================================================== database

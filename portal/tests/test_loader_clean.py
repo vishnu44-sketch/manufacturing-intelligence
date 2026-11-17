@@ -205,3 +205,14 @@ def test_reference_file_missing_from_a_batch_comes_from_inputdata(tmp_path):
     assert src.has(lg.SALES_ORDER_FILE) and not src.has(lg.CLIENT_FILE)
     assert src.reference_path(lg.CLIENT_FILE) == base_dir / lg.CLIENT_FILE
     assert src.reference_path(lg.SALES_ORDER_FILE) == batch_dir / lg.SALES_ORDER_FILE
+
+
+def test_many_stock_files_fit_the_log_column():
+    """17-Nov: 11 quarterly stock reports joined with " + " were longer than load_log.source_file (255) - the
+    full load stopped at its last step."""
+    names = [f"Inventory Audit Report as on {day}.xlsx" for day in
+             ("300624", "300924", "311224", "310325", "300625", "300925", "311225", "310326", "300626", "300926", "311026")]
+    text = lg.files_text(names)
+    assert len(text) <= 255
+    assert text == "Inventory Audit Report as on 300624.xlsx .. Inventory Audit Report as on 311026.xlsx (11 files)"
+    assert lg.files_text(names[:2]) == " + ".join(names[:2])          # a few files: every name, as before

@@ -2,7 +2,7 @@
 // right "New chat", "History", the dark-mode button and the user's round badge, which opens a small menu with
 // the name, the role and "Sign out"), and under it the light menu on the left, in groups: Home (Home, Assistant),
 // Intelligence (Knowledge graph), Tools (History, Memory) and - for staff only - Administration (Users,
-// Documents, Data, SQL, Audit). The page it is on is a filled pill. The browser tab shows "<page> · SSAGE".
+// Documents, Data, SQL, Audit). The page it is on is a filled pill. The browser tab shows "<page> · SS Manufacturing".
 // Above the page is a row with its title (a page can go without it: header={false}, as Home and the Assistant do).
 // The « button under the menu makes it small (icons only, the name on hover) on every page; » opens it again. The
 // choice is kept in this browser (localStorage). On a phone the menu is a drawer, opened by the ☰ button in the top bar.
@@ -148,7 +148,7 @@ export default function Shell({ me, title, active, onSignOut, header = true, chi
         <Link to="/" className="mi-shell-link flex min-w-0 items-center gap-2.5 rounded-lg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring">
           <BrandMark size={36} />
           <span className="mi-shell-brand flex min-w-0 flex-col leading-tight">
-            <span className="truncate text-[16px] font-extrabold tracking-[.06em]">{APP_NAME}</span>
+            <span className="truncate text-[16px] font-extrabold tracking-[.01em]">{APP_NAME}</span>
             <span className="text-[10px] font-semibold uppercase tracking-[.14em] text-muted-foreground">{APP_SUBTITLE}</span>
           </span>
         </Link>

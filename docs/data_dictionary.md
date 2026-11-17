@@ -8,10 +8,10 @@ Column meanings are the MySQL column COMMENTs (the source of truth). Amounts are
 `ss_gold` is a star schema built from the SS Manufacturing files by loader/load_gold.py.
 - Fact tables (the numbers): `fact_invoice_lines` (invoice and credit note lines - sales), `fact_sales_order_lines` (sales order lines - orders booked), `fact_stock_ledger` (stock balances and movements, one snapshot per Inventory Audit Report date).
 - Dimension tables (the descriptions): `dim_calendar` (one row per day, financial year and sales month), `dim_customers`, `dim_products`, `dim_fx_rates` (INR to JPY rate windows), `dim_sales_people`, `dim_tax_codes` (GST codes on sales orders), `dim_stock_movement_types` (kinds of stock ledger row).
-- `load_log`: load history, one row per table per load run (full load, then incremental batches): rows read / inserted / updated / skipped, Unknown keys, cleaning fixes.
+- `load_log`: load history, one row per table per load run (a full load; incremental batches are possible): rows read / inserted / updated / skipped, Unknown keys, cleaning fixes.
 - Every fact key column is NOT NULL and has a real FOREIGN KEY to its dimension, so a plain JOIN never loses rows (Unknown keys point to the -1 row).
 - Questions about sales / revenue / invoice value use `fact_invoice_lines`; about orders, order intake or open orders use `fact_sales_order_lines`; about stock or inventory value use `fact_stock_ledger`.
-- The data grows with every load (full load, then incremental batches), so never assume a last date: check it with MIN / MAX on the date columns (business rule 'Data coverage'). Fixed starts: invoices 21-Dec-2025; sales orders 02-Apr-2024; calendar 01-Apr-2024 to 31-Mar-2027.
+- The data changes with every load, so never assume a last date: check it with MIN / MAX on the date columns (business rule 'Data coverage'). Loaded on 17-Nov-2026: sales orders 01-Apr-2024 to 31-Oct-2026; invoices 02-Apr-2024 to 31-Oct-2026; calendar 01-Apr-2024 to 31-Mar-2027.
 
 ## How the ss_gold tables join (all foreign keys)
 

@@ -1,4 +1,4 @@
-# SSAGE (Manufacturing Intelligence) - React app
+# SS Manufacturing Intelligence Platform - React app
 
 The whole website: Login, Assistant (chats, edit a question, saved answers, Excel), History (with the AI
 usage box), and for staff Users, Documents and Data. It talks only to the Django JSON API under

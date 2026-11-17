@@ -1,4 +1,4 @@
-# Deploying SSAGE (Manufacturing Intelligence)
+# Deploying the SS Manufacturing Intelligence Platform
 
 One Docker image runs two services (docker-compose.yml), next to their own Qdrant and MySQL:
 

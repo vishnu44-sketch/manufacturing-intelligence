@@ -3,4 +3,4 @@ from django.apps import AppConfig
 
 class PortalConfig(AppConfig):
     name = "portal"
-    verbose_name = "SSAGE"
+    verbose_name = "SS Manufacturing"

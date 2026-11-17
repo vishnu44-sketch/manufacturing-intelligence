@@ -12,7 +12,7 @@ Every rule names the exact tables and columns to use. Amounts are INR unless a r
 - A quarter uses calendar dates, not sales months: Q1 of FY 2026-27 = 01-Apr-2026 to 30-Jun-2026 (not 21-Mar to 20-Jun). Always state the quarter's dates in the answer. "Which dates is Q1 of FY 2026-27?" is an SS Manufacturing data question: `SELECT MIN(full_date) AS period_from, MAX(full_date) AS period_to FROM dim_calendar WHERE financial_year = '2627' AND fiscal_quarter = 1`.
 - "This FY" / "current FY": `SELECT financial_year FROM dim_calendar WHERE full_date = CURDATE()`.
 - The dates of a FY filter (`c.financial_year = '2627'`) are 01-Apr to 31-Mar: return them as `MIN(c.full_date)` / `MAX(c.full_date)` (or the data dates MIN / MAX(invoice_date)), never `MIN(c.sales_period_start)` - the sales month of 1-Apr starts on 21-Mar, so that would show 21-Mar-2026 for FY 2026-27.
-- A FY total (not split by sales month) uses `dim_calendar.financial_year`. Invoice data for FY 2025-26 starts only on 21-Dec-2025. Return the first and last invoice date of each FY (data_from, data_to), so the answer says which dates each total really covers.
+- A FY total (not split by sales month) uses `dim_calendar.financial_year`. Invoice data starts on 02-Apr-2024 and the current FY is not over. Return the first and last invoice date of each FY (data_from, data_to), so the answer says which dates each total really covers.
 
 ## sales month - which dates a month like 'Oct 2026' covers
 
@@ -23,7 +23,7 @@ Every rule names the exact tables and columns to use. Amounts are INR unless a r
 - "This month" / "last month" / "previous month" come from TODAY (CURDATE()), not from the data: this month = the sales month of `dim_calendar WHERE full_date = CURDATE()`; last month = the sales month that ends the day before this month starts (`p.full_date = t.sales_period_start - INTERVAL 1 DAY`). Never find the latest month by sorting sales_month - it is text ('Sep 2026' sorts after 'Mar 2027'); sort months by sales_period_start. Return the month and its first / last date. Use the SQL of the example "What were last month's sales, and which customer bought the most?".
 - A period that is not over yet - this month, this quarter, this FY, this year - counts only up to TODAY: `invoice_date <= CURDATE()`, period_to = `LEAST(<period end>, CURDATE())`, and the answer says "so far" with both dates (e.g. "Nov 2026 so far (21-Oct-2026 to 27-Oct-2026)"). Never add data dated after today. Use the SQL of the example "What are our sales this month so far?".
 - For sales, invoices, credit notes and sales orders, a month name like "sales in Aug 2026" means the sales month (`dim_calendar.sales_month = 'Aug 2026'`, 21-Jul-2026 to 20-Aug-2026) unless the user says "calendar month" or gives exact dates. Always state the date range in the answer.
-- A range of named months ("month by month from Jan 2026 to Mar 2027", "monthly sales Apr to Sep 2026") = sales months, one row per sales month ('Jan 2026' starts on 21-Dec-2025); period_start / period_end are c.sales_period_start / c.sales_period_end, never MIN / MAX of the invoice dates. Use the SQL of the example "Show net sales month by month from Jan 2026 to Mar 2027.".
+- A range of named months ("month by month from Jan 2026 to Oct 2026", "monthly sales Apr to Sep 2026") = sales months, one row per sales month ('Jan 2026' starts on 21-Dec-2025); period_start / period_end are c.sales_period_start / c.sales_period_end, never MIN / MAX of the invoice dates. Use the SQL of the example "Show net sales month by month from Jan 2026 to Oct 2026.".
 - Words around a month: "since / from Oct 2026" = on or after the month's FIRST day (21-Sep-2026 - October itself counts); "after Oct 2026" = after its LAST day (20-Oct-2026); "before Oct 2026" = before its first day; "until / up to Oct 2026" = up to its last day. Look the days up by name: `MIN(sales_period_start)` / `MAX(sales_period_end)` `WHERE sales_month = 'Oct 2026'`. Use the SQL of the example "Which customers bought from us between Jan 2026 and Jun 2026 but have bought nothing since Oct 2026?".
 - dim_fx_rates.rate_month uses the same naming: the rate window 'Oct 2026' = 21-Sep-2026 to 20-Oct-2026.
 
@@ -92,7 +92,7 @@ Every rule names the exact tables and columns to use. Amounts are INR unless a r
 - Order intake / orders booked: leave out cancelled lines with `s.status <> 'Canceled'`.
 - The status is the same on every line of one order.
 - Overdue open lines: `status = 'Open' AND delivery_date < CURDATE()`.
-- Closed orders from before Dec-2025 have no invoice lines in ss_gold (invoice data starts 21-Dec-2025).
+- Sales orders start on 01-Apr-2024 and invoices on 02-Apr-2024, so orders and their invoices are both in ss_gold.
 
 ## Export, domestic and service sales; invoice series
 
@@ -149,8 +149,8 @@ Every rule names the exact tables and columns to use. Amounts are INR unless a r
 - For a date that has no report, say there is no stock report for that date and name the report dates that exist.
 - `dim_products.in_stock_qty` is the item master export, not stock on a date.
 - Stock balances have no warehouse: `warehouse_code` ('02', '03') is only on movement rows and NULL on 'Closing balance' / 'Opening Balance' rows. "Stock value by warehouse" cannot be answered: give the total stock value and write MISSING: stock value per warehouse - the stock report gives balances per item only.
-- Comparing two stock reports (stock change per item): only items in BOTH reports can be compared (the 20-Sep-2026 report has far fewer items than the 20-Mar-2027 one). Return items_in_both_reports and the items found in one report only, and say it in the answer. Use the SQL of the example "Which items had the biggest increase in stock value between 20-Sep-2026 and 20-Mar-2027?".
-- Check for the 20-Sep-2026 report: opening 3,070,707.07 + purchases 21,967,328.75 - production 1,181,063.91 = closing 23,856,971.91.
+- Comparing two stock reports (stock change per item): only items in BOTH reports can be compared (an item can be missing from one report; the reports are quarterly). Return items_in_both_reports and the items found in one report only, and say it in the answer. Use the SQL of the example "Which items had the biggest increase in stock value between 30-Jun-2026 and 31-Oct-2026?".
+- Check for the 30-Sep-2026 report: opening 614,290,206.21 + purchases 526,286,557.60 + landed cost 2,538,562.15 + production 127,216,078.83 - COGS 669,299,878.23 + unknown 222.45 = closing 601,031,749.01.
 
 ## Stock movements, the movement map and COGS
 
@@ -158,7 +158,7 @@ Every rule names the exact tables and columns to use. Amounts are INR unless a r
 - Movements are rows with `dim_stock_movement_types.row_kind = 'MOVEMENT'`; `quantity` + = into stock, - = out; `transaction_value` in INR.
 - COGS value = `SUM(-transaction_value)` of rows with movement_type = 'COGS'. COGS rate per item = `ROUND(SUM(-transaction_value) / SUM(-quantity), 2)` of the COGS rows, grouped by product.
 - Always filter COGS by report_date (the newest report when no date is given) - each report has its own movements.
-- The 20-Sep-2026 report has NO COGS rows: its stock going out is written as 'SI <number>' documents, which SS Manufacturing's real map counts as Production (10 rows, -33 qty, -1,181,063.91 INR), so COGS for that report = 0.00. Never relabel SI rows as COGS. Other reports can have COGS rows - compute them, never assume 0.
+- 'SI <number>' documents count as Production in SS Manufacturing's map, never as COGS - never relabel SI rows as COGS. Each report has its own COGS rows: compute them for the report asked, never assume 0.
 
 ## OEM and after-market (AFT) sales
 
@@ -181,19 +181,19 @@ Every rule names the exact tables and columns to use. Amounts are INR unless a r
 ## Growth and comparisons - this year vs last year (a fair comparison)
 
 - "This year" / "last year" = the current financial year (`dim_calendar.financial_year` of CURDATE()) and the one before it, unless the user names the years, months or dates.
-- The two years usually have data for different lengths of time (invoice data starts on 21-Dec-2025, and the newest data stops before the year ends). Comparing two whole FYs would then compare about 3 months with about 12 and give meaningless growth. Compare the SAME dates in both years instead: the dates where both years have data, shifted by one year - use the SQL of the example "How did each customer's sales grow or drop this year compared with last year?".
+- The two years usually have data for different lengths of time (the newest data stops before the year ends). Comparing two whole FYs would then compare about 7 months with 12 and give meaningless growth. Compare the SAME dates in both years instead: the dates where both years have data, shifted by one year - use the SQL of the example "How did each customer's sales grow or drop this year compared with last year?".
 - Return the four dates used (last_year_from, last_year_to, this_year_from, this_year_to) so the answer can say exactly which dates were compared.
 - Growth % = (this year - last year) / last year x 100, only when last year > 0. Return BOTH amounts next to every growth %, so a growth from a tiny base (e.g. INR 2,500) is visible.
 - Customers with no sales last year are 'New' (no growth %); customers with no sales this year are 'Lost' (-100 %). Never leave them out silently: return how many are new, lost and in both years.
 - The highest growth, the biggest decline, the biggest lost and the biggest new customer are labelled IN SQL in a `highlight` column (ROW_NUMBER() per customer_status) and those rows come first - use the example's SQL. The answer names them from the labels.
-- When the user names the periods (e.g. "Jan-Mar 2027 vs Jan-Mar 2026", "Aug 2026 vs Aug 2025"), compare exactly those periods (month names = sales months) and still return the new / lost counts.
+- When the user names the periods (e.g. "Jan-Mar 2026 vs Jan-Mar 2025", "Aug 2026 vs Aug 2025"), compare exactly those periods (month names = sales months) and still return the new / lost counts.
 - If the query returns no rows, the two years have no dates with data in common: say so and suggest naming the months to compare.
 - The same rules apply to growth by product, sales person, country or category.
 
 ## New customers and customers who stopped buying
 
 - A new customer in a period = a customer whose FIRST invoice line in ss_gold (MIN(fact_invoice_lines.invoice_date) over all their lines) falls inside that period. Their sales = their net sales (SUM(net_taxable_value)) in that period. Use the SQL of the example "How many new customers did we get in FY 2026-27, and how much did they buy?".
-- Invoice data starts on 21-Dec-2025, so "new" means "no invoice in the data before the period": a customer who last bought before the data starts also looks new. Always SELECT the first invoice date of all the data as invoice_history_starts; the answer says e.g. "4,158 customers bought for the first time in FY 2026-27 (checked against all invoices since 21-Dec-2025, where our data starts)" - never that the period's data starts on that date.
+- Invoice data starts on 02-Apr-2024, so "new" means "no invoice in the data before the period": a customer who last bought before the data starts also looks new. Always SELECT the first invoice date of all the data as invoice_history_starts; the answer says e.g. "876 customers bought for the first time in FY 2026-27 (checked against all invoices since 02-Apr-2024, where our data starts)" - never that the period's data starts on that date.
 - The Unknown customer (-1) is not one customer: leave it out of the new-customer count and their sales, and return its sales in the period separately (unknown_customer_sales_inr) so nothing is hidden. Also return how many customers bought in the period (customers_buying) and all sales (all_sales_inr), so the new customers can be seen as a share.
 - This is not the same as 'New (no sales last year)' in a growth comparison, which compares the same dates of two years.
 - Customers who stopped buying (lapsed, inactive): no invoice in the last 3 months of the data - their last invoice is before the newest invoice date (MAX(invoice_date)) minus 3 months - unless the user gives another period. List them biggest first with their last invoice date and their sales, plus the cut-off date (no_invoice_on_or_after) and how many days before the newest invoice it is; the answer says e.g. "786 customers bought before but have no invoice on or after 20-Dec-2026 (90 days before the newest invoice, 20-Mar-2027)". Use the SQL of the example "Which customers stopped buying from us?". (In a growth comparison 'Lost' means no sales on the same dates this year - a different question.)
@@ -210,13 +210,13 @@ Every rule names the exact tables and columns to use. Amounts are INR unless a r
 
 ## Data coverage - which dates have data
 
-- ss_gold grows with every load (a full load, then incremental batches), so never assume a fixed last date - check the data itself:
+- ss_gold changes with every load (a full load; incremental batches are possible), so never assume a fixed last date - check the data itself:
   - invoices and notes: `SELECT document_type, MIN(invoice_date), MAX(invoice_date) FROM fact_invoice_lines GROUP BY document_type`
   - sales orders: `SELECT MIN(order_date), MAX(order_date) FROM fact_sales_order_lines`
   - stock reports: `SELECT DISTINCT report_date FROM fact_stock_ledger`
   - exchange rates: `SELECT rate_month FROM dim_fx_rates WHERE fx_rate_id <> -1`
   - load history: `load_log` (one row per table per run: run_type 'FULL' / 'INCREMENTAL', batch_name, loaded_at)
-- Fixed starts: invoice data starts on 21-Dec-2025; sales orders on 02-Apr-2024; dim_calendar covers 01-Apr-2024 to 31-Mar-2027 (a date outside it has date_id -1).
+- The data loaded on 17-Nov-2026: sales orders 01-Apr-2024 to 31-Oct-2026; invoices 02-Apr-2024 to 31-Oct-2026; quarterly stock reports 30-Jun-2024 to 31-Oct-2026; no data after 31-Oct-2026. dim_calendar covers 01-Apr-2024 to 31-Mar-2027 (a date outside it has date_id -1).
 - When a query for a period returns no rows, say there is no data for that period in ss_gold instead of reporting 0 sales.
 
 ## Writing the SQL for ss_gold (MySQL 8)
