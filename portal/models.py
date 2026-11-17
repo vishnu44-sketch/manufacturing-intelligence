@@ -102,6 +102,9 @@ class Question(models.Model):
     # seconds per step, e.g. {"embed": 0.05, "sql_ai": 6.5, "mysql": 0.8, "wait": 45.0} (agent.STEP_NAMES);
     # empty for questions saved before the steps were timed (02-Nov)
     step_secs = models.JSONField(null=True, blank=True)
+    # the chart the question asked for, as the SQL call's "CHART: <kind>" line named it ("bar", "hbar", "pie" ...
+    # agent.CHART_KINDS); '' = no chart named, or saved before 17-Nov - the Ask page then picks the chart itself
+    chart_kind = models.CharField(max_length=20, blank=True, default="")
 
     objects = QuestionQuerySet.as_manager()
 

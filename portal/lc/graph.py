@@ -51,7 +51,7 @@ from langchain_core.messages import AIMessage, HumanMessage
 from langgraph.config import get_stream_writer
 from langgraph.graph import END, START, StateGraph
 
-from .. import user_memory
+from .. import ai_hints, user_memory
 from ..rag import agent, store, warehouse
 from ..rag.sql_guard import GuardError
 from .calls import LcRequest
@@ -116,6 +116,8 @@ class AskState(TypedDict, total=False):
     kind: str                 # what that reply was: 'sql' | 'no_sql' | 'no_data' | 'empty'
     sql: str                  # the SQL of that reply
     missing: str              # its MISSING line: one part of the question has no data
+    asks_for: str             # its ASKS_FOR line: what the question ranks or lists (ai_hints.asks_for; '' = none)
+    periods: object           # its PERIODS line: how many periods the question asks for (int; None = none)
     problem: str              # what was wrong with this try ('' = nothing)
     schema_not_needed: bool   # the retry is about values or wording, not tables: no full schema
     schema_note: str          # the full schema, once it was added to a retry
@@ -130,7 +132,7 @@ class AskState(TypedDict, total=False):
     one_row_retry_used: bool  # a line chart / trend question with only 1 row is sent back once
     entity_check_used: bool   # a ranking of customers / products ... whose rows name none of them is sent back once
     first_answer: dict        # the answer kept while one of those two retries runs ({} = none): its try, SQL, data,
-                              # notes, and for the ranking check the thing ranked ("entity")
+                              # notes, chart kind, and for the ranking check the thing ranked ("entity")
     not_found: str            # the fixed answer when a typed name matches nothing
 
 
@@ -251,6 +253,19 @@ def write_sql(state):
             outcome, result.answer = user_memory.forget(user, sql)
             result.status = "error" if outcome == "refused" else "memory"
         return update
+    # 17-Nov: the chart the AI said was asked for ("CHART: bar"). A try without a CHART line keeps the one of an
+    # earlier try of this question; agent.ask_events clears it when no rows came back
+    chart_kind = agent.chart_kind_line(reply)
+    if chart_kind:
+        result.chart_kind = chart_kind
+    # 17-Nov: what the AI said the question ranks or lists ("ASKS_FOR: customers") and how many periods it asks
+    # for ("PERIODS: 6") - read by run_sql's checks before their word rules (portal/ai_hints.py). Like CHART, a
+    # try without such a line keeps the one of an earlier try
+    hint_asks_for, hint_periods = ai_hints.asks_for(reply), ai_hints.periods(reply)
+    if hint_asks_for:
+        update["asks_for"] = hint_asks_for
+    if hint_periods:
+        update["periods"] = hint_periods
     if kind == "no_sql":  # off-topic, a request to change data, or an attempt to bend the rules
         if (not state["chart_retry_used"] and attempt < agent.MAX_TRIES
                 and agent.chart_request(f"{result.text} {result.understood_as}")):
@@ -347,19 +362,23 @@ def run_sql(state):
         return {**update, "problem": f"MySQL returned an error: {exc}"}
     question = f"{result.text} {result.understood_as}"
     first = {"attempt": state["attempt"], "sql": cleaned, "data": data, "missing": state["missing"],
-             "notes": list(result.notes)}
+             "notes": list(result.notes), "chart_kind": result.chart_kind}
     if (not state["one_row_retry_used"] and not state["first_answer"] and state["attempt"] < agent.MAX_TRIES
-            and len(data["rows"]) == 1 and several_periods_chart_request(question)):
+            and len(data["rows"]) == 1
+            and (ai_hints.several_periods_chart(question, state.get("periods"), result.chart_kind)
+                 or several_periods_chart_request(question))):
         # a line chart needs one row per period: sent back once; the 1-row answer is kept in case that try
-        # gives nothing better (keep_first_answer) - an answered question never becomes an error
+        # gives nothing better (keep_first_answer) - an answered question never becomes an error.
+        # 17-Nov: the AI's "PERIODS: 6" + a chart wish first (typos: "bar chat of the lst six mnths"), the words after
         return {**update, "one_row_retry_used": True, "schema_not_needed": True,
                 "problem": ONE_ROW_LINE_CHART_PROBLEM, "first_answer": first}
     if (not state["entity_check_used"] and not state["first_answer"] and state["attempt"] < agent.MAX_TRIES
             and not agent.found_nothing(data["rows"])):
         # 16-Nov: "Top customers of Coolant pump ..." got the product's total over all its customers, with no
         # customer column, and the answer called it "the top customer". Sent back once, the first answer kept
-        # in case that try gives nothing better (keep_first_answer)
-        missing = agent.missing_entity(question, data["columns"])
+        # in case that try gives nothing better (keep_first_answer).
+        # 17-Nov: the AI's "ASKS_FOR: customers" first (typos: "top clints"), the word rules after
+        missing = ai_hints.missing_entity(question, data["columns"], state.get("asks_for", ""))
         if missing:
             return {**update, "entity_check_used": True,
                     "problem": agent.entity_problem(missing[0], missing[1], data["columns"]),
@@ -388,6 +407,7 @@ def keep_first_answer(state):
     log.info("%s retry gave no better rows - the first answer is kept",
              "Ranking" if first.get("entity") else "Line chart")
     result.answer, result.notes = "", list(first["notes"])
+    result.chart_kind = first.get("chart_kind", "")  # the chart of the try whose rows are kept
     _keep_rows(result, first["sql"], first["data"], first["missing"])
     return {"problem": ""}
 
@@ -623,7 +643,8 @@ def start_state(result, context=(), user=None):
     return {
         "result": result, "user": user, "memories": [], "memory": messages_of(context), "asked": result.text,
         "route": "data", "pdf_hits": [], "hits": [],
-        "retries": [], "attempt": 0, "problem": "", "missing": "", "last_sql": "", "schema_note": "",
+        "retries": [], "attempt": 0, "problem": "", "missing": "", "asks_for": "", "periods": None,
+        "last_sql": "", "schema_note": "",
         "not_found": "", "schema_not_needed": False, "name_check_used": False, "profit_switched": False,
         "chart_retry_used": False, "one_row_retry_used": False, "entity_check_used": False, "first_answer": {},
         "values_checked": False, "year_check_used": False, "today_check_used": False,

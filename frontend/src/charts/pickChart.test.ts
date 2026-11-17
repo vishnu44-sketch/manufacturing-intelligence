@@ -1,6 +1,9 @@
 // pickChart: which chart (or none) the answer rows get, from the texts the table shows.
 import { describe, expect, it } from 'vitest'
-import { chartAskedFromText, chartKindFromText, isCatchAll, parseNumber, pickChart, shortIndian, unusualChartFromText } from './pickChart'
+import {
+  chartAskedFromText, chartKindFromText, chartWish, isCatchAll, isChartKind, parseNumber, pickChart, shortIndian,
+  unusualChartFromText,
+} from './pickChart'
 import { CATEGORY_SALE_TYPE, MONTHLY, SALE_TYPES, TOP5, table } from './testRows'
 
 describe('parseNumber', () => {
@@ -517,5 +520,72 @@ describe('very uneven groups (one holds more than 80%)', () => {
     // the real rows asked as a treemap: still a treemap, Not classified hidden so the rest can be read
     const real = pickChart(CATEGORY_SALE_TYPE.headers, CATEGORY_SALE_TYPE.rows, 'treemap')
     expect(real).toMatchObject({ kind: 'treemap', catchAll: { hidden: true } })
+  })
+})
+// 17-Nov: "can you create plot bar chat last 6 months sales" drew a line - the typo "chat" hid the bar wish.
+// Now the AI names the kind (the answer's chart_kind); the words stay as the fallback.
+const SIX_MONTHS = table([['month', false], ['net_sales_inr', true]], [
+  ['Jun 2026', '205,330,410.00'], ['Jul 2026', '240,118,900.75'], ['Aug 2026', '260,700,001.00'],
+  ['Sep 2026', '255,980,450.00'], ['Oct 2026', '290,442,120.30'], ['Nov 2026', '310,005,600.00'],
+])
+const TYPO_QUESTION = 'can you create plot bar chat last 6 months sales'
+
+describe('the chart kind the AI names (chart_kind)', () => {
+  it('knows the kinds the app draws, and nothing else', () => {
+    for (const kind of ['bar', 'hbar', 'line', 'area', 'stackedArea', 'stacked', 'grouped', 'pie', 'scatter',
+      'heatmap', 'treemap', 'waterfall', 'funnel', 'radar']) {
+      expect(isChartKind(kind), kind).toBe(true)
+    }
+    for (const value of ['', 'Bar', 'sankey', 'gauge', 'donut', 'constructor', 'toString', null, undefined, 3]) {
+      expect(isChartKind(value), String(value)).toBe(false)
+    }
+  })
+
+  it('uses chart_kind first, else the words, else none', () => {
+    expect(chartWish('bar', TYPO_QUESTION)).toBe('bar')
+    expect(chartWish('bar', 'monthly sales as a line chart')).toBe('bar')        // chart_kind wins over the words
+    expect(chartWish('sankey', 'monthly sales as a line chart')).toBe('line')    // an unknown kind: the words
+    expect(chartWish('', 'monthly sales as a line chart')).toBe('line')          // none named: the words
+    expect(chartWish(undefined, 'monthly sales as a pie')).toBe('pie')           // an older server: the words
+    expect(chartWish(undefined, 'give me sales amount of each month')).toBeNull() // no wish at all
+  })
+
+  it('draws the 17-Nov question as bars, upright and in month order', () => {
+    const pick = pickChart(SIX_MONTHS.headers, SIX_MONTHS.rows, chartWish('bar', TYPO_QUESTION))
+    expect(pick?.kind).toBe('bar')
+    expect(pick?.horizontal).toBe(false)
+    expect(pick?.data.map((p) => p.label)).toEqual(SIX_MONTHS.rows.map((row) => row[0].text))
+    // without a wish the months are a line, as before
+    expect(pickChart(SIX_MONTHS.headers, SIX_MONTHS.rows, chartWish('', 'last 6 months sales'))?.kind).toBe('line')
+  })
+
+  it('still swaps a named kind the rows cannot show for one that fits', () => {
+    // 15 months are too many parts for a donut: the line, with the note why
+    const pick = pickChart(MONTHLY.headers, MONTHLY.rows, chartWish('pie', 'monthly sales'))
+    expect(pick?.kind).toBe('line')
+    expect(pick?.fallback).toBe('A donut needs up to 12 positive parts of one amount - showing a line.')
+  })
+})
+
+describe('chart words with typos', () => {
+  it('reads a kind word followed by a typo of chart / graph', () => {
+    const words: [string, string][] = [
+      [TYPO_QUESTION, 'bar'], ['bar chrt of sales', 'bar'], ['sales as a bar cahrt', 'bar'], ['bar graf', 'bar'],
+      ['column grph by customer', 'bar'], ['plot a bar of last 6 months', 'bar'], ['plot bar of sales', 'bar'],
+      ['draw bars for each month', 'bar'], ['draw a bar of sales', 'bar'], ['show the months as columns', 'bar'],
+      ['line chat of monthly sales', 'line'], ['trend grph', 'line'], ['an area chat of monthly sales', 'area'],
+    ]
+    for (const [text, kind] of words) expect(chartKindFromText(text), text).toBe(kind)
+    expect(chartAskedFromText(TYPO_QUESTION)).toBe(true)
+  })
+
+  it('never reads "chat" alone as a chart', () => {
+    for (const text of ['start a new chat', 'in this chat, top customers', 'chat history of Oct', 'new chat: sales by area',
+      'sales in the chat above', 'plot of land sales', 'barcode stock', 'show customer name as a column']) {
+      expect(chartKindFromText(text), text).toBeNull()
+    }
+    for (const text of ['start a new chat', 'what did I ask in this chat?', 'chat']) {
+      expect(chartAskedFromText(text), text).toBe(false)
+    }
   })
 })

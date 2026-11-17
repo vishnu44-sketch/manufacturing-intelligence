@@ -362,6 +362,7 @@ def answer(result, about, context):
         result.add_secs("mysql", time.perf_counter() - started)
     result.status, result.sql = "ok", earlier.sql
     result.columns, result.rows, result.truncated = data["columns"], data["rows"], data["truncated"]
+    result.chart_kind = getattr(earlier, "chart_kind", "") or ""  # the same chart is drawn again
     # the chart / table words of the earlier question go with the rows again (the Ask page picks the chart from
     # them); the chat memory leaves this message out, so the next follow-up never builds on it
     shown = getattr(earlier, "understood_as", "") or earlier.text

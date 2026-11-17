@@ -9,7 +9,7 @@ import { Suspense, lazy, type ReactNode, useCallback, useEffect, useMemo, useRef
 import { ChartColumnBig, ChevronRight, Table2 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { ApiError, AuthError, api, problemText } from '../api'
-import { chartAskedFromText, chartKindFromText, pickChart, unusualChartFromText } from '../charts/pickChart'
+import { chartAskedFromText, chartWish, isChartKind, pickChart, unusualChartFromText } from '../charts/pickChart'
 import { Link } from '../router'
 import type { AiChartReply, Card, Rows, Status } from '../types'
 import { ExcelLink } from './common'
@@ -146,11 +146,13 @@ export default function AnswerCard({ card, autoRows = false }: { card: Card; aut
   const hasChart = useMemo(
     () => !!loaded && !loaded.rows_error && pickChart(loaded.headers, loaded.rows) !== null, [loaded])
   const wish = `${card.text} ${card.understood_as}`
+  // the kind to draw: the one the AI named (card.chart_kind), else the one the words ask for, else pickChart's best
+  const wishedKind = chartWish(card.chart_kind, wish)
   const unusual = unusualChartFromText(wish) // e.g. a sankey: the "Make this chart with AI" button
-  // a chart was asked for but the rows fit none (e.g. 1 row): a short note says why, instead of no chart at all
-  // (a chart only the AI can draw has its own button and text)
+  // a chart was asked for (in words, or the AI named a kind) but the rows fit none (e.g. 1 row): a short note says
+  // why, instead of no chart at all (a chart only the AI can draw has its own button and text)
   const noChartNote = loaded && !loaded.rows_error && loaded.rows.length > 0 && !hasChart && !unusual
-    && chartAskedFromText(wish)
+    && (chartAskedFromText(wish) || isChartKind(card.chart_kind))
     ? (loaded.rows.length === 1 ? 'Only 1 row, so no chart can be drawn.' : "This answer can't be drawn as a chart.")
     : ''
   const folds = card.time_steps.length > 0 || (card.has_rows && card.sql) || card.sources.length > 0
@@ -246,7 +248,7 @@ export default function AnswerCard({ card, autoRows = false }: { card: Card; aut
       ) : loaded.rows.length > 0 && hasChart && view === 'chart' ? (
         <Suspense fallback={<Wait>Drawing the chart…</Wait>}>
           <AnswerChart headers={loaded.headers} rows={loaded.rows} title={card.understood_as || card.text}
-            kind={chartKindFromText(wish)}
+            kind={wishedKind}
             onShowTable={() => setView('table')} />
         </Suspense>
       ) : loaded.rows.length > 0 ? (
