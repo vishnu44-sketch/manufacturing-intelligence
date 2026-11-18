@@ -74,6 +74,8 @@ services:
       - ./loader:/app/loader:ro
       - ./inputdata:/app/inputdata:ro
       - ./inputdata_batches:/app/inputdata_batches:ro
+      # the ML models' input files (ml/run_ml.py writes them; on the office disk, next to inputdata/)
+      - ./ml_inputdata:/app/ml_inputdata
 
   qdrant:
     image: qdrant/qdrant:v1.19.2

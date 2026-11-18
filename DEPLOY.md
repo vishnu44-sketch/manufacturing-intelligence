@@ -189,6 +189,6 @@ In the office Docker (branch docker-mysql), after the data load, with the loader
 
 - `docker compose build` once after pulling this change: the image must hold `ml/` and the two new libraries.
 - `--entrypoint python` because the loader service's own entrypoint is `loader/load_gold.py`.
-- The CSV files stay inside that one-off container (removed by `--rm`); the ml_* tables are what matters.
+- The CSV files land in `ml_inputdata/` on this PC (the loader service mounts it), next to `inputdata/`.
 - The restart only after the FIRST run (when the ml_* tables are new): the AI's list of allowed tables is
   read once per process. The Insights page reads the tables fresh and needs no restart.
