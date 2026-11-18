@@ -9,6 +9,7 @@ urlpatterns = [
     path("api/logout", api.sign_out, name="api_logout"),
     path("api/me", api.me, name="api_me"),
     path("api/home", api.home_page, name="api_home"),  # the Home page: KPIs, tables, connections (every user)
+    path("api/insights", api.insights_page, name="api_insights"),  # the ML results (every user, read-only)
     path("api/chats", api.chats, name="api_chats"),  # the chat list and the removed chats
     path("api/chats/<int:chat_id>", api.chat_detail, name="api_chat"),
     path("api/chats/<int:chat_id>/rename", api.chat_rename, name="api_chat_rename"),

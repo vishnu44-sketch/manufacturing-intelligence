@@ -1,27 +1,27 @@
 // The frame of every page: a top bar across the window (the "MI" mark and the product name on the left; on the
-// right "New chat", "History", the dark-mode button and the user's round badge, which opens a small menu with
+// right "New chat" (on ML Insights and the ML Dashboard a new ML chat on ML Insights, else a new Assistant chat), "History", the dark-mode button and the user's round badge, which opens a small menu with
 // the name, the role and "Sign out"), and under it the light menu on the left, in groups: Home (Home, Assistant),
-// Intelligence (Knowledge graph), Tools (History, Memory) and - for staff only - Administration (Users,
+// Intelligence (Knowledge graph, ML Insights, ML Dashboard), Tools (History, Memory) and - for staff only - Administration (Users,
 // Documents, Data, SQL, Audit). The page it is on is a filled pill. The browser tab shows "<page> · SS Manufacturing".
 // Above the page is a row with its title (a page can go without it: header={false}, as Home and the Assistant do).
 // The « button under the menu makes it small (icons only, the name on hover) on every page; » opens it again. The
 // choice is kept in this browser (localStorage). On a phone the menu is a drawer, opened by the ☰ button in the top bar.
 // Colours are the names of src/tailwind.css (light and dark); the layout is in shell.css.
 import {
-  Brain, ChevronsLeft, ChevronsRight, Clock, Database, FileText, History, House, LogOut, type LucideIcon, Menu,
+  Brain, ChevronsLeft, ChevronsRight, Clock, Database, FileText, History, House, LayoutDashboard, Lightbulb, LogOut, type LucideIcon, Menu,
   MessageSquareText, Moon, Network, Plus, ShieldCheck, SquareTerminal, Sun, Users,
 } from 'lucide-react'
 import { type ReactNode, useEffect, useState } from 'react'
 import { cn } from '@/lib/utils'
 import { useTheme } from '@/lib/theme'
-import { Link, useRouter } from '../router'
+import { Link, ML_DASHBOARD_PATH, NEW_ML_CHAT_PATH, useRouter } from '../router'
 import type { Me } from '../types'
 import { APP_NAME, APP_SUBTITLE, FOOTER_TEXT, tabTitle } from '../lib/brand'
 import BrandMark from './BrandMark'
 import { Popover, PopoverContent, PopoverTrigger } from './ui/popover'
 import './shell.css'
 
-export type MenuItem = 'home' | 'ask' | 'history' | 'memory' | 'graph' | 'users' | 'documents' | 'data' | 'sql' | 'audit' | ''
+export type MenuItem = 'home' | 'ask' | 'history' | 'memory' | 'graph' | 'insights' | 'mldashboard' | 'users' | 'documents' | 'data' | 'sql' | 'audit' | ''
 
 /** A time as the clock shows it, in India time: "Friday, 06 November 2026 · 10:56 AM IST". */
 export function istText(at: Date): string {
@@ -58,6 +58,8 @@ const MENU: Group[] = [
   ] },
   { name: 'Intelligence', entries: [
     { to: '/graph', item: 'graph', name: 'Knowledge graph', icon: Network },
+    { to: '/insights', item: 'insights', name: 'ML Insights', icon: Lightbulb },
+    { to: ML_DASHBOARD_PATH, item: 'mldashboard', name: 'ML Dashboard', icon: LayoutDashboard },
   ] },
   { name: 'Tools', entries: [
     { to: '/history', item: 'history', name: 'History', icon: History },
@@ -154,7 +156,9 @@ export default function Shell({ me, title, active, onSignOut, header = true, chi
         </Link>
 
         <div className="ml-auto flex flex-none items-center gap-1">
-          <Link to="/new" className={cn(TOP_ITEM, 'mi-shell-link')}>
+          {/* "New chat" for the page it is on: a new ML chat on ML Insights and the ML Dashboard (18-Nov: the ML
+              pages belong together), a new Assistant chat everywhere else */}
+          <Link to={route.kind === 'insights' || route.kind === 'mldashboard' ? NEW_ML_CHAT_PATH : '/new'} className={cn(TOP_ITEM, 'mi-shell-link')}>
             <Plus size={17} strokeWidth={2} className="flex-none" />
             <span className="mi-shell-label">New chat</span>
           </Link>

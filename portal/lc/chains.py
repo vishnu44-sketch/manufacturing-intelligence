@@ -5,6 +5,7 @@
     rewrite_chain(llm)  = REWRITE_PROMPT | llm    a follow-up + the earlier questions -> the full question
     route_chain(llm)    = ROUTE_PROMPT   | llm    question + closest PDF pieces -> data or documents
     docs_chain(llm)     = DOCS_PROMPT    | llm    question + closest PDF pieces -> the short answer
+    general_chain(llm)  = GENERAL_PROMPT | llm    a message not about the data / documents + the chat -> the answer
 
 Each chain stops at the AI's reply message (AIMessage), not at plain text: the message also carries
 the tokens Groq counted and whether the reply was cut off - the app needs both (History, usage box).
@@ -13,7 +14,7 @@ reply_info() reads them.
 One chain = one AI call. LCEL has no loops: the steps around the calls (the router, the SQL guard ->
 checks -> read-only MySQL -> on a problem ask again) are a LangGraph graph (graph.py).
 """
-from .prompts import DOCS_PROMPT, EXPLAIN_PROMPT, REWRITE_PROMPT, ROUTE_PROMPT, SQL_PROMPT
+from .prompts import DOCS_PROMPT, EXPLAIN_PROMPT, GENERAL_PROMPT, REWRITE_PROMPT, ROUTE_PROMPT, SQL_PROMPT
 
 
 def sql_chain(llm):
@@ -34,6 +35,10 @@ def route_chain(llm):
 
 def docs_chain(llm):
     return DOCS_PROMPT | llm
+
+
+def general_chain(llm):
+    return GENERAL_PROMPT | llm
 
 
 def reply_info(message):

@@ -137,6 +137,10 @@ def mysql(monkeypatch):
     monkeypatch.setattr(agent, "unknown_values", lambda sql, allowed: [])
     # so are the dates the invoice data covers (test_a_year_that_starts_before_the_data_*)
     monkeypatch.setattr(agent, "invoice_data_dates", lambda: (date(2025, 12, 21), date(2027, 3, 20)))
+    # and the forecast months note of a forecast answer (test_forecast_checks.py)
+    monkeypatch.setattr(agent, "forecast_months_note", lambda sql: "")
+    # and the totals of the ml_ result tables (test_ml_answers.py)
+    monkeypatch.setattr(agent, "ml_totals_note", lambda sql: "")
     return fake
 
 
@@ -193,11 +197,12 @@ def with_backup(monkeypatch):
 
 # ---------- refusals ----------
 
-def test_off_topic_question_is_refused_and_no_sql_runs(monkeypatch, mysql, user):
-    """The model says NO_SQL -> the fixed refusal text, nothing runs on MySQL."""
+def test_a_request_to_change_data_is_refused_and_no_sql_runs(monkeypatch, mysql, user):
+    """The model says NO_SQL -> the fixed refusal text, nothing runs on MySQL. (17-Nov: an off-topic question,
+    e.g. "What is the capital of France?", gets a general answer instead - test_general_answer.py.)"""
     fake = use_fake_ai(monkeypatch, ["NO_SQL"])
 
-    result = agent.ask("What is the capital of France?", user)
+    result = agent.ask("delete all credit notes from the database", user)
 
     assert result.status == "refused"
     assert result.answer == "I can only answer questions about SS Manufacturing data."
@@ -982,13 +987,13 @@ def test_end_to_end_top_5_customers_aug_2026(real_services, monkeypatch, user):
 
     assert result.columns == ["customer_name", "invoice_value_inr"]
     assert result.rows == [
-        ["Aurora Fluid Power Limited", Decimal("1730000.00")],
-        ["Meridian Engineering Works Private Limited", Decimal("1316700.00")],
-        ["Pioneer Star Precision Components GmbH", Decimal("1238350.00")],
-        ["Meridian Hydraulics Limited", Decimal("747750.00")],
-        ["Tejas Industrial Solutions Private Limited", Decimal("450000.00")],
-    ]
-    assert "1,730,000.00" in fake.calls[1][1]["content"]  # the real rows went to the explain call
+        ["Crescent Tech Industries Limited", Decimal("16264499.50")],
+        ["Sakura Pump Japan Co., Ltd.", Decimal("12319318.00")],
+        ["Delta Forgings LLP", Decimal("9405952.50")],
+        ["Lotus Hydraulics Limited", Decimal("9392120.00")],
+        ["Everest Tooling Limited", Decimal("7780526.50")],
+    ]   # the data loaded on 17-Nov-2026 (01-Apr-2024 to 31-Oct-2026)
+    assert "16,264,499.50" in fake.calls[1][1]["content"]  # the real rows went to the explain call
 
 
 def base_data_only():
@@ -1009,7 +1014,7 @@ def test_end_to_end_open_sales_orders(real_services, monkeypatch, user):
     assert [row[:4] for row in result.rows] == check["rows"]          # + as_of_date = today
     assert result.columns[-1] == "as_of_date" and result.rows[0][-1] == date.today()
     if base_data_only():
-        assert [row[:4] for row in result.rows] == [[27, 50, Decimal("16547240.00"), Decimal("18834723.20")]]
+        assert [row[:4] for row in result.rows] == [[429, 1326, Decimal("198408619.50"), Decimal("225243962.97")]]
 
 
 def test_end_to_end_net_sales_per_sales_month(real_services, monkeypatch, user):
@@ -1018,13 +1023,11 @@ def test_end_to_end_net_sales_per_sales_month(real_services, monkeypatch, user):
 
     months = [row[0] for row in result.rows]
     net_sales = [row[3] for row in result.rows]
-    # Apr .. Sep 2026 come from the base files; batch_001 only adds the months after them
-    assert months[:6] == ["Apr 2026", "May 2026", "Jun 2026", "Jul 2026", "Aug 2026", "Sep 2026"]
-    assert net_sales[:6] == [Decimal(v) for v in ("7950880.00", "5806675.00", "12767485.00",
-                                                  "5424475.00", "7604315.00", "1955500.00")]
-    assert sum(net_sales[:6]) == Decimal("41509330.00")
-    if base_data_only():
-        assert len(months) == 6
+    # the data loaded on 17-Nov-2026 ends on 31-Oct-2026: Apr .. Oct 2026 complete, Nov 2026 = 21-31 Oct only
+    assert months == ["Apr 2026", "May 2026", "Jun 2026", "Jul 2026", "Aug 2026", "Sep 2026", "Oct 2026", "Nov 2026"]
+    assert net_sales[:7] == [Decimal(v) for v in ("506116320.50", "459457491.70", "514347284.15", "434659336.50",
+                                                  "466556045.75", "472683542.23", "517494492.75")]
+    assert net_sales[7] == Decimal("189269525.00")
 
 
 def test_end_to_end_customers_who_stopped_buying(real_services, monkeypatch, user):
@@ -1070,7 +1073,7 @@ def test_end_to_end_new_customers(real_services, monkeypatch, user):
 
     assert result.columns[:3] == ["period_from", "period_to", "invoice_history_starts"]
     period_from, _, history_starts, new_customers, _, customers_buying = result.rows[0][:6]
-    assert history_starts == date(2025, 12, 21) and history_starts < period_from
+    assert history_starts == date(2024, 4, 2) and history_starts < period_from
     assert 0 < new_customers <= customers_buying
     answer_request = fake.calls[1][1]["content"]
     assert "invoice_history_starts" in answer_request and "Data dates:" not in answer_request
@@ -1425,7 +1428,7 @@ def test_end_to_end_net_sales_month_by_month_over_a_range(real_services, monkeyp
     starts = [row[1] for row in result.rows]
     assert starts == sorted(starts)
     check = warehouse.run_select("SELECT ROUND(SUM(net_taxable_value), 2) FROM fact_invoice_lines "
-                                 "WHERE invoice_date BETWEEN '2025-12-21' AND '2027-03-20'")
+                                 "WHERE invoice_date BETWEEN '2025-12-21' AND '2026-10-20'")
     assert sum(row[3] for row in result.rows) == check["rows"][0][0]
     answer_request = fake.calls[1][1]["content"]
     assert "sales month Jan 2026 = 21-Dec-2025 to 20-Jan-2026" in answer_request
@@ -1470,7 +1473,7 @@ def test_end_to_end_bought_in_a_period_but_nothing_since_a_month(real_services, 
     assert first[:3] == [date(2025, 12, 21), date(2026, 6, 20), date(2026, 9, 21)]
     names = [row[3] for row in result.rows]
     assert "Unknown" not in " ".join(names)
-    assert first[6] == len(result.rows)  # matching_customers
+    assert first[6] >= len(result.rows)  # matching_customers (all of them, also when only 500 rows come back)
     for name in names:  # each one: an invoice in the period and no invoice since 21-Sep-2026
         safe = name.replace("'", "''")
         check = warehouse.run_select(
@@ -2299,7 +2302,7 @@ def test_the_router_sends_a_document_question_to_the_pdfs(monkeypatch, mysql, us
     route_system, route_request = (m["content"] for m in fake.calls[0])
     assert route_system == agent.ROUTE_SYSTEM_PROMPT and fake.max_tokens[0] == agent.ROUTE_MAX_TOKENS
     assert "- Warranty and Returns Policy, page 1: 1. Warranty period Product group" in route_request
-    assert route_request.endswith(f"Question: {DOC_QUESTION}\n\nYour reply (data, documents or both):")
+    assert route_request.endswith(f"Question: {DOC_QUESTION}\n\nYour reply (data, documents, both or general):")
     docs_system, docs_request = (m["content"] for m in fake.calls[1])
     assert docs_system == agent.DOCS_SYSTEM_PROMPT and "NOT_IN_DOCUMENTS" in docs_system
     assert "[1] Warranty and Returns Policy, page 1\n1. Warranty period" in docs_request
@@ -2320,7 +2323,7 @@ def test_a_document_question_has_its_own_time_steps(monkeypatch, mysql, user):
     assert {"pdf_search", "route", "answer_ai"} <= set(result.step_secs)
     assert not {"search", "schema", "sql_ai", "mysql"} & set(result.step_secs)
     labels = [step["label"] for step in result.time_steps]
-    assert labels[:3] == ["Search the PDF documents (vector DB Qdrant: mi_pdfs)", "Decide: data, documents or both (AI)", "Write the answer (AI)"]
+    assert labels[:3] == ["Search the PDF documents (vector DB Qdrant: mi_pdfs)", "Decide: data, documents, both or general (AI)", "Write the answer (AI)"]
 
 
 def test_the_router_saying_data_keeps_the_sql_path_as_before(monkeypatch, mysql, user):

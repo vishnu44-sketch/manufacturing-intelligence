@@ -18,7 +18,8 @@ describe('AskStart: the start screen', () => {
     expect(box).toHaveAttribute('placeholder', 'Ask about sales, customers, orders, stock or documents…')
     expect(screen.queryByText(/MySQL ss_gold/)).not.toBeInTheDocument()   // 12-Nov: "remove this, no need"
     expect(within(start).getByRole('button', { name: 'Ask' })).toBeInTheDocument()
-    expect(box).toHaveAttribute('rows', '2')                                       // the start screen keeps its big box
+    expect(box).toHaveAttribute('rows', '1')                                       // 17-Nov: the same one-row pill, a little bigger
+    expect(box).toHaveClass('max-h-[220px]!')                                       // it may grow higher than under a chat
     expect(document.querySelector('.composer')).toBeNull()
     expect(document.querySelector('.conv-head')).toBeNull()                        // no "New chat" head row (16-Nov)
     expect(screen.queryByRole('button', { name: 'Options for this chat' })).not.toBeInTheDocument()

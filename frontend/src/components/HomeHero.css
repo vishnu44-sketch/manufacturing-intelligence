@@ -1,34 +1,82 @@
-/* The Home welcome banner (HomeHero.tsx): its soft shapes and its calm movement.
+/* The Home welcome banner (HomeHero.tsx): its light ground, its soft shapes and its calm movement, and the soft
+   ground of the whole Home page.
 
-   The shapes are drawn always (still); they move only when the banner has the class "mi-hero-motion" (set when
-   the person did not ask for less motion) and the browser says motion is fine - so with "reduce motion" on,
-   nothing here moves and the text is simply there. All shapes sit behind the text and are faint, so the white
-   text keeps its contrast. */
+   Every colour is a theme variable of styles/app.css (--brand, --surface, --line ...), mixed with color-mix, so the
+   same rules give a light banner in the light theme (white fading into a pale blue) and a dark one with a touch of
+   blue in the dark theme. The shapes are drawn always (still); they move only when the banner has the class
+   "mi-hero-motion" (set when the person did not ask for less motion) and the browser says motion is fine - so with
+   "reduce motion" on, nothing here moves and the text is simply there. All shapes sit behind the text and are
+   faint, so the text keeps its contrast. */
 
-/* the slow light: a wide soft band of white, only shown while it moves */
+/* the Home page ground: a very soft blue-grey with a faint blueprint grid (like the sign-in page), so the white
+   cards stand out; only on Home (HomePage.tsx has the class "mi-home") */
+.mi-shell-main:has(.mi-home) {
+  --home-grid: color-mix(in srgb, var(--brand) 5%, transparent);
+  background-color: color-mix(in srgb, var(--brand) 4%, var(--bg));
+  background-image: linear-gradient(var(--home-grid) 1px, transparent 1px),
+    linear-gradient(90deg, var(--home-grid) 1px, transparent 1px);
+  background-size: 32px 32px;
+}
+:root[data-theme="dark"] .mi-shell-main:has(.mi-home) {
+  --home-grid: color-mix(in srgb, var(--brand) 4%, transparent);
+  background-color: var(--bg);
+}
+
+/* the banner: white on the left fading into a pale blue on the right, a thin light blue border, a soft shadow */
+.mi-hero {
+  --hero-glow: color-mix(in srgb, var(--brand) 16%, transparent);
+  --hero-light: color-mix(in srgb, var(--surface) 70%, transparent);
+  background: linear-gradient(118deg, var(--surface) 0%, color-mix(in srgb, var(--brand) 5%, var(--surface)) 42%,
+    color-mix(in srgb, var(--brand) 13%, var(--surface)) 100%);
+  border: 1px solid color-mix(in srgb, var(--brand) 14%, var(--line));
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--shadow-c) 5%, transparent),
+    0 20px 40px -32px color-mix(in srgb, var(--brand) 55%, transparent);
+}
+:root[data-theme="dark"] .mi-hero {
+  --hero-glow: color-mix(in srgb, var(--brand) 20%, transparent);
+  --hero-light: color-mix(in srgb, var(--brand) 8%, transparent);
+  background: linear-gradient(118deg, var(--surface) 0%, color-mix(in srgb, var(--brand) 6%, var(--surface)) 42%,
+    color-mix(in srgb, var(--brand) 14%, var(--surface)) 100%);
+  border-color: var(--line);
+  box-shadow: none;
+}
+
+/* a soft grid of faint blue dots, fading in towards the right */
+.mi-hero-dots {
+  position: absolute; inset: 0; pointer-events: none; opacity: .14;
+  background-image: radial-gradient(var(--brand) 1px, transparent 1.2px); background-size: 18px 18px;
+  -webkit-mask-image: linear-gradient(100deg, transparent 25%, black 85%);
+  mask-image: linear-gradient(100deg, transparent 25%, black 85%);
+}
+
+/* the "Try a question" strip at the bottom: a little whiter than the banner, so the chips sit on it */
+.mi-hero-strip { background: color-mix(in srgb, var(--surface) 55%, transparent); }
+:root[data-theme="dark"] .mi-hero-strip { background: color-mix(in srgb, var(--bg) 35%, transparent); }
+
+/* the slow light: a wide soft band, only shown while it moves */
 .mi-hero-sheen {
   position: absolute; inset: 0; pointer-events: none; opacity: 0;
-  background: linear-gradient(105deg, transparent 32%, rgba(255, 255, 255, .06) 44%, rgba(255, 255, 255, .11) 50%,
-    rgba(255, 255, 255, .06) 56%, transparent 68%);
+  background: linear-gradient(105deg, transparent 32%, color-mix(in srgb, var(--hero-light) 45%, transparent) 44%,
+    var(--hero-light) 50%, color-mix(in srgb, var(--hero-light) 45%, transparent) 56%, transparent 68%);
   background-size: 260% 100%; background-position: 100% 0;
 }
 
 .mi-hero-orb { position: absolute; pointer-events: none; border-radius: 9999px; }
-/* the blue / cyan glow in the top right corner */
+/* the soft blue glow in the top right corner */
 .mi-hero-orb-glow {
   top: -7rem; right: -5rem; width: 20rem; height: 20rem;
-  background: radial-gradient(closest-side, rgba(56, 189, 248, .34), transparent);
+  background: radial-gradient(closest-side, var(--hero-glow), transparent);
 }
 /* a soft light circle low on the left */
 .mi-hero-orb-soft {
   bottom: -6rem; left: 18%; width: 15rem; height: 15rem;
-  background: radial-gradient(closest-side, rgba(255, 255, 255, .09), transparent);
+  background: radial-gradient(closest-side, var(--hero-light), transparent);
 }
 /* a thin ring on the right, under the clock */
 .mi-hero-orb-ring {
   top: 38%; right: 22%; width: 7.5rem; height: 7.5rem;
-  border: 1px solid rgba(255, 255, 255, .10);
-  background: radial-gradient(closest-side, rgba(255, 255, 255, .04), transparent);
+  border: 1px solid color-mix(in srgb, var(--brand) 14%, transparent);
+  background: radial-gradient(closest-side, color-mix(in srgb, var(--brand) 4%, transparent), transparent);
 }
 
 /* the hand: inline-block, so it can turn */

@@ -1,6 +1,6 @@
-// Home: the two big feature cards right under the welcome banner - Assistant (the blue brand) and the Knowledge graph
-// (teal, so the two differ). Both work in light and dark (tokens and light / dark pairs; HomeFeatures.css has the
-// pictures' own dark colours). Each card says what the page does in one or two lines, shows three small points with icons and
+// Home: the two big feature cards right under the welcome banner - Assistant and the Knowledge graph, both in the
+// same light look with the blue brand (the same button, glow and picture colours). Both work in light and dark
+// (theme tokens; HomeFeatures.css has the pictures' colours). Each card says what the page does in one or two lines, shows three small points with icons and
 // has one big button that opens the page (the card itself is not a link). On the right a small moving picture:
 // a chat bubble "typing" and then a tiny bar chart growing (Assistant), dots joined by lines that draw themselves
 // and gently pulse (the graph). The pictures are only decoration (aria-hidden), their motion is in
@@ -59,6 +59,14 @@ function GraphPicture() {
   )
 }
 
+// the one look of both cards: a soft blue glow, the light blue icon circle, blue point icons, the blue button
+const BLUE: Feature['look'] = {
+  glow: 'bg-[radial-gradient(closest-side,color-mix(in_srgb,var(--brand)_16%,transparent),transparent)]',
+  icon: 'bg-primary-soft text-primary',
+  point: 'text-primary',
+  button: 'bg-primary text-primary-foreground! shadow-[0_8px_18px_-12px_color-mix(in_srgb,var(--brand)_75%,transparent)] hover:bg-primary-hover hover:text-primary-foreground! focus-visible:ring-primary/40',
+}
+
 const FEATURES: Feature[] = [
   {
     key: 'ask',
@@ -69,12 +77,7 @@ const FEATURES: Feature[] = [
     button: 'Open the Assistant',
     icon: MessageSquare,
     picture: <AskPicture />,
-    look: {
-      glow: 'bg-[radial-gradient(closest-side,rgba(11,95,179,.16),transparent)] dark:bg-[radial-gradient(closest-side,rgba(76,154,255,.18),transparent)]',
-      icon: 'bg-primary-soft text-primary',
-      point: 'text-primary',
-      button: 'bg-primary text-primary-foreground! shadow-[0_8px_18px_-12px_rgba(11,95,179,.75)] hover:bg-primary/90 hover:text-primary-foreground! focus-visible:ring-primary/40',
-    },
+    look: BLUE,
   },
   {
     key: 'graph',
@@ -85,12 +88,7 @@ const FEATURES: Feature[] = [
     button: 'Open Knowledge graph',
     icon: Network,
     picture: <GraphPicture />,
-    look: {
-      glow: 'bg-[radial-gradient(closest-side,rgba(13,148,136,.18),transparent)] dark:bg-[radial-gradient(closest-side,rgba(45,212,191,.16),transparent)]',
-      icon: 'bg-teal-500/12 text-teal-700 dark:bg-teal-400/15 dark:text-teal-300',
-      point: 'text-teal-700 dark:text-teal-300',
-      button: 'bg-teal-700 text-white! shadow-[0_8px_18px_-12px_rgba(15,118,110,.75)] hover:bg-teal-800 hover:text-white! focus-visible:ring-teal-600/45 dark:bg-teal-600 dark:hover:bg-teal-500',
-    },
+    look: BLUE,
   },
 ]
 
@@ -98,7 +96,7 @@ function FeatureCard({ feature }: { feature: Feature }) {
   const { title, text, points, to, button, icon: Icon, picture, look } = feature
   return (
     <Card data-feature={feature.key}
-      className="@container relative overflow-hidden transition-[translate,box-shadow] duration-200 ease-out hover:-translate-y-1 hover:shadow-[0_22px_40px_-26px_rgba(17,16,16,.45)] motion-reduce:hover:translate-y-0">
+      className="@container relative overflow-hidden transition-[translate,box-shadow] duration-200 ease-out hover:-translate-y-1 hover:shadow-[0_22px_40px_-26px_color-mix(in_srgb,var(--brand)_45%,transparent)] motion-reduce:hover:translate-y-0">
       {/* a soft colour glow in the top right corner */}
       <div aria-hidden="true" className={cn('pointer-events-none absolute -top-24 -right-16 size-64 rounded-full', look.glow)} />
 

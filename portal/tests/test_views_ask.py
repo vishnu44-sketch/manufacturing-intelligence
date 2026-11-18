@@ -67,7 +67,7 @@ def fake_ask(monkeypatch):
     (chat context) passed with each one."""
     asked = Asked()
 
-    def ask(question, user, context=None):
+    def ask(question, user, context=None, mode=""):
         asked.append(question)
         asked.contexts.append([q.text for q in (context or [])])
         saved = Question.objects.create(user=user, text=question, sql=SQL, answer=ANSWER,

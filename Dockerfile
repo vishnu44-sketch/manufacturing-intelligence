@@ -20,6 +20,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY manage.py /app/
 COPY nopsite /app/nopsite
 COPY portal /app/portal
+COPY ml /app/ml
 COPY docs /app/docs
 COPY pdfs /app/pdfs
 COPY --from=frontend /src/portal/static/portal/app /app/portal/static/portal/app
@@ -28,8 +29,8 @@ COPY --from=frontend /src/portal/static/portal/app /app/portal/static/portal/app
 RUN DJANGO_SECRET_KEY=collectstatic-only python manage.py collectstatic --noinput
 COPY --chmod=755 docker-entrypoint.sh /app/docker-entrypoint.sh
 RUN useradd --uid 10001 --create-home mcp \
-    && mkdir -p /app/data /app/.fastembed_cache \
-    && chown -R mcp:mcp /app/data /app/.fastembed_cache
+    && mkdir -p /app/data /app/.fastembed_cache /app/ml_inputdata \
+    && chown -R mcp:mcp /app/data /app/.fastembed_cache /app/ml_inputdata
 USER mcp
 EXPOSE 8000
 ENTRYPOINT ["/app/docker-entrypoint.sh"]

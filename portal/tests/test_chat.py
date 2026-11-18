@@ -340,7 +340,7 @@ def test_chat_answers_keep_the_backup_note_but_no_token_line(client, user, mysql
 @pytest.fixture
 def fake_ask_with_tokens(monkeypatch):
     """Like fake_ask, but the saved question carries the Groq tokens the real agent saves."""
-    def fake(question, user, context=None):
+    def fake(question, user, context=None, mode=""):
         saved = saved_question(user, text=question, model="openai/gpt-oss-120b",
                                sql_tokens=3_483, answer_tokens=861, total_tokens=4_344)
         return agent.AskResult(text=question, status="ok", answer=ANSWER, question=saved)
@@ -584,3 +584,34 @@ def test_understood_as_comes_with_the_answer_and_in_history_and_ask_again_uses_i
     assert card["understood_as"] == "Top 5 customers by invoice value in Sep 2026"
     assert line["understood_as"] == "Top 5 customers by invoice value in Sep 2026"
     assert line["ask_again"] == "Top 5 customers by invoice value in Sep 2026"
+
+
+# ---------- History's switch: Assistant | ML Insights | All (18-Nov) ----------
+
+def test_history_says_which_questions_are_of_ml_insights_and_filters_by_mode(client, user, other):
+    make_chat(user, "Net sales by month?", minutes_ago=30)                      # an Assistant chat
+    ml = make_chat(user, "Sales forecast for 3 months?", minutes_ago=20)        # an ML Insights chat
+    Conversation.objects.filter(pk=ml.pk).update(mode="ml")
+    loose = saved_question(user, text="A question without a chat")             # the newest
+    ml_other = make_chat(other, "Ravi's forecast?")                             # someone else's: never counted
+    Conversation.objects.filter(pk=ml_other.pk).update(mode="ml")
+    client.force_login(user)
+
+    def page(mode=None):
+        return api_get(client, "api_history", data={"mode": mode} if mode else None).json()
+
+    every = page()
+    modes = {line["text"]: line["mode"] for line in every["questions"]}
+    assert modes == {"A question without a chat": "", "Sales forecast for 3 months?": "ml", "Net sales by month?": ""}
+    assert every["counts"] == {"all": 3, "ml": 1, "assistant": 2} and every["count"] == 3
+
+    assistant = page("assistant")
+    assert [line["text"] for line in assistant["questions"]] == ["A question without a chat", "Net sales by month?"]
+    assert assistant["count"] == 2 and assistant["counts"] == every["counts"]       # the counts stay the same
+    assert assistant["questions"][0]["id"] == loose.pk
+
+    only_ml = page("ml")
+    assert [line["text"] for line in only_ml["questions"]] == ["Sales forecast for 3 months?"]
+    assert only_ml["count"] == 1
+
+    assert page("something else")["count"] == 3                                     # unknown = all

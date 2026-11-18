@@ -270,15 +270,37 @@ def test_a_busy_ai_is_a_friendly_503(client, user, monkeypatch, mysql, main_mode
     assert r.status_code == 503 and r.json()["detail"] == agent.AI_BUSY
 
 
-def test_a_daily_limit_is_a_friendly_503(client, user, monkeypatch, mysql, main_model):
+def test_a_daily_limit_of_both_models_is_a_friendly_503(client, user, monkeypatch, mysql, main_model):
     saved = saved_question(user)
-    fake = use_fake_ai(monkeypatch, [daily_limit_error(MAIN)])
+    fake = use_fake_ai(monkeypatch, [daily_limit_error(MAIN), daily_limit_error(BACKUP)])
     client.force_login(user)
 
     r = chart(client, saved.pk)
 
     assert r.status_code == 503 and r.json()["detail"] == charts.DAILY_LIMIT
-    assert fake.models == [MAIN]                                  # no backup model for a chart
+    assert fake.models == [MAIN, BACKUP]                          # the backup was tried too
+
+
+def test_after_the_main_models_daily_limit_the_backup_makes_the_chart(client, user, monkeypatch, mysql, main_model):
+    """18-Nov: a chart is an AI call like the others - the main model's daily limit moves it to the backup
+    (with fewer rows and the backup's max tokens); the next chart starts with the backup (the main model rests)."""
+    saved = saved_question(user, model=MAIN, total_tokens=3_500)
+    many = {"columns": ROWS["columns"], "rows": [[f"Customer {n}", Decimal(n)] for n in range(1, 41)],
+            "truncated": False}
+    monkeypatch.setattr(warehouse, "run_select", lambda sql: many)
+    fake = use_fake_ai(monkeypatch, [daily_limit_error(MAIN), (json.dumps(SANKEY), 900), json.dumps(SANKEY)])
+    client.force_login(user)
+
+    r = chart(client, saved.pk)
+
+    assert r.status_code == 200, r.content
+    assert r.json() == {"option": SANKEY, "tokens": 900, "model": BACKUP, "recorded": False}  # the backup's name
+    assert fake.models == [MAIN, BACKUP]
+    assert fake.max_tokens[1] == agent.FALLBACK_MAX_TOKENS
+    assert f"Rows (the first {agent.FALLBACK_ROWS_FOR_ANSWER} of 40)" in fake.calls[1][1]["content"]
+    assert f"Rows (the first {charts.MAX_ROWS} of 40)" not in fake.calls[1][1]["content"]
+    assert chart(client, saved.pk).status_code == 200
+    assert fake.models == [MAIN, BACKUP, BACKUP]                  # the main model rests a while
 
 
 def test_rows_that_cannot_run_again_ask_no_ai(client, user, monkeypatch):

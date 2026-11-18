@@ -1,7 +1,8 @@
 // The small machine drawing on the right of the Home welcome banner (HomeHero.tsx): three meshing gears and a
 // working pump - liquid comes in through the inlet pipe, the impeller turns inside the round housing and the liquid
 // goes out through the outlet pipe, past a small pressure gauge. The company makes pumps, so the banner shows one.
-// Thin white lines only (no fills), faint, so the white text next to it keeps its contrast; only for the eye
+// Thin lines only (no fills) in currentColor - a faint light blue set in HeroFactory.css - so the text next to it
+// keeps its contrast; only for the eye
 // (aria-hidden, no clicks).
 // It moves only when motion is fine: the movement classes are set only then (motion = true), and HeroFactory.css
 // moves them only inside the banner's "mi-hero-motion" and when the browser does not ask for less motion. With less
@@ -99,7 +100,7 @@ export default function HeroFactory({ motion }: { motion: boolean }) {
   const moves = (name: string) => (motion ? name : undefined)
   return (
     <div aria-hidden="true" data-slot="hero-factory" className="mi-factory">
-      <svg viewBox="0 0 300 110" preserveAspectRatio="xMaxYMid meet" focusable="false" fill="none" stroke="#fff"
+      <svg viewBox="0 0 300 110" preserveAspectRatio="xMaxYMid meet" focusable="false" fill="none" stroke="currentColor"
         strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round">
         {/* the gears: each one's outline, a hub and a few holes (so the turning shows) */}
         <g>
@@ -112,7 +113,7 @@ export default function HeroFactory({ motion }: { motion: boolean }) {
                   className={moves('mi-factory-turn')} style={turning(gear.seconds, gear.clockwise)}>
                   <path d={gearPath(gear.teeth, pitch, MODULE)} strokeOpacity=".48" />
                   <circle r={n(pitch * 0.24)} strokeOpacity=".4" />
-                  <circle r="1.6" fill="#fff" fillOpacity=".35" stroke="none" />
+                  <circle r="1.6" fill="currentColor" fillOpacity=".35" stroke="none" />
                   {Array.from({ length: holes }, (_, i) => {
                     const [hx, hy] = at(pitch * 0.58, (360 / holes) * i + 18).split(' ')
                     return <circle key={i} cx={hx} cy={hy} r={n(pitch * 0.12)} strokeOpacity=".35" />
@@ -145,7 +146,7 @@ export default function HeroFactory({ motion }: { motion: boolean }) {
             <circle r="5" />
             {BLADES.map((deg) => <path key={deg} d={bladePath(deg)} />)}
           </g>
-          <circle data-part="status-light" cx="22" cy="30" r="1.8" fill="#fff" fillOpacity=".7" stroke="none"
+          <circle data-part="status-light" cx="22" cy="30" r="1.8" fill="currentColor" fillOpacity=".7" stroke="none"
             className={moves('mi-factory-light')} />
         </g>
 
@@ -156,7 +157,7 @@ export default function HeroFactory({ motion }: { motion: boolean }) {
           {TICKS.map((deg) => <path key={deg} d={`M${at(8.2, deg - 90)} L${at(9.6, deg - 90)}`} strokeOpacity=".4" />)}
           <path data-part="gauge-needle" d="M0 1.5 V-7.2" strokeWidth="1.3" strokeOpacity=".65"
             className={`mi-factory-needle${motion ? ' mi-factory-sway' : ''}`} />
-          <circle r="1.4" fill="#fff" fillOpacity=".6" stroke="none" />
+          <circle r="1.4" fill="currentColor" fillOpacity=".6" stroke="none" />
         </g>
       </svg>
     </div>

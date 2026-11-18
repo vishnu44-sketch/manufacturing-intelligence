@@ -24,7 +24,7 @@ from . import chains, llm
 log = logging.getLogger(__name__)
 
 CHAINS = {"sql": chains.sql_chain, "rewrite": chains.rewrite_chain, "answer": chains.answer_chain,
-          "route": chains.route_chain, "docs": chains.docs_chain}
+          "route": chains.route_chain, "docs": chains.docs_chain, "general": chains.general_chain}
 
 
 @dataclass
@@ -32,15 +32,48 @@ class LcRequest:
     """One AI call: which chain, and the values its prompt template needs. For 'sql', retries = the earlier
     tries of this question as LangChain messages - the AI's reply (AIMessage), then what was wrong with it
     (HumanMessage, RETRY_PROMPT); the graph's retry step (graph.py) adds them after every failed try."""
-    chain: str                                   # 'sql' | 'rewrite' | 'answer' | 'route' | 'docs'
+    chain: str                                   # 'sql' | 'rewrite' | 'answer' | 'route' | 'docs' | 'general'
     values: dict
     retries: list = field(default_factory=list)
+    # an ML Insights SQL request: the backup model's own documents, count, schema and smallest_schema
+    # (graph.pick_schema; for_backup swaps them in). {} = any other request
+    backup: dict = field(default_factory=dict)
 
     def inputs(self):
         """The template's inputs: the values, plus the earlier tries for the SQL chain."""
         if self.chain != "sql":
             return dict(self.values)
         return {**self.values, "retries": list(self.retries)}
+
+
+BACKUP_SQL_NOTES = 2           # notes pieces the backup's SQL request keeps (the main model gets agent.TOP_K = 5)
+NOTES_BREAK = "\n\n---\n\n"    # how graph.pick_schema joins the notes pieces
+
+
+def for_backup(request, smallest=False):
+    """The request cut to fit the backup model's smaller free tier (tokens a minute).
+    18-Nov (question 118): the SQL request is ~6,400 tokens (the rules ~2,950, the schema, five notes pieces) and
+    the backup adds 1,000 for its reply - more than the backup may take in a minute, so Groq refused it at once and
+    the question ended with "returned an error" although the backup had all its daily tokens left.
+    Only the SQL request is that big: the backup gets the closest BACKUP_SQL_NOTES notes pieces and only the last
+    earlier try; smallest=True (after Groq still said too large) keeps one piece and leaves out the chat's earlier
+    questions too. Other requests are given back as they are (the answer call already sends the backup fewer rows).
+    18-Nov (question 124): an ML Insights request (request.backup) gets its own cut instead - one ML note and only
+    the ml_ tables the question picks (agent.backup_ml_hits / backup_ml_schema); smallest: the picked tables only."""
+    if request.chain != "sql":
+        return request
+    values = dict(request.values)
+    if request.backup:
+        values.update(documents=request.backup["documents"], count=request.backup["count"],
+                      schema=request.backup["smallest_schema" if smallest else "schema"])
+    else:
+        pieces = [piece for piece in str(values.get("documents") or "").split(NOTES_BREAK) if piece.strip()]
+        keep = 1 if smallest else BACKUP_SQL_NOTES
+        if len(pieces) > keep:
+            values["documents"], values["count"] = NOTES_BREAK.join(pieces[:keep]), keep
+    if smallest:
+        values["earlier"] = ""
+    return LcRequest(request.chain, values, retries=list(request.retries[-2:]))  # the last try: reply + problem
 
 
 def chat(request, max_tokens, effort, model=None, on_token=None):

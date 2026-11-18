@@ -19,6 +19,10 @@ PLAN.md
 README.md
 .env.example
 
+# the ML models' input files (ml/run_ml.py writes them on every run); ml_inputdata/README.md says what each file is
+ml_inputdata/*.csv
+!ml_inputdata/README.md
+
 # golden-set runs: the answers stay local, only eval_results/scores.csv goes into git
 eval_results/*.json
 

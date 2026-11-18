@@ -17,6 +17,9 @@
 @source "./components/Shell.tsx";
 @source "./components/AskPage.tsx";
 @source "./components/AskStart.tsx";
+/* the question box, the bubbles and "Thinking…" shared by the Assistant and ML Insights (without this line
+   their own classes were never made: a square box with a bordered field inside, 17-Nov) */
+@source "./components/AskThread.tsx";
 @source "./components/ChatMenu.tsx";
 @source "./components/HistoryChats.tsx";
 @source "./components/AnswerCard.tsx";
@@ -34,6 +37,10 @@
 @source "./components/SqlTabs.tsx";
 @source "./components/SqlSaved.tsx";
 @source "./components/SqlSaveDialog.tsx";
+@source "./components/InsightsPage.tsx";
+/* the ML Dashboard: the 6 ML result cards (18-Nov, moved out of InsightsPage.tsx) */
+@source "./components/MlDashboard.tsx";
+@source "./charts/InsightsChart.tsx";
 
 /* The shadcn/ui colour names, set to the brand (the --brand, --ink ... variables of styles/app.css :root).
    "inline": the utilities use these values directly, no new global CSS variables are made (shadcn's own

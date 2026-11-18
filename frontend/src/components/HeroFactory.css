@@ -12,6 +12,8 @@
 .mi-factory {
   position: absolute; top: 80px; right: 26px; bottom: 8px; width: 300px;
   pointer-events: none;
+  /* the lines: the brand blue, faded towards the banner ground (a light blue; the lighter blue in the dark theme) */
+  color: color-mix(in srgb, var(--brand) 75%, var(--surface));
 }
 .mi-factory svg { display: block; width: 100%; height: 100%; overflow: visible; }
 

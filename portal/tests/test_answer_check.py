@@ -395,3 +395,14 @@ def test_the_eval_context_list_takes_the_normal_path(monkeypatch, mysql, user):
     result = agent.ask("is that correct", user, context=context, use_memories=False)
 
     assert len(fake.calls) == 2 and result.status == "refused" and mysql.calls == []
+
+
+def test_is_that_correct_after_a_general_answer_says_it_was_general(monkeypatch):
+    """17-Nov: after a general answer (not company data) the check says so, not "the data does not have it"."""
+    from types import SimpleNamespace
+    from portal import answer_check
+    from portal.rag import agent
+    earlier = SimpleNamespace(status="general", sql="", sources=[])
+    monkeypatch.setattr(answer_check, "earlier_answer", lambda context: earlier)
+    result = answer_check.answer(agent.AskResult(text="is that correct?"), "check", None)
+    assert result.status == "general" and result.answer == answer_check.FROM_GENERAL

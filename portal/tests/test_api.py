@@ -215,7 +215,7 @@ def test_a_bad_chat_id_or_body_is_a_400(client, user, fake_ask):
 
 
 def test_the_token_notice_comes_only_with_the_answer_just_asked(client, user, monkeypatch, mysql):
-    def ask(question, user, context=None):
+    def ask(question, user, context=None, mode=""):
         saved = saved_question(user, text=question, model="openai/gpt-oss-120b",
                                sql_tokens=3_483, answer_tokens=861, total_tokens=4_344)
         return agent.AskResult(text=question, status="ok", answer=ANSWER, question=saved)

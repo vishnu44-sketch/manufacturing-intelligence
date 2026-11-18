@@ -6,7 +6,8 @@ is only for the unusual ones, and only when the user clicks "Make this chart wit
 
 The steps: the saved SQL runs again exactly like the rows endpoint (services.saved_result: guard + read-only
 MySQL, no AI call), then ONE AI call (the main model, low effort, at most MAX_TOKENS) through lc/calls.chat -
-so the app's rate-limit rules apply (wait on a per-minute limit, a friendly message on a daily limit). The AI
+so the app's rate-limit rules apply (wait on a per-minute limit; after the main model's daily limit the backup
+model, as for a question; a friendly message when both are used up). The AI
 gets the question, the column names, at most MAX_ROWS rows and the chart asked for, and must reply with ONLY
 an Apache ECharts option as JSON.
 
@@ -143,10 +144,10 @@ def _plain(value):
     return str(value)
 
 
-def chart_values(saved, columns, rows, kind):
-    """The values of the chart prompt: the question, the chart wanted, the columns and at most MAX_ROWS rows."""
-    shown = rows[:MAX_ROWS]
-    note = f"all {len(rows)}" if len(rows) <= MAX_ROWS else f"the first {MAX_ROWS} of {len(rows)}"
+def chart_values(saved, columns, rows, kind, max_rows=MAX_ROWS):
+    """The values of the chart prompt: the question, the chart wanted, the columns and at most max_rows rows."""
+    shown = rows[:max_rows]
+    note = f"all {len(rows)}" if len(rows) <= max_rows else f"the first {max_rows} of {len(rows)}"
     question = saved.text if not saved.understood_as else f"{saved.text} (understood as: {saved.understood_as})"
     return {"question": question, "kind": kind, "columns": ", ".join(str(c) for c in columns), "row_note": note,
             "rows": "\n".join(json.dumps([_plain(v) for v in row], ensure_ascii=False) for row in shown)}
@@ -236,14 +237,24 @@ def make_chart(saved, kind):
         raise ChartError(rows_error, 503)
     if not result.rows:
         raise ChartError(NO_ROWS, 400)
-    model = agent.model_name()
-    request = LcRequest("chart", chart_values(saved, result.columns, result.rows, kind))
-    try:
-        text, tokens, cut_off = calls.chat(request, MAX_TOKENS, EFFORT, model=model)
-    except agent.DailyLimitReached:
-        raise ChartError(DAILY_LIMIT, 503) from None
-    except agent.AIUnavailable as exc:
-        raise ChartError(str(exc) or agent.AI_ERROR, 503) from None
+    # 18-Nov: like every AI call of a question, the main model first and the backup after its DAILY limit (or
+    # the backup first while the main model rests); the backup gets fewer rows (its free tier allows a smaller
+    # request) and at most agent.FALLBACK_MAX_TOKENS for its reply
+    for model in agent._models_to_try():
+        backup = model == agent.fallback_model_name()
+        max_rows = agent.FALLBACK_ROWS_FOR_ANSWER if backup else MAX_ROWS
+        request = LcRequest("chart", chart_values(saved, result.columns, result.rows, kind, max_rows))
+        max_tokens = min(MAX_TOKENS, agent.FALLBACK_MAX_TOKENS) if backup else MAX_TOKENS
+        try:
+            text, tokens, cut_off = calls.chat(request, max_tokens, EFFORT, model=model)
+            break
+        except agent.DailyLimitReached:
+            if model == agent.model_name():
+                agent.main_model_rests()
+        except agent.AIUnavailable as exc:
+            raise ChartError(str(exc) or agent.AI_ERROR, 503) from None
+    else:  # every model's daily limit is used up
+        raise ChartError(DAILY_LIMIT, 503)
     recorded = record_tokens(saved, model, tokens)
     if cut_off:
         raise ChartError(CUT_OFF, 502)

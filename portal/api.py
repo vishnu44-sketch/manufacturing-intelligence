@@ -22,7 +22,7 @@ from django.contrib.auth import authenticate, get_user_model, login, logout, upd
 from django.contrib.auth.forms import SetPasswordForm, UserCreationForm, UsernameField
 from django.core.paginator import Paginator
 from django.db import IntegrityError, transaction
-from django.db.models import Q
+from django.db.models import Count, Q
 from django.http import Http404, HttpResponse, JsonResponse, StreamingHttpResponse
 from django.middleware.csrf import CsrfViewMiddleware, get_token
 from django.shortcuts import get_object_or_404
@@ -33,7 +33,7 @@ from django.utils.text import Truncator
 from django.views.decorators.cache import never_cache
 from django.views.decorators.csrf import csrf_exempt
 
-from . import audit, charts, home, knowledge_graph, services, sql_page, user_memory
+from . import audit, charts, home, insights, knowledge_graph, services, sql_page, user_memory
 from .models import AuditLog, Question, SavedQuery, UserMemory
 from .rag import agent, warehouse
 from .usage import ai_usage
@@ -113,6 +113,7 @@ def _me(user):
 def _chat(chat, group=""):
     """One chat for the list / the chat header."""
     data = {"id": chat.pk, "title": chat.title, "archived": chat.archived,
+            "mode": chat.mode,  # 'ml' = an ML Insights chat, '' = an Assistant chat
             "created_at": timezone.localtime(chat.created_at).isoformat(), "created_text": _when(chat.created_at),
             "updated_at": timezone.localtime(chat.updated_at).isoformat(),
             "updated_text": _format(chat.updated_at, "d M, h:i A")}
@@ -281,31 +282,40 @@ def chat_delete(request, chat_id):
 
 
 # ------------------------------------------------------------------ asking
+ASK_MODES = ("", "ml")  # '' = the Assistant, 'ml' = the ML Insights page
+BAD_MODE = "mode must be 'ml' or empty."
+
+
 def _asked(request):
-    """(question, chat, None) of a posted {question, chat_id}, or (None, None, the JSON error): 400 when the
-    question is empty or too long, 404 for a chat that is not the user's own."""
+    """(question, chat, mode, None) of a posted {question, chat_id, mode}, or (None, None, None, the JSON error):
+    400 when the question is empty or too long or the mode is not 'ml' / empty, 404 for a chat that is not the
+    user's own. mode (missing = '') counts only for a new chat - an existing chat keeps its own (services.chat_mode)."""
     data = _body(request)
     if data is None:
-        return None, None, _error(400, "Send the question as a JSON object.")
+        return None, None, None, _error(400, "Send the question as a JSON object.")
     question = str(data.get("question") or "").strip()
+    mode = data.get("mode") or ""
+    if mode not in ASK_MODES:
+        return None, None, None, _error(400, BAD_MODE)
     chat_id = data.get("chat_id")
     if chat_id is not None and (isinstance(chat_id, bool) or not str(chat_id).isdigit()):
-        return None, None, _error(400, "chat_id must be a chat number or null.")
+        return None, None, None, _error(400, "chat_id must be a chat number or null.")
     chat = services.own_chat(request.user, int(chat_id)) if chat_id is not None else None
     problem = services.question_problem(question)
     if problem:
-        return None, None, _error(400, problem)
-    return question, chat, None
+        return None, None, None, _error(400, problem)
+    return question, chat, mode, None
 
 
 @api_view(["POST"])
 def ask(request):
-    """{question, chat_id} -> asks it (chat_id null = a new chat) and returns the new answer card with
-    its chat. 400 when the question is empty or too long; 404 for a chat that is not the user's own."""
-    question, chat, refused = _asked(request)
+    """{question, chat_id, mode} -> asks it (chat_id null = a new chat; mode 'ml' = a new ML Insights chat) and
+    returns the new answer card with its chat. 400 when the question is empty or too long or the mode is wrong;
+    404 for a chat that is not the user's own."""
+    question, chat, mode, refused = _asked(request)
     if refused:
         return refused
-    saved, chat = services.answer_in_chat(request.user, chat, question)
+    saved, chat = services.answer_in_chat(request.user, chat, question, mode)
     _audit_memories(request, saved)  # the question itself is in the Question table (its own audit trail)
     return JsonResponse(_answered(saved, chat))
 
@@ -323,10 +333,10 @@ def ask_stream(request):
         {"type": "error", "message": "..."}                         something failed outside the question itself
     A problem inside the question (the AI is busy, MySQL is down ...) is a saved question with a friendly answer:
     it comes as "done", as on /api/ask."""
-    question, chat, refused = _asked(request)
+    question, chat, mode, refused = _asked(request)
     if refused:
         return refused
-    response = StreamingHttpResponse(_ask_lines(request, chat, question), content_type=STREAM_TYPE)
+    response = StreamingHttpResponse(_ask_lines(request, chat, question, mode), content_type=STREAM_TYPE)
     response["X-Accel-Buffering"] = "no"  # nginx and similar proxies: pass each line on at once
     return response
 
@@ -336,10 +346,10 @@ def _line(event):
     return (json.dumps(event) + "\n").encode("utf-8")
 
 
-def _ask_lines(request, chat, question):
+def _ask_lines(request, chat, question, mode=""):
     """The lines of ask_stream. When the browser stops listening (closed, reloaded), the question still runs to
     the end and is saved - as on /api/ask - only nothing more is sent."""
-    events = services.answer_in_chat_streamed(request.user, chat, question)
+    events = services.answer_in_chat_streamed(request.user, chat, question, mode)
     gone = False
     while True:
         try:
@@ -391,7 +401,9 @@ def question_again(request, pk):
     problem = services.question_problem(question)
     if problem:
         return _error(400, problem)
-    saved, chat = services.answer_in_chat(request.user, None, question)
+    # a question of an ML Insights chat is asked again in a new ML Insights chat
+    mode = old.conversation.mode if old.conversation_id else ""
+    saved, chat = services.answer_in_chat(request.user, None, question, mode)
     audit.record(request, "ask_again", f"question {old.pk}", new_question=saved.pk, chat=chat.pk)
     _audit_memories(request, saved)
     return JsonResponse(_answered(saved, chat))
@@ -493,21 +505,37 @@ def _history_row(saved, main_model):
         "backup": bool(saved.model) and saved.model != main_model,
         "ask_again": saved.understood_as or saved.text,
         "excel_url": reverse("api_excel", args=[saved.pk]) if has_rows else "",
+        # 18-Nov: "ml" = asked in a chat of ML Insights; '' = an Assistant chat or no chat at all
+        "mode": saved.conversation.mode if saved.conversation_id else "",
     }
+
+
+# History's switch (18-Nov): which questions ?mode= keeps - an ML Insights chat's, or all the others
+ML_QUESTIONS = Q(conversation__mode="ml")
+HISTORY_MODES = {"ml": ML_QUESTIONS, "assistant": Q(conversation__isnull=True) | ~ML_QUESTIONS}
 
 
 @api_view(["GET"])
 def history(request):
     """The signed-in user's own past questions, newest first, 25 per page (?page=2), plus the AI usage
     box of this app (all users). Staff also see only their own questions here. Questions of a deleted
-    chat are left out (the usage box still counts their tokens: they were used)."""
-    questions = request.user.questions.visible().order_by("-created_at")
+    chat are left out (the usage box still counts their tokens: they were used).
+    ?mode=assistant / ?mode=ml (18-Nov): only the Assistant's questions (questions without a chat count
+    there) or only those of ML Insights chats; anything else = all. "counts" has the number of each, for
+    the switch on the page."""
+    questions = request.user.questions.visible().select_related("conversation").order_by("-created_at")
+    counts = questions.aggregate(all=Count("id"), ml=Count("id", filter=ML_QUESTIONS))
+    counts["assistant"] = counts["all"] - counts["ml"]
+    mode = request.GET.get("mode", "")
+    if mode in HISTORY_MODES:
+        questions = questions.filter(HISTORY_MODES[mode])
     page = Paginator(questions, services.HISTORY_PAGE_SIZE).get_page(request.GET.get("page"))
     main_model = agent.model_name()
     return JsonResponse({
         "questions": [_history_row(saved, main_model) for saved in page.object_list],
         "page": page.number, "pages": page.paginator.num_pages, "count": page.paginator.count,
         "has_previous": page.has_previous(), "has_next": page.has_next(),
+        "counts": counts,
         "usage": _usage(),
     })
 
@@ -1064,6 +1092,16 @@ def home_page(request):
     usage today. Read-only, no AI call. A part that cannot be read (e.g. MySQL is down) has its own error
     text and the rest still comes - never a 500. Only names and a status: no host, port, user name or key."""
     return JsonResponse(home.home(request.user))
+
+
+# ------------------------------------------------------------------ Insights (every user, read-only)
+@api_view(["GET"])
+def insights_page(request):
+    """The Insights page in one reply (insights.py): the results of the ML step (ml/run_ml.py) - the sales
+    forecast, customers at risk, customer groups, unusual invoices, products bought together and stock running
+    out. Read-only from the ml_* tables of ss_gold, no AI call. Before the first ML run: ready false with
+    empty parts - never a 500."""
+    return JsonResponse(insights.build())
 
 
 # ------------------------------------------------------------------ Knowledge graph (every user, read-only)

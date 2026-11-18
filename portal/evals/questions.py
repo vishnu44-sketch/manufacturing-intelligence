@@ -41,6 +41,9 @@ LATEST_CLOSE = ("FROM fact_stock_ledger sl JOIN dim_stock_movement_types mt ON s
                 "AND sl.report_date = (SELECT MAX(report_date) FROM fact_stock_ledger)")
 MONTH = ("SELECT ROUND(SUM(il.net_taxable_value), 2) FROM fact_invoice_lines il JOIN dim_calendar c "
          "ON il.invoice_date_id = c.date_id WHERE c.sales_month = '{m}'")
+FORECAST = "FROM ml_sales_forecast WHERE level = 'TOTAL' ORDER BY period_start LIMIT {limit}"
+FORECAST_2027 = ("FROM ml_sales_forecast WHERE level = 'TOTAL' AND period_end >= '2027-01-01' "
+                 "AND period_start <= '2027-12-31'")
 
 ITEMS = [
     {"id": "Q38", "question": "what is last year and current year revenue",
@@ -241,6 +244,45 @@ ITEMS = [
                 WHERE il.invoice_date BETWEEN t.sales_period_start AND CURDATE()""",
      "should": "SELECT sales_period_start, CURDATE() FROM dim_calendar WHERE full_date = CURDATE()",
      "must_have": ["so far"]},
+    # 17-Nov: the ML results of run_ml (ml_* tables) - estimates, never "not in the data"
+    {"id": "N21", "question": "What will our sales be next month?",
+     "must": f"SELECT forecast_inr {FORECAST.format(limit=1)}",
+     "should": f"SELECT low_inr, high_inr, period_start, period_end {FORECAST.format(limit=1)}",
+     "must_have": ["forecast"]},
+    {"id": "N22", "question": "What will our sales be in the next 3 months?",
+     "must": f"SELECT forecast_inr {FORECAST.format(limit=3)}",
+     "must_have": ["forecast"]},
+    {"id": "N23", "question": "What is the sales forecast for GCI TX-675 next month?",
+     "must": """SELECT forecast_inr FROM ml_sales_forecast WHERE level = 'PRODUCT' AND product_code = 'FG01484'
+                AND horizon_months = 1""",
+     "should": """SELECT low_inr, high_inr FROM ml_sales_forecast WHERE level = 'PRODUCT' AND product_code = 'FG01484'
+                  AND horizon_months = 1""",
+     "must_have": ["forecast"]},
+    {"id": "N24", "question": "Which customers might stop buying from us?",
+     "must": "SELECT customer_name FROM ml_customer_risk ORDER BY risk_score DESC, lifetime_sales_inr DESC LIMIT 1",
+     "should": "SELECT COUNT(*) FROM ml_customer_risk WHERE risk_level = 'High'",
+     "must_have": ["risk"]},
+    {"id": "N25", "question": "What customer groups do we have?",
+     "must": "SELECT DISTINCT segment_name FROM ml_customer_segments",
+     "must_have": ["group"]},
+    {"id": "N26", "question": "Are there any unusual invoices?",
+     "must": "SELECT invoice_number FROM ml_invoice_alerts ORDER BY score DESC LIMIT 1",
+     "should": "SELECT COUNT(*) FROM ml_invoice_alerts",
+     "must_have": ["unusual"]},
+    {"id": "N27", "question": "Which products are bought together most often?",
+     "must": "SELECT orders_together FROM ml_product_pairs ORDER BY orders_together DESC, lift DESC LIMIT 1",
+     "should": """SELECT product_a_code, product_b_code FROM ml_product_pairs
+                  ORDER BY orders_together DESC, lift DESC LIMIT 1"""},
+    {"id": "N28", "question": "Which items will run out of stock soon?",
+     "must": """SELECT product_code FROM ml_stock_runout WHERE status IN ('Under 30 days', 'Under 90 days')
+                ORDER BY days_left, product_code LIMIT 1""",
+     "should": "SELECT MAX(report_date) FROM ml_stock_runout"},
+    # 18-Nov: the forecast goes 12 sales months ahead (Nov 2026 to Oct 2027) - a year names the forecast months in it
+    {"id": "N29", "question": "What will our total sales be in 2027?",
+     "must": f"""SELECT (SELECT sales_month {FORECAST_2027} ORDER BY period_start LIMIT 1),
+                        (SELECT sales_month {FORECAST_2027} ORDER BY period_start DESC LIMIT 1)""",
+     "should": f"SELECT data_to {FORECAST_2027} LIMIT 1",
+     "must_have": ["not forecast"]},
 ]
 
 # after every docs or prompt change: one question of each main kind + the bugs fixed before

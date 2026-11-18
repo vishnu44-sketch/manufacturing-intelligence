@@ -53,8 +53,9 @@ def test_the_router_reply_is_read_as_data_documents_or_both(reply, route):
 
 def test_the_router_prompt_offers_both_and_unclear_stays_data():
     assert "- both: the data AND the documents in one question" in agent.ROUTE_SYSTEM_PROMPT
-    assert agent.ROUTE_SYSTEM_PROMPT.endswith("Reply with one word only: data, documents or both. When unsure, reply data.")
-    assert agent.ROUTE_REQUEST.endswith("Your reply (data, documents or both):")
+    assert agent.ROUTE_SYSTEM_PROMPT.endswith("Reply with one word only: data, documents, both or general. When unsure, "
+                                              "reply data.")
+    assert agent.ROUTE_REQUEST.endswith("Your reply (data, documents, both or general):")
 
 
 # ---------- a question about the data AND the documents ----------

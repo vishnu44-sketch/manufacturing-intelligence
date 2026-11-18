@@ -72,16 +72,17 @@ def test_docs_folder_gives_the_expected_chunks():
     assert len({c["id"] for c in chunks}) == len(chunks)  # ids are unique
     assert load_docs(DOCS_DIR) == chunks  # same files -> same chunks every time
 
-    # 42 examples (16-Nov: new customers this month so far and last month), each with its SQL and its expected result
-    assert len(EXAMPLES) == 42
+    # 50 examples (16-Nov: new customers this month so far and last month; 17-Nov: 8 on the ML results), each with
+    # its SQL and its expected result
+    assert len(EXAMPLES) == 51  # 18-Nov: + "What will our total sales be in 2027?"
     for c in EXAMPLES:
         assert c["heading"].startswith("Q: ")
         assert "```sql" in c["text"] and "\nExpected: " in c["text"]
 
-    # every data dictionary section about a table names that table (dim_ / fact_ / load_log)
+    # every data dictionary section about a table names that table (dim_ / fact_ / load_log / ml_)
     table_sections = [c for c in chunks if c["kind"] == "table"
-                      and c["heading"].startswith(("dim_", "fact_", "load_log"))]
-    assert len(table_sections) >= 11
+                      and c["heading"].startswith(("dim_", "fact_", "load_log", "ml_"))]
+    assert len(table_sections) >= 18
     for c in table_sections:
         table = c["heading"].split(" - ")[0]
         assert f"Table `{table}`" in c["text"], c["heading"]

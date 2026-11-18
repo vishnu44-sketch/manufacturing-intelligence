@@ -132,7 +132,7 @@ def test_the_real_index_holds_the_langchain_vectors_of_the_notes_without_their_s
 
 QUESTIONS = {  # question -> the note that must come first (02-Nov, the same top 5 as before LangChain-only)
     "Top 5 customers by net sales in FY 2026-27": "Q: Who were the top 5 customers by invoice value in Aug 2026?",
-    "How many sales orders are open?": "Q: Which customers have open sales orders, and for how much?",
+    "How many sales orders are open?": "Q: How many sales orders are open and what is their value?",
     "What is our current stock value?": "Q: What is our current stock value (latest stock report)?",
     "net sales by state last month": "Q: What were net sales in each sales month of FY 2026-27?",
     "What was our profit last year?":

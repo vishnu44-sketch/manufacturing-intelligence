@@ -18,7 +18,11 @@ export interface ChatSummary {
   updated_text: string // '03 Nov, 10:15 AM' (the chat menu: "last one ...")
   group?: string // Today / Yesterday / Previous 7 days / Older (only in the list)
   questions?: number // only in the list
+  mode?: AskMode // 'ml': a chat of the ML Insights page (opens there, not on the Assistant); '' a normal chat
 }
+
+/** How a new chat asks: 'ml' = from the ML Insights page (forecasts and the other ML results); '' = the Assistant. */
+export type AskMode = 'ml' | ''
 
 export interface TimeStep {
   label: string
@@ -31,7 +35,8 @@ export interface Source {
   heading: string
 }
 
-export type Status = 'ok' | 'docs' | 'nodata' | 'refused' | 'error' | 'memory'
+// 'general' = a question not about the company ("what is GST?"): the AI answers it itself - no SQL, rows or Excel
+export type Status = 'ok' | 'docs' | 'nodata' | 'refused' | 'error' | 'memory' | 'general'
 
 // one saved question as the answer card shows it
 export interface Card {
@@ -43,7 +48,7 @@ export interface Card {
   backup_model: string // '' = the main model answered
   token_notice: string // only right after asking
   time_steps: TimeStep[]
-  sql: string // '' when the card has no rows (docs, nodata, refused, error, memory)
+  sql: string // '' when the card has no rows (docs, nodata, refused, error, memory, general)
   sources: Source[]
   secs: number
   tries: number
@@ -156,15 +161,20 @@ export interface HistoryLine {
   backup: boolean
   ask_again: string
   excel_url: string
+  mode?: AskMode // 18-Nov: 'ml' = asked in an ML Insights chat; '' = an Assistant chat or no chat
 }
 
+/** History's switch: the Assistant's chats / questions, those of ML Insights, or both. */
+export type HistoryMode = 'assistant' | 'ml' | 'all'
+
 export interface HistoryPage {
-  questions: HistoryLine[]
+  questions: HistoryLine[] // only those of the asked ?mode= (count / pages too)
   page: number
   pages: number
   count: number
   has_previous: boolean
   has_next: boolean
+  counts?: Record<HistoryMode, number> // 18-Nov: the user's questions of each mode (for the switch)
   usage: Usage
 }
 
@@ -532,4 +542,100 @@ export interface HomeData {
   model: string
   recent?: HomeRecent[] // the user's last 5 questions, newest first (missing on an older server)
   recent_error?: string
+}
+
+// ------------------------------------------------------------------------------------------------ Insights (/api/insights)
+// The results of the 6 machine-learning models (run_ml writes them after each data load; the page only reads them).
+
+export interface InsightsHistoryMonth {
+  month: string // 'Nov 2025' (a sales month: the 21st to the 20th)
+  actual: number // net sales, INR
+}
+
+export interface InsightsForecastMonth {
+  month: string // 'Nov 2026'
+  period_start: string // '2026-10-21'
+  period_end: string // '2026-11-20'
+  forecast: number
+  low: number
+  high: number
+}
+
+export interface InsightsProductForecast {
+  product_code: string
+  product_description: string
+  month: string
+  forecast: number
+  low: number
+  high: number
+}
+
+export interface InsightsForecast {
+  model: string
+  mape_pct: number // the average error on the last 6 months, %
+  history: InsightsHistoryMonth[] // the last 12 complete sales months
+  months: InsightsForecastMonth[] // the next 3
+  products: InsightsProductForecast[]
+}
+
+export interface InsightsRiskCustomer {
+  customer_name: string
+  risk_score: number // 0 to 100
+  risk_level: string // 'High' | 'Medium' | 'Low'
+  reason: string
+  last_invoice_date: string | null // '2026-07-14'
+  sales_last_3m: number
+  sales_prev_3m: number
+  change_pct: number | null
+}
+
+export interface InsightsSegment {
+  segment_name: string
+  customers: number
+  sales_inr: number
+  avg_recency_days: number
+  avg_invoices: number
+}
+
+export interface InsightsAlert {
+  alert_type: string // 'Unusual price' | 'Unusual quantity' | 'Large credit note'
+  invoice_number: string
+  invoice_date: string | null
+  customer_name: string
+  product_code: string
+  value_inr: number
+  typical_inr: number | null
+  reason: string
+}
+
+export interface InsightsPair {
+  product_a_code: string
+  product_a_description: string
+  product_b_code: string
+  product_b_description: string
+  orders_together: number
+  confidence_pct: number
+  lift: number
+}
+
+export interface InsightsStockItem {
+  product_code: string
+  product_description: string
+  stock_qty: number
+  avg_daily_sales_qty: number
+  days_left: number | null // null: no recent sales
+  runout_date: string | null
+  status: string // 'Out of stock' | 'Under 30 days' | 'Under 90 days' | 'OK' | 'No recent sales'
+}
+
+export interface InsightsData {
+  ready: boolean // false: run_ml has not run yet (everything below may be missing)
+  run_at: string | null // '2026-11-17T16:00:00'
+  data_to: string | null // '2026-10-31'
+  forecast?: InsightsForecast | null
+  risk?: { counts: Record<string, number>; customers: InsightsRiskCustomer[] } | null
+  segments?: InsightsSegment[] | null
+  alerts?: { counts: Record<string, number>; items: InsightsAlert[] } | null
+  pairs?: InsightsPair[] | null
+  stockout?: { counts: Record<string, number>; items: InsightsStockItem[] } | null
 }

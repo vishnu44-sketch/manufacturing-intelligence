@@ -93,11 +93,14 @@ describe('HomeHero', () => {
 })
 
 describe('Banner colours (light and dark)', () => {
-  it('is a blue to deep navy banner with a thin border in dark mode', () => {
+  it('is a light banner: its ground in HomeHero.css (theme colours), the text in the theme colours, white pills', () => {
     const banner = hero()
-    expect(banner.className).toContain('bg-[linear-gradient(118deg,#0B5FB3_0%')
-    expect(banner.className).toContain('#081626_100%')
-    expect(banner).toHaveClass('text-white', 'dark:border', 'dark:border-white/10')
+    expect(banner).toHaveClass('mi-hero', 'text-foreground')
+    expect(banner.className).not.toMatch(/text-white|linear-gradient|#[0-9a-fA-F]{3,8}/)
+    expect(within(banner).getByRole('heading')).toHaveClass('text-heading')
+    expect(within(banner).getByText(/^Sales month Nov 2026/)).toHaveClass('bg-card', 'text-primary')
+    expect(within(banner).getByRole('link', { name: 'Top 5 customers?' })).toHaveClass('bg-card', 'text-primary!')
+    expect(heroSource).not.toMatch(/\b(text|bg|border)-white\b/)
   })
 
   it('has no red left: no old brand variables, no fixed text colours', () => {

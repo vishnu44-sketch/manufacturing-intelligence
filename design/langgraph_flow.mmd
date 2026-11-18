@@ -20,6 +20,7 @@ graph TD;
 	check_names(check_names)
 	explain(explain)
 	documents_part(documents_part)
+	general_answer(general_answer)
 	__end__([<p>__end__</p>]):::last
 	__start__ --> load_memories;
 	check_names -. &nbsp;name not found&nbsp; .-> __end__;
@@ -38,6 +39,7 @@ graph TD;
 	retry --> write_sql;
 	rewrite --> route;
 	route -. &nbsp;documents&nbsp; .-> answer_from_documents;
+	route -. &nbsp;general&nbsp; .-> general_answer;
 	route -. &nbsp;data / both&nbsp; .-> search_notes;
 	run_sql -. &nbsp;no rows&nbsp; .-> check_names;
 	run_sql -. &nbsp;rows&nbsp; .-> explain;
@@ -49,11 +51,13 @@ graph TD;
 	write_sql -. &nbsp;check&nbsp; .-> check_sql;
 	write_sql -. &nbsp;refused / nodata (both)&nbsp; .-> documents_part;
 	write_sql -.-> failed;
+	write_sql -. &nbsp;general&nbsp; .-> general_answer;
 	write_sql -. &nbsp;keep the first answer&nbsp; .-> keep_first_answer;
 	write_sql -.-> retry;
 	answer_from_documents --> __end__;
 	documents_part --> __end__;
 	explain --> __end__;
+	general_answer --> __end__;
 	classDef default fill:#f2f0ff,line-height:1.2
 	classDef first fill-opacity:0
 	classDef last fill:#bfb6fc
