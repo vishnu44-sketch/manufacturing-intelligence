@@ -62,7 +62,8 @@ describe('Shell: the menu (05-Nov)', () => {
     const first = page()
     expect(menu().getAllByRole('group').map((g) => g.querySelector('p')?.textContent)).toEqual(['Home', 'Intelligence', 'Tools'])
     expect(names('Home')).toEqual(['Home', 'Assistant'])
-    expect(names('Intelligence')).toEqual(['Knowledge graph'])
+    expect(names('Intelligence')).toEqual(['Knowledge graph', 'ML Insights', 'ML Dashboard'])   // 18-Nov: ML Dashboard
+    expect(menu().getByRole('link', { name: 'ML Dashboard' })).toHaveAttribute('href', '/ml-dashboard')
     expect(names('Tools')).toEqual(['History', 'Memory'])
     expect(menu().getAllByRole('link').filter((a) => a.getAttribute('aria-current') === 'page').map((a) => a.textContent)).toEqual(['History'])
     first.unmount()
@@ -99,6 +100,23 @@ describe('Shell: the top bar (12-Nov)', () => {
 
     fireEvent.click(topBar().getByRole('link', { name: 'New chat' }))
     expect(window.location.pathname).toBe('/new')
+  })
+
+  it('"New chat" works for the page it is on: on ML Insights a new ML chat there (18-Nov)', () => {
+    renderAt('/insights?chat=7', <Shell me={ASHA} title="ML Insights" active="insights" onSignOut={() => {}}><p>Page</p></Shell>)
+    expect(topBar().getByRole('link', { name: 'New chat' })).toHaveAttribute('href', '/insights?new=1')
+    fireEvent.click(topBar().getByRole('link', { name: 'New chat' }))
+    expect(window.location.pathname + window.location.search).toBe('/insights?new=1')
+    expect(topBar().getByRole('link', { name: 'New chat' })).toHaveAttribute('href', '/insights?new=1')
+  })
+
+  it('"New chat" on the ML Dashboard starts a new ML chat on ML Insights (18-Nov)', () => {
+    renderAt('/ml-dashboard', <Shell me={ASHA} title="ML Dashboard" active="mldashboard" onSignOut={() => {}}><p>Page</p></Shell>)
+    expect(menu().getByRole('link', { name: 'ML Dashboard' })).toHaveAttribute('aria-current', 'page')
+    expect(document.title).toBe('ML Dashboard · SS Manufacturing')
+    expect(topBar().getByRole('link', { name: 'New chat' })).toHaveAttribute('href', '/insights?new=1')
+    fireEvent.click(topBar().getByRole('link', { name: 'New chat' }))
+    expect(window.location.pathname + window.location.search).toBe('/insights?new=1')
   })
 
   it('the round badge opens a small menu with the name, the role and Sign out', async () => {

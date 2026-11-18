@@ -65,25 +65,35 @@ def question_problem(question, empty="Type a question first."):
     return ""
 
 
-def answer_in_chat(user, chat, question):
+def chat_mode(chat, mode=""):
+    """The mode a question is asked in: an existing chat ALWAYS keeps its own mode ('ml' = ML Insights,
+    '' = the Assistant); the mode posted counts only for a new chat (chat None)."""
+    return chat.mode if chat is not None else (mode or "")
+
+
+def answer_in_chat(user, chat, question, mode=""):
     """Ask one checked question in this chat (None = start a new chat with it) and save it there.
+    mode = 'ml' starts an ML Insights chat (ignored for an existing chat: chat_mode).
     Returns (the saved Question, the chat)."""
     context = ChatHistory.for_chat(chat) if chat else None  # follow-ups ("and for Sep?") see the chat so far
-    return _put_in_chat(user, chat, agent.ask(question, user, context=context).question)
+    mode = chat_mode(chat, mode)
+    return _put_in_chat(user, chat, agent.ask(question, user, context=context, mode=mode).question, mode)
 
 
-def answer_in_chat_streamed(user, chat, question):
+def answer_in_chat_streamed(user, chat, question, mode=""):
     """answer_in_chat() for the streamed Ask page: a generator that yields the question's progress events
     (agent.ask_events: steps, pieces of the answer) and returns (the saved Question, the chat) - saved the same."""
     context = ChatHistory.for_chat(chat) if chat else None
-    result = yield from agent.ask_events(question, user, context=context)
-    return _put_in_chat(user, chat, result.question)
+    mode = chat_mode(chat, mode)
+    result = yield from agent.ask_events(question, user, context=context, mode=mode)
+    return _put_in_chat(user, chat, result.question, mode)
 
 
-def _put_in_chat(user, chat, saved):
-    """The just-saved question goes into its chat; None = a new chat is made with it. -> (saved, chat)."""
+def _put_in_chat(user, chat, saved, mode=""):
+    """The just-saved question goes into its chat; None = a new chat is made with it (in this mode).
+    -> (saved, chat)."""
     if chat is None:  # a new chat is made with its first question
-        chat = Conversation.objects.create(user=user, title=Conversation.title_from(saved.text),
+        chat = Conversation.objects.create(user=user, title=Conversation.title_from(saved.text), mode=mode,
                                            created_at=saved.created_at, updated_at=saved.created_at)
     else:
         chat.updated_at, chat.archived = saved.created_at, False  # asking again brings it back
@@ -105,7 +115,7 @@ def edit_question(user, old, text):
     renamed. Returns (the new saved Question, its chat or None)."""
     chat = old.conversation if old.conversation and old.conversation.user_id == user.id else None
     context = ChatHistory.for_chat(chat, before=old) if chat else None  # the chat's memory before the edited question
-    saved = agent.ask(text, user, context=context).question
+    saved = agent.ask(text, user, context=context, mode=chat_mode(chat)).question  # in the chat's own mode
     Question.objects.filter(pk=saved.pk).update(conversation=chat, chat_order=old.chat_order or old.created_at)
     Question.objects.filter(pk=old.pk).update(replaced_by=saved)
     saved.refresh_from_db()
@@ -126,7 +136,7 @@ def token_notice(saved):
     once, right after the question was answered; '' when Groq reported no tokens."""
     if saved.total_tokens is None:
         return ""
-    first = "route" if agent.from_documents(saved.sources) else "SQL"  # a document question wrote no SQL
+    first = agent.first_tokens_label(saved.sources, saved.status, saved.step_secs)  # 'route' when no SQL was written
     parts = [f"{label} {n:,}" for label, n in ((first, saved.sql_tokens), ("answer", saved.answer_tokens))
              if n is not None]
     text = f"This question used {saved.total_tokens:,} tokens ({' + '.join(parts)})"

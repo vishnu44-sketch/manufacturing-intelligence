@@ -2,15 +2,16 @@
 // the big number counting up the first time it shows (screen readers get the final number only), the change
 // badge, the note at the bottom, and a click opens the Ask page with its question filled in (nothing is asked
 // until Ask is pressed). Every card fills its row's height, so the notes and the links of a row line up.
-// Each card has its own look (by kpi.key):
-// - month_sales: the main card - the blue brand gradient, white text, a white small line of the last sales months;
-// - fy_sales: a teal stripe along the top and a small filled area of the FY's running total (teal, so it
-//   still differs from the blue main card);
-// - customers: a green ring of the active customers out of all customers ("total");
-// - products: small amber bars, one per sales month, the newest one strong;
-// - open_orders / stock: a soft violet / slate card, the facts as chips, a big faint icon in the corner;
-// - top_customer / top_product: a round green / amber avatar (the customer's initials, the product's award),
+// Every card has the same light look: the white card, a thin light border, a soft shadow, the same light blue
+// icon circle and label; only the small picture under the number differs (by kpi.key), always in the blue family:
+// - month_sales: a small line of the last sales months (the brand blue);
+// - fy_sales: a small filled area of the FY's running total (the darker brand blue);
+// - customers: a ring of the active customers out of all customers ("total");
+// - products: small bars, one per sales month, the newest one strong;
+// - open_orders / stock: the facts as light blue chips, a big faint blue icon in the corner;
+// - top_customer / top_product: a round light blue avatar (the customer's initials, the product's award),
 //   a small "No. 1" / "Top product" tag, the name, the amount and its share as a chip.
+// The change badge stays small: green for up, red for down (the success / danger colours).
 // A card from an older server (no trend, facts, total or name) or one this page does not know falls back to
 // the plain look: an icon, the number, a small line or chips where there are any.
 // No chart library: small inline SVGs, hidden from screen readers (a sentence says the same). app.css colours
@@ -38,6 +39,9 @@ const COUNT_MS = 700
 
 const CAPTION = 'text-[11px] font-semibold tracking-[.06em] uppercase'
 
+// the soft shadow of every card: a hairline and a faint blue glow under it (theme colours, light and dark)
+const SHADOW = 'shadow-[0_1px_2px_color-mix(in_srgb,var(--shadow-c)_5%,transparent),0_12px_28px_-24px_color-mix(in_srgb,var(--brand)_40%,transparent)]'
+
 // ------------------------------------------------------------------------------------------------ the looks
 
 type Chart = 'line' | 'area' | 'ring' | 'bars' | 'none'
@@ -56,73 +60,35 @@ interface Look {
   link: string            // the "Ask the Assistant about this" line when the card is pointed at
   ink: string             // the colour of the small picture
   chip: string            // the facts chips
-  change?: string         // the change badge (the blue main card: white on glass)
-  dot?: string            // the ring around the newest month's dot (the card's own background)
-  stripe?: string         // a coloured stripe along the top
   watermark?: LucideIcon  // a big faint icon in the bottom corner
   mark?: string           // its colour
   avatar?: string         // the top cards: the round avatar
   tag?: [string, string, string] // the top cards: [emoji, words, colours]
 }
 
-// a card this page does not know, and the parts the cards below do not change
+// the one light look of every card (a card this page does not know gets it too); the cards below only pick their
+// icon, their small picture and the blue shade of it
+const CHIP = 'border border-primary/15 bg-primary-soft text-primary'
 const PLAIN: Look = {
   icon: IndianRupee, chart: 'line',
-  card: 'border-border bg-card', hover: 'hover:border-primary/25 focus-visible:border-primary/40',
+  card: 'border-border bg-card', hover: 'hover:border-primary/30 focus-visible:border-primary/40',
   text: 'text-card-foreground! hover:text-card-foreground!',
   circle: 'bg-primary-soft text-primary', caption: 'text-muted-foreground', value: 'text-heading', sub: 'text-heading/80',
-  note: 'text-muted-foreground', link: 'group-hover:text-primary', ink: 'text-primary',
-  chip: 'bg-secondary text-secondary-foreground',
+  note: 'text-muted-foreground', link: 'group-hover:text-primary', ink: 'text-primary', chip: CHIP,
 }
 
 const LOOKS: Record<string, Partial<Look>> = {
-  month_sales: {
-    // the same deep blue in light and dark (white text on it either way); dark adds a thin light border
-    card: 'border-transparent bg-[linear-gradient(135deg,#1272CC_0%,#0B5FB3_45%,#083D7A_100%)] shadow-[0_18px_34px_-22px_rgba(11,95,179,.85)] dark:border-white/10',
-    hover: 'hover:shadow-[0_22px_40px_-20px_rgba(11,95,179,.9)] focus-visible:ring-primary/45',
-    text: 'text-white! hover:text-white!',
-    circle: 'bg-white/15 text-white ring-1 ring-white/25', caption: 'text-white/85', value: 'text-white', sub: 'text-white/90',
-    note: 'text-white/85', link: 'group-hover:text-white', ink: 'text-white',
-    change: 'border-white/25 bg-white/15 text-white', dot: 'ring-[#0A4D97]',
-  },
-  fy_sales: {
-    icon: CalendarRange, chart: 'area', stripe: 'bg-teal-600 dark:bg-teal-400',
-    circle: 'bg-teal-500/12 text-teal-700 dark:bg-teal-400/15 dark:text-teal-300', ink: 'text-teal-600 dark:text-teal-400',
-    hover: 'hover:border-teal-600/30 focus-visible:border-teal-600/40 dark:hover:border-teal-400/35 dark:focus-visible:border-teal-400/45',
-  },
-  customers: {
-    icon: Users, chart: 'ring', circle: 'bg-success-soft text-success', ink: 'text-success',
-    hover: 'hover:border-success/30 focus-visible:border-success/40',
-  },
-  products: {
-    icon: Package, chart: 'bars', circle: 'bg-warning-soft text-warning', ink: 'text-warning',
-    hover: 'hover:border-warning/35 focus-visible:border-warning/45',
-  },
-  open_orders: {
-    icon: ClipboardList, chart: 'none', watermark: ClipboardList, mark: 'text-violet-600 dark:text-violet-300',
-    card: 'border-violet-200 bg-violet-50 dark:border-violet-400/25 dark:bg-violet-400/10',
-    hover: 'hover:border-violet-500/40 focus-visible:border-violet-500/50 dark:hover:border-violet-400/45 dark:focus-visible:border-violet-400/55',
-    circle: 'bg-card text-violet-700 shadow-[0_2px_6px_-3px_rgba(106,63,181,.55)] dark:bg-violet-400/15 dark:text-violet-300 dark:shadow-none',
-    caption: 'text-violet-700 dark:text-violet-300', link: 'group-hover:text-violet-700 dark:group-hover:text-violet-300',
-    chip: 'border-violet-200 bg-card/85 text-violet-700 dark:border-violet-400/25 dark:bg-violet-400/10 dark:text-violet-200',
-  },
-  stock: {
-    icon: Warehouse, chart: 'none', watermark: Warehouse, mark: 'text-slate-600 dark:text-slate-300',
-    card: 'border-slate-200 bg-slate-100 dark:border-slate-400/20 dark:bg-slate-400/10',
-    hover: 'hover:border-slate-500/35 focus-visible:border-slate-500/45 dark:hover:border-slate-300/40 dark:focus-visible:border-slate-300/50',
-    circle: 'bg-card text-slate-600 shadow-[0_2px_6px_-3px_rgba(63,75,91,.55)] dark:bg-slate-400/15 dark:text-slate-300 dark:shadow-none',
-    caption: 'text-slate-600 dark:text-slate-300', link: 'group-hover:text-heading',
-    chip: 'border-slate-200 bg-card text-slate-700 dark:border-slate-400/20 dark:bg-slate-400/10 dark:text-slate-200',
-  },
+  month_sales: {},
+  fy_sales: { icon: CalendarRange, chart: 'area', ink: 'text-primary-hover' },
+  customers: { icon: Users, chart: 'ring' },
+  products: { icon: Package, chart: 'bars' },
+  open_orders: { icon: ClipboardList, chart: 'none', watermark: ClipboardList, mark: 'text-primary' },
+  stock: { icon: Warehouse, chart: 'none', watermark: Warehouse, mark: 'text-primary' },
   top_customer: {
-    icon: Crown, chart: 'none', avatar: 'bg-success-soft text-success ring-success/25',
-    tag: ['🏆', 'No. 1', 'bg-success-soft text-success'], chip: 'bg-success-soft text-success',
-    hover: 'hover:border-success/30 focus-visible:border-success/40',
+    icon: Crown, chart: 'none', avatar: 'bg-primary-soft text-primary ring-primary/20', tag: ['🏆', 'No. 1', CHIP],
   },
   top_product: {
-    icon: Award, chart: 'none', avatar: 'bg-warning-soft text-warning ring-warning/30',
-    tag: ['⭐', 'Top product', 'bg-warning-soft text-amber-800 dark:text-amber-300'], chip: 'bg-warning-soft text-amber-800 dark:text-amber-300',
-    hover: 'hover:border-warning/35 focus-visible:border-warning/45',
+    icon: Award, chart: 'none', avatar: 'bg-primary-soft text-primary ring-primary/20', tag: ['⭐', 'Top product', CHIP],
   },
 }
 
@@ -366,7 +332,7 @@ function Avatar({ kpi, look }: { kpi: HomeKpi; look: Look }) {
       className={cn('relative flex size-11 flex-none items-center justify-center rounded-full text-[15px] font-semibold tracking-wide ring-2', look.avatar)}>
       {letters || <Icon className="size-5" />}
       {letters && (
-        <span className="absolute -top-1 -right-1 flex size-[18px] items-center justify-center rounded-full bg-card text-warning shadow-[0_1px_3px_rgba(0,0,0,.2)]">
+        <span className="absolute -top-1 -right-1 flex size-[18px] items-center justify-center rounded-full bg-card text-primary shadow-[0_1px_3px_color-mix(in_srgb,var(--shadow-c)_20%,transparent)]">
           <Crown className="size-3" />
         </span>
       )}
@@ -399,15 +365,14 @@ export function KpiCard({ kpi }: { kpi: KpiData }) {
   const number = <BigNumber kpi={kpi} className={cn(top ? 'text-[21px]' : hero ? 'text-[28px]' : 'text-[25px]', look.value)} />
   const full = kpi.money && kpi.text !== '-'
     ? <div className={cn('text-xs font-medium [overflow-wrap:anywhere]', !top && '-mt-1', look.sub)}>{kpi.text}</div> : null
-  const change = kpi.change ? <div><Change change={kpi.change} className={look.change} /></div> : null
+  const change = kpi.change ? <div><Change change={kpi.change} /></div> : null
 
   const body = (
     <>
-      {look.stripe && <span aria-hidden="true" className={cn('absolute inset-x-0 top-0 h-1', look.stripe)} />}
       {/* the big faint icon sits behind everything (-z-10 inside the card's own layer: "isolate") */}
       {Mark && (
         <Mark aria-hidden="true" strokeWidth={1.5}
-          className={cn('pointer-events-none absolute -right-5 -bottom-6 -z-10 size-32 -rotate-12 opacity-[.08]', look.mark)} />
+          className={cn('pointer-events-none absolute -right-5 -bottom-6 -z-10 size-32 -rotate-12 opacity-[.07]', look.mark)} />
       )}
       {/* the label is never cut: it may take 2 lines (as tall as the icon, so the numbers of a row line up)
           or more, and then starts level with the top of the icon */}
@@ -447,7 +412,7 @@ export function KpiCard({ kpi }: { kpi: KpiData }) {
       {chart !== 'ring' && change}
 
       {chart === 'line' && (
-        <Sparkline points={points} money={kpi.money} className={cn('mt-1', look.ink)} dot={look.dot} area={hero ? 0.18 : 0.1} />
+        <Sparkline points={points} money={kpi.money} className={cn('mt-1', look.ink)} area={hero ? 0.14 : 0.1} />
       )}
       {chart === 'area' && <AreaChart points={points} money={kpi.money} className={look.ink} />}
       {chart === 'bars' && <Bars points={points} money={kpi.money} className={look.ink} />}
@@ -476,14 +441,14 @@ export function KpiCard({ kpi }: { kpi: KpiData }) {
   )
 
   const shape = cn('relative isolate flex h-full min-w-0 flex-col gap-2 overflow-hidden rounded-xl border px-4.5 pt-4.5 pb-4',
-    'shadow-[0_10px_26px_-24px_rgba(17,16,16,.35)]', hero ? 'text-white' : 'text-card-foreground', look.card)
+    SHADOW, 'text-card-foreground', look.card)
   const lookName = known ? kpi.key : 'plain'
   if (!ask) return <div className={shape} data-kpi={kpi.key} data-look={lookName}>{body}</div>
   // the whole card opens the Ask page with its question in the box
   return (
     <Link to={`/new?q=${encodeURIComponent(ask)}`} data-kpi={kpi.key} data-look={lookName} title={`Ask the Assistant: ${ask}`}
       className={cn(shape, 'group outline-none transition-[transform,box-shadow,border-color] duration-200',
-        'hover:-translate-y-0.5 hover:shadow-[0_18px_34px_-22px_rgba(17,16,16,.45)] focus-visible:ring-3 focus-visible:ring-ring/40',
+        'hover:-translate-y-0.5 hover:shadow-[0_1px_2px_color-mix(in_srgb,var(--shadow-c)_6%,transparent),0_18px_34px_-22px_color-mix(in_srgb,var(--brand)_45%,transparent)] focus-visible:ring-3 focus-visible:ring-ring/40',
         look.text, look.hover)}>
       {body}
     </Link>

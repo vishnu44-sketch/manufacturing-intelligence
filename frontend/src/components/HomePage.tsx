@@ -33,7 +33,7 @@ import { Link, questionPath } from '../router'
 import HomeFeatures from './HomeFeatures'
 import HomeHero from './HomeHero'
 import { KpiCard, KpiSkeleton } from './HomeKpiCards'
-import type { HomeConnection, HomeData, HomeRecent, HomeTable, HomeUsage, Me } from '../types'
+import type { HomeConnection, HomeData, HomeRecent, HomeTable, Me } from '../types'
 
 // the small type styles the page repeats
 const CAPTION = 'text-[11px] font-semibold tracking-[.06em] uppercase text-muted-foreground'
@@ -138,6 +138,7 @@ const STATUS: Record<string, [string, 'success' | 'info' | 'secondary' | 'warnin
   memory: ['From memory', 'info'],
   nodata: ['No data', 'secondary'],
   refused: ['Refused', 'warning'],
+  general: ['General answer', 'info'], // not about the company: the AI's own answer
   error: ['Failed', 'destructive'],
 }
 
@@ -253,49 +254,6 @@ function Recent({ data, examples }: { data: HomeData; examples: string[] }) {
       <ul className="divide-y divide-border" aria-label="Your recent questions">
         {data.recent.slice(0, 5).map((item) => <RecentRow key={item.id} item={item} />)}
       </ul>
-    </Card>
-  )
-}
-
-// ------------------------------------------------------------------------------------------------ usage
-
-function Stat({ icon, label, value }: { icon: LucideIcon; label: string; value: ReactNode }) {
-  return (
-    <div className="flex min-w-0 items-center gap-3">
-      <IconCircle icon={icon} tone="grey" />
-      <div className="min-w-0">
-        <div className={CAPTION}>{label}</div>
-        <div className="text-[21px] leading-tight font-semibold text-heading tabular-nums">{value}</div>
-      </div>
-    </div>
-  )
-}
-
-function Usage({ usage }: { usage: HomeUsage }) {
-  const pct = Number.isFinite(usage.pct) ? usage.pct : 0
-  const colour = usageColour(pct)
-  const tone = pct > 90 ? 'destructive' : pct > 70 ? 'warning' : 'success'
-  return (
-    <Card className="flex flex-col gap-4 px-5 py-4.5 max-[760px]:px-3.5">
-      <div className="grid grid-cols-2 gap-3 max-[400px]:grid-cols-1">
-        <Stat icon={MessageSquareText} label="Questions today" value={usage.questions_today} />
-        <Stat icon={Sparkles} label="Your AI tokens today" value={usage.my_tokens_text} />
-      </div>
-      <Separator />
-      <div className="flex flex-col gap-2">
-        <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
-          <span className="text-[13px] font-medium text-heading">AI tokens, last 24 hours (whole app)</span>
-          <Badge variant={tone} data-pct="">{pct}%</Badge>
-        </div>
-        <div className="text-[15px] font-semibold text-heading">
-          {shortTokens(usage.tokens_24h)} <span className="font-normal text-muted-foreground">of</span> {shortTokens(usage.limit)} <span className="font-normal text-muted-foreground">tokens</span>
-        </div>
-        <Progress value={pct} aria-label="AI tokens of the daily limit" className="h-2.5" indicatorClassName={colour} />
-        <div className={NOTE}>
-          {usage.tokens_24h} of {usage.limit} tokens · {usage.model} · the daily limit Groq counts over the last 24 hours
-          {usage.period_end ? ` · today's period: ${usage.period_tokens} tokens, resets ${usage.period_end}` : ''}
-        </div>
-      </div>
     </Card>
   )
 }
@@ -458,7 +416,7 @@ export default function HomePage({ me }: { me: Me }) {
   const biggest = Math.max(0, ...(data?.tables ?? []).map((t) => t.rows || 0))
 
   return (
-    <div className="ui-scope flex min-w-0 flex-col gap-7">
+    <div className="mi-home ui-scope flex min-w-0 flex-col gap-7">
       {/* 1. welcome, with the quick start */}
       <HomeHero name={name} calendar={data?.calendar} loading={loading} examples={examples} />
 
@@ -482,19 +440,15 @@ export default function HomePage({ me }: { me: Me }) {
         </Section>
       )}
 
-      {/* 3. recent questions and 4. usage, side by side on a wide screen */}
+      {/* 3. recent questions, full width (18-Nov: the "Your usage" card is gone - its token count was the app's own
+          estimate, not the Groq account's real numbers) */}
       {!error && (
-        <div className="grid items-start gap-7 min-[1100px]:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)]">
+        <div>
           <Section title="Your recent questions"
             aside={<Link to="/history" className="inline-flex items-center gap-1 font-medium text-primary! hover:text-primary! hover:underline">See all in History<ArrowRight aria-hidden="true" className="size-3.5" /></Link>}>
             {loading ? (
               <Card className="flex flex-col gap-3 px-4 py-4">{Array.from({ length: 4 }, (_, i) => <Skeleton key={i} className="h-5 w-full" />)}</Card>
             ) : data ? <Recent data={data} examples={examples} /> : null}
-          </Section>
-          <Section title="Your usage">
-            {loading ? <Skeleton className="h-52 w-full rounded-xl" />
-              : data?.usage ? <Usage usage={data.usage} />
-                : <PartError>Your usage can't be read right now.{data?.usage_error ? ` ${data.usage_error}` : ''}</PartError>}
           </Section>
         </div>
       )}

@@ -1,7 +1,7 @@
-// The KPI cards of the Home page, each with its own look: the blue main card (month_sales), the teal filled area
-// (fy_sales), the green ring of active of all customers (customers, only with "total"), the amber bars
-// (products), the violet / slate cards with chips and a faint icon (open_orders, stock), and the top customer /
-// product with a round avatar and a small tag. Every card still counts up to exactly the server's text and opens
+// The KPI cards of the Home page, all in the same light look (white card, light blue icon circle, blue small
+// pictures and light blue chips), each with its own small picture: the line (month_sales), the filled area
+// (fy_sales), the ring of active of all customers (customers, only with "total"), the bars (products), the chips
+// and a faint icon (open_orders, stock), and the top customer / product with a round avatar and a small tag. Every card still counts up to exactly the server's text and opens
 // the Ask page with its question; an older server's card (no trend, facts, total or name) falls back to the plain look.
 import { act, fireEvent, screen, within } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
@@ -73,32 +73,38 @@ function controlledMotion() {
 }
 
 describe('HomeKpiCards', () => {
-  it('month_sales is the blue main card: gradient, white text, a white small line and a glass change badge', () => {
+  it('month_sales: a white card like the others, a blue small line and a small green change badge', () => {
     showAll()
     const hero = card('month_sales')
     expect(hero).toHaveAttribute('data-look', 'month_sales')
-    expect(hero.className).toContain('bg-[linear-gradient(')
-    expect(hero.className).toContain('#0B5FB3')                       // the blue brand, not the old red
+    expect(hero).toHaveClass('bg-card', 'border-border', 'text-card-foreground!')
     expect(hero.className).not.toContain('var(--red)')
-    expect(hero).toHaveClass('text-white!')
     const line = hero.querySelector('[data-slot="sparkline"]') as HTMLElement
-    expect(line).toHaveClass('text-white')
+    expect(line).toHaveClass('text-primary')
     expect(line.querySelector('polyline')?.getAttribute('points')?.split(' ')).toHaveLength(6)
     const change = hero.querySelector('[data-change]') as HTMLElement
-    expect(change).toHaveClass('bg-white/15', 'text-white')
+    expect(change).toHaveClass('bg-success-soft', 'text-success')
     expect(change).toHaveTextContent('▲Up 20.0% vs Sep 2026')
-    // only the main card has the gradient
-    for (const key of ['fy_sales', 'customers', 'products', 'open_orders', 'stock', 'top_customer', 'top_product']) {
-      expect(card(key).className).not.toContain('linear-gradient')
-    }
   })
 
-  it('fy_sales has a teal stripe (not the main card\'s blue) and a filled area of the running total', () => {
+  it('every card has the same light look: white card, light border, the same light blue icon circle, no gradient', () => {
+    showAll()
+    for (const key of ['month_sales', 'fy_sales', 'customers', 'products', 'open_orders', 'stock', 'top_customer', 'top_product']) {
+      const el = card(key)
+      expect(el, key).toHaveClass('bg-card', 'border-border')
+      expect(el.className, key).not.toMatch(/linear-gradient|text-white|\b(violet|slate|teal|amber)-/)
+    }
+    for (const key of ['month_sales', 'fy_sales', 'customers', 'products', 'open_orders', 'stock']) {
+      expect(card(key).querySelector('span.rounded-full.bg-primary-soft.text-primary'), key).toBeInTheDocument()
+    }
+    expect(cardsSource).not.toMatch(/\b(teal|violet|slate|amber)-\d/)
+  })
+
+  it('fy_sales: a filled area of the running total in the darker brand blue', () => {
     showAll()
     const fy = card('fy_sales')
-    expect(fy.querySelector('span.bg-teal-600.h-1')).toBeInTheDocument()
     const area = fy.querySelector('[data-slot="kpi-area"]') as HTMLElement
-    expect(area).toHaveClass('text-teal-600', 'dark:text-teal-400')
+    expect(area).toHaveClass('text-primary-hover')
     const path = area.querySelector('path[data-slot="area"]') as SVGPathElement
     expect(path.getAttribute('d')).toMatch(/^M0,44 L.* Z$/)            // closed down to the bottom: a filled area
     expect(path.getAttribute('fill')).toMatch(/^url\(#kpi-area-/)
@@ -107,11 +113,11 @@ describe('HomeKpiCards', () => {
     expect(fy.querySelector('[data-slot="sparkline"]')).toBeNull()
   })
 
-  it('customers with a total: a green ring with the share in the middle', () => {
+  it('customers with a total: a blue ring with the share in the middle', () => {
     showAll()
     const customers = card('customers')
     const ring = customers.querySelector('[data-slot="kpi-ring"]') as HTMLElement
-    expect(ring).toHaveClass('text-success')
+    expect(ring).toHaveClass('text-primary')
     expect(within(ring).getByText('42%')).toHaveAttribute('aria-hidden', 'true')     // 2,090 of 5,000
     expect(within(ring).getByText('2,090 of 5,000 customers (42%)')).toHaveClass('sr-only')
     expect(ring.querySelector('[data-slot="ring-fill"]')?.getAttribute('stroke-dasharray')).toMatch(/^68\.2\d 163\.36$/)  // 41.8% of the ring
@@ -125,7 +131,7 @@ describe('HomeKpiCards', () => {
     const customers = card('customers')
     expect(customers.querySelector('[data-slot="kpi-ring"]')).toBeNull()
     expect(customers.querySelector('[data-slot="sparkline"]')).toBeInTheDocument()
-    expect(customers).toHaveAttribute('data-look', 'customers')                       // still green
+    expect(customers).toHaveAttribute('data-look', 'customers')
   })
 
   it('a card this page does not know: the plain look', () => {
@@ -134,10 +140,10 @@ describe('HomeKpiCards', () => {
     expect(card('returns').querySelector('[data-slot="sparkline"]')).toBeInTheDocument()
   })
 
-  it('products: amber bars, one per month, the newest one strong', () => {
+  it('products: blue bars, one per month, the newest one strong', () => {
     showAll()
     const bars = card('products').querySelector('[data-slot="kpi-bars"]') as HTMLElement
-    expect(bars).toHaveClass('text-warning')
+    expect(bars).toHaveClass('text-primary')
     const rects = bars.querySelectorAll('rect')
     expect(rects).toHaveLength(6)
     expect(rects[5]).toHaveAttribute('data-last', 'true')
@@ -154,32 +160,33 @@ describe('HomeKpiCards', () => {
     expect(card('products')).toHaveAttribute('data-look', 'products')
   })
 
-  it('open orders and stock: tinted cards with the facts as chips and a faint icon behind', () => {
+  it('open orders and stock: white cards with the facts as light blue chips and a faint icon behind', () => {
     showAll()
     const orders = card('open_orders')
-    expect(orders).toHaveClass('bg-violet-50', 'dark:bg-violet-400/10')   // a soft tint in light, see-through in dark
-    expect(orders).toHaveClass('isolate')
+    expect(orders).toHaveClass('bg-card', 'isolate')
     const chips = orders.querySelector('[data-slot="kpi-facts"]') as HTMLElement
     expect(within(chips).getAllByRole('listitem').map((li) => li.textContent)).toEqual(['10 orders', '14 lines', 'INR 60.6 L incl. GST'])
     expect(within(chips).getByText('14 lines')).toHaveAttribute('data-slot', 'badge')
+    expect(within(chips).getByText('14 lines')).toHaveClass('bg-primary-soft', 'text-primary')
     const mark = orders.querySelector('svg.lucide-clipboard-list.-z-10') as SVGElement
     expect(mark).toHaveAttribute('aria-hidden', 'true')
     const stock = card('stock')
-    expect(stock).toHaveClass('bg-slate-100', 'dark:bg-slate-400/10')
+    expect(stock).toHaveClass('bg-card')
     expect(stock.querySelector('svg.lucide-warehouse.-z-10')).toBeInTheDocument()
     expect(within(stock.querySelector('[data-slot="kpi-facts"]') as HTMLElement).getAllByRole('listitem')).toHaveLength(2)
     expect(stock).toHaveAccessibleName(/52 items.*Report 20-Sep-2026/)
   })
 
-  it('the top customer: a green avatar with the initials, a "No. 1" tag, the name, the amount and the share chip', () => {
+  it('the top customer: a light blue avatar with the initials, a "No. 1" tag, the name, the amount and the share chip', () => {
     showAll()
     const top = card('top_customer')
     const avatar = top.querySelector('[data-slot="kpi-avatar"]') as HTMLElement
     expect(avatar).toHaveTextContent(/^AC$/)
-    expect(avatar).toHaveClass('rounded-full', 'bg-success-soft', 'text-success')
+    expect(avatar).toHaveClass('rounded-full', 'bg-primary-soft', 'text-primary')
     expect(avatar).toHaveAttribute('aria-hidden', 'true')
     expect(top.querySelector('svg.lucide-crown')).toBeInTheDocument()
     expect(top.querySelector('[data-slot="kpi-tag"]')).toHaveTextContent('🏆No. 1')
+    expect(top.querySelector('[data-slot="kpi-tag"]')).toHaveClass('bg-primary-soft', 'text-primary')
     expect(top.querySelector('[data-slot="kpi-name"]')).toHaveAttribute('title', 'Allied Castings Limited')
     expect(valueOf('top_customer')).toHaveTextContent('INR 32.4 K')
     expect(within(top).getByText('INR 32,400.00')).toBeInTheDocument()
@@ -187,7 +194,7 @@ describe('HomeKpiCards', () => {
 
     const product = card('top_product')
     const box = product.querySelector('[data-slot="kpi-avatar"]') as HTMLElement
-    expect(box).toHaveClass('bg-warning-soft')
+    expect(box).toHaveClass('bg-primary-soft')
     expect(box.querySelector('svg.lucide-award')).toBeInTheDocument()
     expect(product.querySelector('[data-slot="kpi-tag"]')).toHaveTextContent('⭐Top product')
     expect(product.querySelector('[data-slot="kpi-name"]')).toHaveTextContent('Coolant pump HM-445-1B')
@@ -226,7 +233,7 @@ describe('HomeKpiCards', () => {
     expect(document.querySelectorAll('[data-kpi]')).toHaveLength(8)
     expect(document.querySelectorAll('[data-slot="sparkline"], [data-slot="kpi-area"], [data-slot="kpi-bars"], [data-slot="kpi-ring"]')).toHaveLength(0)
     expect(document.querySelectorAll('[data-slot="kpi-facts"], [data-slot="kpi-name"], [data-slot="kpi-tag"]')).toHaveLength(0)
-    expect(card('month_sales').className).toContain('linear-gradient')               // the look stays, only the parts go
+    expect(card('month_sales')).toHaveAttribute('data-look', 'month_sales')         // the look stays, only the parts go
     expect(screen.getByText('INR 12 L')).toBeInTheDocument()
   })
 

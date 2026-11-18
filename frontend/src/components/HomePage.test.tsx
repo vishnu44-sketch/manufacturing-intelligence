@@ -149,7 +149,7 @@ describe('HomePage', () => {
     const up = month.querySelector('[data-change]') as HTMLElement
     expect(up).toHaveAttribute('data-change', 'up')
     expect(up).toHaveTextContent('▲Up 20.0% vs Sep 2026')
-    expect(up.className).toContain('text-white')        // white on glass on the blue main card (HomeKpiCards.tsx)
+    expect(up.className).toContain('text-success')      // a rise is green (the Badge's own "success" look)
     const down = kpi('customers').querySelector('[data-change]') as HTMLElement
     expect(down).toHaveTextContent('▼Down 12.5% vs the same dates of FY 2025-26')
     expect(down.className).toMatch(/text-destructive/)    // a fall is red (the Badge's own "destructive" look)
@@ -371,29 +371,15 @@ describe('HomePage', () => {
     expect(within(kpi('top_customer')).queryByText(/^INR/)).toBeNull()
   })
 
-  it('shows the usage: questions, tokens short and in full, the bar', async () => {
+  // 18-Nov: the "Your usage" card is gone (its numbers were the app's own estimate, not the Groq account's)
+  it('has no usage card; the recent questions use the full width', async () => {
     fakeFetch({ '/api/home': { body: HOME } })
 
     renderAt('/', <HomePage me={ME} />)
 
-    const usage = await screen.findByRole('region', { name: 'Your usage' })
-    expect(within(usage).getByText('9')).toBeInTheDocument()
-    expect(within(usage).getByText('90,403')).toBeInTheDocument()
-    expect(usage).toHaveTextContent('143k of 200k tokens')
-    expect(within(usage).getByText(/143,064 of 200,000 tokens · openai\/gpt-oss-120b/)).toBeInTheDocument()
-    expect(within(usage).getByText('72%')).toBeInTheDocument()
-    expect(screen.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '72')     // the only progress bar for screen readers
-  })
-
-  it.each([[50, 'bg-success'], [75, 'bg-warning'], [95, 'bg-destructive']])('the usage bar at %i%% is %s', async (pct, colour) => {
-    fakeFetch({ '/api/home': { body: { ...HOME, usage: { ...HOME.usage, pct } } } })
-
-    renderAt('/', <HomePage me={ME} />)
-
-    const bar = await screen.findByRole('progressbar', { name: 'AI tokens of the daily limit' })
-    const fill = bar.querySelector('[data-slot="progress-indicator"]') as HTMLElement
-    expect(fill).toHaveClass(colour)
-    expect(fill.style.width).toBe(`${pct}%`)
+    expect(await screen.findByRole('region', { name: 'Your recent questions' })).toBeInTheDocument()
+    expect(screen.queryByRole('region', { name: 'Your usage' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('progressbar', { name: 'AI tokens of the daily limit' })).not.toBeInTheDocument()
   })
 
   it('shows the recent questions with their status; a click opens the saved answer', async () => {
@@ -415,6 +401,20 @@ describe('HomePage', () => {
     expect(window.location.pathname).toBe('/q/40')
   })
 
+  it('shows a general answer (not about the company) as "General answer", and a refused one still as "Refused"', async () => {
+    fakeFetch({ '/api/home': { body: { ...HOME, recent: [
+      { id: 43, text: 'What is GST?', status: 'general', when: '05-Nov 3:00 PM', url: '/q/43' },
+      { id: 42, text: 'Delete all credit notes', status: 'refused', when: '05-Nov 2:58 PM', url: '/q/42' },
+    ] } } })
+
+    renderAt('/', <HomePage me={ME} />)
+
+    const list = await screen.findByRole('list', { name: 'Your recent questions' })
+    const badges = within(list).getAllByText(/./, { selector: '[data-slot="badge"]' })
+    expect(badges.map((badge) => badge.textContent)).toEqual(['General answer', 'Refused'])
+    expect(badges[0]).toHaveAttribute('data-status', 'general')
+  })
+
   it('no questions yet: a friendly line with the example questions', async () => {
     fakeFetch({ '/api/home': { body: { ...HOME, recent: [] } } })
 
@@ -432,7 +432,7 @@ describe('HomePage', () => {
     renderAt('/', <HomePage me={ME} />)
 
     expect(await screen.findByText(/Your recent questions can't be read right now. The app database is busy./)).toBeInTheDocument()
-    expect(screen.getByText('90,403')).toBeInTheDocument()
+    expect(screen.getByRole('region', { name: 'Your recent questions' })).toBeInTheDocument()
   })
 
   it('shows the connections, each with a green (pulsing) or red dot', async () => {
@@ -507,7 +507,7 @@ describe('HomePage', () => {
     expect(screen.queryAllByText(/Ask the Assistant about this/)).toHaveLength(0)
     const recent = screen.getByRole('region', { name: 'Your recent questions' })
     expect(within(recent).getByRole('link', { name: 'History' })).toHaveAttribute('href', '/history')
-    expect(screen.getByText('90,403')).toBeInTheDocument()
+    expect(screen.getByRole('region', { name: 'Your recent questions' })).toBeInTheDocument()
   })
 
   it('shows skeletons while it loads', () => {
@@ -532,7 +532,7 @@ describe('HomePage', () => {
     expect(document.querySelectorAll('[data-kpi]')).toHaveLength(0)
     expect(screen.queryByText(/Sales month/)).not.toBeInTheDocument()
     expect(screen.getByRole('heading', { name: /, Asha/ })).toBeInTheDocument()
-    expect(screen.getByText('90,403')).toBeInTheDocument()                                    // the usage still shows
+    expect(screen.getByRole('region', { name: 'Your recent questions' })).toBeInTheDocument()  // the rest still shows
     expect(screen.getAllByRole('link', { name: /Top 5 customers by invoice value/ })).toHaveLength(1)   // and the recent questions
     expect(document.querySelector('[data-connection="ss_gold"]')).toHaveTextContent('Not connected: Not reachable right now')
     expect(screen.getByRole('region', { name: 'Welcome' })).toBeInTheDocument()

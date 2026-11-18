@@ -43,3 +43,11 @@ DOCS_PROMPT = ChatPromptTemplate.from_messages([
     ("system", agent.DOCS_SYSTEM_PROMPT),
     ("human", agent.DOCS_REQUEST),
 ])
+
+# a message not about the data or the documents ("who are you", "what is GST?"): the AI answers it itself, like a
+# general assistant. "history" = the chat's earlier questions and answers as messages (lc.memory.general_history)
+GENERAL_PROMPT = ChatPromptTemplate.from_messages([
+    ("system", agent.GENERAL_SYSTEM_PROMPT),
+    MessagesPlaceholder("history", optional=True),
+    ("human", agent.GENERAL_REQUEST),
+])

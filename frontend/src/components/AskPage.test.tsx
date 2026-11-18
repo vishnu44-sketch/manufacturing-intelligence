@@ -128,6 +128,27 @@ describe('AskPage chat actions', () => {
     }
   })
 
+  it('the send button sits inside the rounded question box and is on only while there is text (17-Nov)', async () => {
+    fakeFetch(replies())
+    renderAt('/c/1', <AskPage me={ASHA} />)
+    await screen.findByText('Answer to And for Sep?')
+    const box = screen.getByLabelText('Your question')
+    const send = screen.getByRole('button', { name: 'Ask' })
+
+    // one pill: the field and the button share the same rounded container, inside the form "composer"
+    const pill = box.closest('[data-question-box]') as HTMLElement
+    expect(pill).toContainElement(send)
+    expect(pill).toHaveClass('rounded-[28px]')
+    expect(pill.closest('form')).toHaveAttribute('id', 'composer')
+
+    expect(send).toBeDisabled()                                                    // empty: grey and off
+    fireEvent.change(box, { target: { value: 'Net sales in Oct?' } })
+    expect(send).toBeEnabled()                                                     // text: the brand colour
+    expect(send).not.toHaveClass('bg-secondary')
+    fireEvent.change(box, { target: { value: '   ' } })
+    expect(send).toBeDisabled()                                                    // spaces only count as empty
+  })
+
   it('renames the open chat from its "..." menu', async () => {
     const fetch = fakeFetch(replies({ '/api/chats/1/rename': { body: { chat: { ...SALES, title: 'Sales per month' } } } }))
 

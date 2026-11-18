@@ -2,9 +2,9 @@
    every class starts with "hf-" so nothing else on the site is touched. All the motion stops when the person
    asked their computer for less motion (app.css also stops every animation then).
 
-   Colours: the Assistant picture uses the brand variables of app.css (--brand, --brand-bg: blue, with their own
-   dark values there), the graph picture its own teal. The other colours that must change in dark mode are the
-   --hf-* variables below, set again under <html data-theme="dark">. */
+   Colours: both pictures use the brand variables of app.css (--brand, --brand-bg: blue, with their own dark
+   values there), so the two cards match. The other colours that must change in dark mode are the --hf-*
+   variables below, set again under <html data-theme="dark">. */
 .hf-ask, .hf-graph {
   --hf-surface: var(--surface, #fff);          /* the bubble and the small dots: the card's own colour */
   --hf-brand: var(--brand, #0B5FB3);
@@ -12,14 +12,13 @@
   --hf-brand-bg: var(--brand-bg, #E8F1FB);
   --hf-edge: rgba(11, 95, 179, .2);            /* the bubble's border */
   --hf-shadow: rgba(11, 95, 179, .5);
-  --hf-teal: #0F766E;
+  --hf-graph: var(--brand, #0B5FB3);          /* the graph's lines and dots: the brand blue, like the Assistant */
 }
 :root[data-theme="dark"] .hf-ask, :root[data-theme="dark"] .hf-graph {
   --hf-surface: var(--tint, #222B3D);          /* a little lighter than the dark card, so the bubble shows */
   --hf-brand2: #9CC8FF;
   --hf-edge: rgba(76, 154, 255, .3);
   --hf-shadow: rgba(0, 0, 0, .6);
-  --hf-teal: #2DD4BF;
 }
 
 /* ------------------------------------------------------------ Assistant: a chat bubble typing, then a bar chart */
@@ -57,15 +56,15 @@
   100% { transform: scaleY(.08); }
 }
 
-/* ------------------------------------------------------------ Knowledge graph: dots and lines */
+/* ------------------------------------------------------------ Knowledge graph: dots and lines (brand blue) */
 .hf-graph { width: 132px; height: auto; overflow: visible; }
 
 /* each line has pathLength 1: a dash of length 1 moved by 1 hides it, moved to 0 shows it whole */
-.hf-line { stroke: var(--hf-teal); stroke-opacity: .55; stroke-width: 1.6; stroke-linecap: round;
+.hf-line { stroke: var(--hf-graph); stroke-opacity: .55; stroke-width: 1.6; stroke-linecap: round;
   stroke-dasharray: 1; stroke-dashoffset: 1; animation: hf-draw 7s ease-in-out infinite; }
-.hf-dot { fill: var(--hf-surface); stroke: var(--hf-teal); stroke-width: 2; transform-box: fill-box; transform-origin: center;
+.hf-dot { fill: var(--hf-surface); stroke: var(--hf-graph); stroke-width: 2; transform-box: fill-box; transform-origin: center;
   animation: hf-pulse 3.2s ease-in-out infinite; }
-.hf-dot-main { fill: var(--hf-teal); stroke: var(--hf-surface); stroke-width: 2.5; filter: drop-shadow(0 4px 6px rgba(15, 118, 110, .35)); }
+.hf-dot-main { fill: var(--hf-graph); stroke: var(--hf-surface); stroke-width: 2.5; filter: drop-shadow(0 4px 6px var(--hf-shadow)); }
 
 /* a line draws itself, stays, then fades away before the next round */
 @keyframes hf-draw {

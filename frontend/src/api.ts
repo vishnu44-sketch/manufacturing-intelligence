@@ -2,8 +2,8 @@
 // carries the CSRF token (Django's cookie) in the X-CSRFToken header. A 401 means "not signed in":
 // the app then shows its Login page. A 403 on a staff page means "no access".
 import type {
-  AiChartReply, AskResponse, AuditData, AuditFilters, ChatDetail, ChatList, ChatSummary, DataTables, DocumentsData, EditResponse,
-  GraphNodeReply, GraphSearchReply, GraphSimilarReply, HistoryPage, HomeData, Me, MemoryList, MemoryReply, PeopleList, PersonReply, Rows, SavedAnswer, SqlResult, SqlSavedList, SqlSavedQuery, SqlSchema,
+  AiChartReply, AskMode, AskResponse, AuditData, AuditFilters, ChatDetail, ChatList, ChatSummary, DataTables, DocumentsData, EditResponse,
+  GraphNodeReply, GraphSearchReply, GraphSimilarReply, HistoryMode, HistoryPage, HomeData, InsightsData, Me, MemoryList, MemoryReply, PeopleList, PersonReply, Rows, SavedAnswer, SqlResult, SqlSavedList, SqlSavedQuery, SqlSchema,
   StreamEvent,
 } from './types'
 
@@ -142,14 +142,20 @@ export class StreamUnavailable extends Error {}
 const STREAM_TYPE = 'application/x-ndjson'
 const STREAM_LOST = 'The connection was lost while the answer was being written. It is saved - you can find it in History.'
 
+/** The body of a question: with "mode" only when one is given ('ml' = an ML Insights chat; it matters for a new
+ *  chat only - the server keeps an existing chat's own mode). */
+function askBody(question: string, chatId: number | null, mode?: AskMode) {
+  return mode ? { question, chat_id: chatId, mode } : { question, chat_id: chatId }
+}
+
 /** Asks with the answer streamed (/api/ask/stream): onEvent gets each step and each piece of the answer as it
  *  comes, and the promise gives the same reply as api.ask. A refused question (400, 404 ...) and a sign-in
  *  problem fail as api.ask does; StreamUnavailable when no event came back at all. */
 export async function askStream(question: string, chatId: number | null,
-  onEvent: (event: StreamEvent) => void): Promise<AskResponse> {
+  onEvent: (event: StreamEvent) => void, mode?: AskMode): Promise<AskResponse> {
   let response: Response
   try {
-    response = await send('POST', '/api/ask/stream', { question, chat_id: chatId }, STREAM_TYPE)
+    response = await send('POST', '/api/ask/stream', askBody(question, chatId, mode), STREAM_TYPE)
   } catch {
     throw new StreamUnavailable('The stream could not be opened.')
   }
@@ -223,8 +229,8 @@ export const api = {
   restoreChat: (id: number) => request<{ chat: ChatSummary }>('POST', `/api/chats/${id}/restore`, {}),
   deleteChat: (id: number) => request<{ deleted: number; message: string }>('POST', `/api/chats/${id}/delete`, {}),
   // questions
-  ask: (question: string, chatId: number | null) =>
-    request<AskResponse>('POST', '/api/ask', { question, chat_id: chatId }),
+  ask: (question: string, chatId: number | null, mode?: AskMode) =>
+    request<AskResponse>('POST', '/api/ask', askBody(question, chatId, mode)),
   askStream,
   askAgain: (id: number) => request<AskResponse>('POST', `/api/questions/${id}/again`, {}),
   edit: (id: number, question: string) => request<EditResponse>('POST', `/api/questions/${id}/edit`, { question }),
@@ -233,7 +239,9 @@ export const api = {
   // a chart the app cannot draw itself (a sankey, a gauge ...), made by the AI from the rows - uses AI tokens
   aiChart: (id: number, kind: string) => request<AiChartReply>('POST', `/api/questions/${id}/chart`, { kind }),
   // the other pages
-  history: (page: number) => request<HistoryPage>('GET', `/api/history${query({ page: page > 1 ? page : undefined })}`),
+  // mode: only the Assistant's questions or only those of ML Insights chats ('all' = both: no ?mode=)
+  history: (page: number, mode: HistoryMode = 'all') =>
+    request<HistoryPage>('GET', `/api/history${query({ page: page > 1 ? page : undefined, mode: mode === 'all' ? undefined : mode })}`),
   documents: (params: { source?: string; find?: string; q?: string }) =>
     request<DocumentsData>('GET', `/api/documents${query(params)}`),
   data: () => request<DataTables>('GET', '/api/data'),
@@ -244,6 +252,8 @@ export const api = {
   addMemory: (text: string) => request<MemoryReply>('POST', '/api/memories', { text }),
   deleteMemory: (id: number) => request<{ deleted: number; message: string }>('POST', `/api/memories/${id}/delete`, {}),
   deleteAllMemories: () => request<{ deleted: number; message: string }>('POST', '/api/memories/delete-all', {}),
+  // Insights: the saved results of the machine-learning models (read-only, no AI call)
+  insights: () => request<InsightsData>('GET', '/api/insights'),
   // the Knowledge graph (read-only, no AI call)
   // page: the next hits of the same search ("Show more": offset = the hits shown already, limit 1..10, at most 50)
   graphSearch: (q: string, types = '', page: { offset?: number; limit?: number } = {}) =>

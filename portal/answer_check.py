@@ -37,6 +37,8 @@ NO_EARLIER = ("There is no earlier answer in this chat that I can check yet. Ask
               "run its query again and show you where the numbers come from.")
 FROM_DOCUMENTS = ("My last answer came from the company documents, not from a database query: the document and page "
                   "it used are named under it, so you can check it there.")
+FROM_GENERAL = ("My last answer was a general answer written by the AI, not from the SS Manufacturing data - there is "
+                "no database query behind it to check. For company numbers, ask a data question.")
 NOT_FROM_QUERY = ("My last answer did not come from a database query (the SS Manufacturing data does not have what was asked), so "
                   "there are no numbers of mine to check.")
 DID_NOT_RUN = ("I tried to run the same query again, but it did not run this time ({problem}). So I cannot check my "
@@ -347,6 +349,9 @@ def answer(result, about, context):
     if status == "docs":
         result.status, result.answer = "docs", FROM_DOCUMENTS
         result.sources = list(getattr(earlier, "sources", None) or [])
+        return result
+    if status == "general":  # 17-Nov: a general answer (no data behind it) - say so, not "not in the data"
+        result.status, result.answer = "general", FROM_GENERAL
         return result
     if status != "ok" or not (getattr(earlier, "sql", "") or "").strip():
         result.status, result.answer = "nodata", NOT_FROM_QUERY

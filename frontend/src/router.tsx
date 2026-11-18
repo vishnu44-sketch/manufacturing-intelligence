@@ -7,6 +7,10 @@
 //   /q/<id>      one saved answer with its rows              /data               Data (staff)
 //   /login       the sign-in page                             /memory             Memory (every user)
 //   /graph       the Knowledge graph (every user)            /sql                SQL (staff)
+//   /insights[?chat=<id>]  ML Insights: the ML question box and its chat (every user); ?chat= opens an ML chat,
+//                          /insights alone the latest ML chat (none yet: the empty box), ?new=1 a new, empty ML chat,
+//                          ?new=1&ask=<question> a new ML chat that asks that question once (a card of the ML Dashboard)
+//   /ml-dashboard          the ML Dashboard: the 6 ML result cards (every user)
 //   /audit[?page=2&user=..&action=..&from=..&to=..&q=..]       the Audit log (staff)
 // The old Django addresses (/ask/, /ask/new/, /ask/c/<id>/, /ask/<id>/, /app/...) still open the same screens.
 import {
@@ -27,6 +31,9 @@ export type Route =
   | { kind: 'sql' }
   | { kind: 'memory' }
   | { kind: 'graph' }
+  // fresh: ?new=1, a new ML chat (not the latest one); ask: ?ask=, a question to ask in it at once ('' none)
+  | { kind: 'insights'; chat: number | null; fresh: boolean; ask: string }
+  | { kind: 'mldashboard' }
   | { kind: 'audit'; page: number; user: string; action: string; from: string; to: string; q: string }
   | { kind: 'login' }
   | { kind: 'notfound' }
@@ -51,6 +58,12 @@ export function parseRoute(pathname: string, search = ''): Route {
   if (rest === '/sql') return { kind: 'sql' }
   if (rest === '/memory') return { kind: 'memory' }
   if (rest === '/graph') return { kind: 'graph' }
+  if (rest === '/insights') {
+    const chat = Number(params.get('chat')) || null
+    const fresh = chat === null && params.get('new') === '1'
+    return { kind: 'insights', chat, fresh, ask: fresh ? (params.get('ask') ?? '').trim() : '' }
+  }
+  if (rest === '/ml-dashboard') return { kind: 'mldashboard' }
   if (rest === '/audit') {
     return {
       kind: 'audit', page: Math.max(1, Number(params.get('page')) || 1), user: params.get('user') ?? '',
@@ -64,6 +77,16 @@ export function parseRoute(pathname: string, search = ''): Route {
 export const ASK_PATH = '/ask' // the Ask page (the latest chat); "/" is Home
 export const chatPath = (id: number) => `/c/${id}`
 export const questionPath = (id: number) => `/q/${id}`
+/** ML Insights, with one of its ML chats open (or none: the page with an empty question box). */
+export const insightsPath = (chatId: number | null = null) => (chatId ? `/insights?chat=${chatId}` : '/insights')
+/** A new, empty ML chat on ML Insights (the top bar's "New chat" on that page); /insights alone reopens the latest one. */
+export const NEW_ML_CHAT_PATH = '/insights?new=1'
+/** A card's "Ask about this" on the ML Dashboard: ML Insights asks the question once, in a new ML chat. */
+export const askInMlPath = (question: string) => `${NEW_ML_CHAT_PATH}&ask=${encodeURIComponent(question)}`
+/** The ML Dashboard: the 6 ML result cards. */
+export const ML_DASHBOARD_PATH = '/ml-dashboard'
+/** Where a chat opens: an ML chat on ML Insights, any other on the Assistant. */
+export const openChatPath = (chat: { id: number; mode?: string }) => (chat.mode === 'ml' ? insightsPath(chat.id) : chatPath(chat.id))
 
 interface Router {
   route: Route

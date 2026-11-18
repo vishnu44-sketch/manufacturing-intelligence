@@ -54,13 +54,14 @@ describe('HomeFeatures', () => {
     expect(window.location.pathname).toBe('/graph')
   })
 
-  it('Assistant is in the blue brand and the Knowledge graph in teal, so the two differ', () => {
+  it('both cards have the same blue button (the brand) and no teal', () => {
     renderAt('/', <HomeFeatures />)
     const ask = screen.getByRole('link', { name: 'Open the Assistant' })
     const graph = screen.getByRole('link', { name: 'Open Knowledge graph' })
     expect(ask).toHaveClass('bg-primary', 'text-primary-foreground!')
-    expect(graph).toHaveClass('bg-teal-700', 'dark:bg-teal-600')
-    expect(graph).not.toHaveClass('bg-primary')
+    expect(graph).toHaveClass('bg-primary', 'text-primary-foreground!')
+    expect(graph.className).toBe(ask.className)
+    expect(graph.className).not.toContain('teal')
   })
 
   it('hides the moving pictures and the icons from screen readers', () => {

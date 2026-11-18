@@ -25,6 +25,9 @@ class Conversation(models.Model):
     created_at = models.DateTimeField(default=timezone.now)   # time of the first question
     updated_at = models.DateTimeField(default=timezone.now)   # time of the last question (list order)
     archived = models.BooleanField(default=False)             # "Remove from list": hidden, still in History
+    # 17-Nov: "ml" = a chat of the ML Insights page (its questions are answered from the ml_ tables first);
+    # '' = a chat of the Assistant. Set by the chat's first question, kept for every follow-up
+    mode = models.CharField(max_length=10, blank=True, default="")
     # "Delete": when and by whom (empty = not deleted); a deleted chat and its questions are hidden for good
     deleted_at = models.DateTimeField(null=True, blank=True)
     deleted_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True,
@@ -65,7 +68,9 @@ class Question(models.Model):
         ("ok", "Answered"),        # SQL ran, rows + answer shown
         ("docs", "From documents"),  # answered from the company PDFs (the pages are the sources), no SQL
         ("nodata", "No data"),     # an SS Manufacturing business question, but its data is not in ss_gold (e.g. profit)
-        ("refused", "Refused"),    # not a question about SS Manufacturing data - no SQL was run
+        ("general", "General answer"),  # not about the data or documents ("who are you", "what is GST?"): the AI
+                                        # answered it itself - no SQL, no rows (17-Nov)
+        ("refused", "Refused"),    # a request to change data or to bend the rules - no SQL was run
         ("error", "Failed"),       # no working SQL after 3 tries, or a service was down
         ("memory", "Saved to memory"),  # "Remember that ..." - saved as a UserMemory, no SQL and no AI call
     ]

@@ -2,13 +2,16 @@
 // (HistoryChats). "Questions" (?tab=questions, or a ?page=): the AI usage box of this app (all users), then
 // the user's own questions, newest first, 25 per page (?page=2), with their answer, rows, seconds, tokens and status. "Ask again" asks the
 // question again in a new chat (the Ask page shows "Thinking…"); "Excel" downloads its rows.
+// 18-Nov: the Questions tab has the switch of the Chats tab (Assistant | ML Insights | All, with counts): a
+// question of an ML Insights chat is under ML Insights (with the small "ML" badge), the others (also those
+// without a chat) under the Assistant. The server filters (?mode=), so the pager and the counts stay right.
 import { useEffect, useState } from 'react'
 import { AuthError, api, problemText } from '../api'
 import { Link, questionPath, useRouter } from '../router'
-import type { HistoryLine, HistoryPage as Page, Status, Usage } from '../types'
+import type { HistoryLine, HistoryMode, HistoryPage as Page, Status, Usage } from '../types'
 import type { AskAgain } from './AskPage'
 import { ExcelLink, Loading, plural } from './common'
-import HistoryChats from './HistoryChats'
+import HistoryChats, { MlBadge, ModeSwitch, readHistoryMode, saveHistoryMode } from './HistoryChats'
 import { Segmented, SegmentedItem } from './ui/segmented'
 
 const CHIPS: Record<Status, [string, string]> = {
@@ -18,6 +21,7 @@ const CHIPS: Record<Status, [string, string]> = {
   refused: ['skip', 'REFUSED'],
   error: ['fail', 'FAILED'],
   memory: ['ok', 'MEMORY UPDATED'],
+  general: ['info', 'GENERAL ANSWER'], // not about the company: the AI's own answer
 }
 
 /** The AI usage of this app: the daily period, Groq's rolling 24 h count and this week. */
@@ -70,6 +74,11 @@ function Line({ line }: { line: HistoryLine }) {
       <td style={{ whiteSpace: 'nowrap' }}>{line.created_text}</td>
       <td style={{ color: '#212529', fontWeight: 500 }}>
         <Link to={questionPath(line.id)} className="history-q" title="Open this answer">{line.text}</Link>
+        {line.mode === 'ml' && (
+          <span style={{ marginLeft: 6, verticalAlign: 'middle' }}>
+            <MlBadge mode={line.mode} title="Asked in a chat of ML Insights" label=" Insights question" />
+          </span>
+        )}
         {line.understood_as && <div className="mut">Understood as: {line.understood_as}</div>}
         {line.edited && <div className="mut">edited - replaced by a newer version</div>}
       </td>
@@ -118,24 +127,37 @@ export default function HistoryPage({ page }: { page: number }) {
 
 /** The "Questions" tab: the AI usage box, then the user's own questions (one page of them). */
 function Questions({ page }: { page: number }) {
+  const { navigate } = useRouter()
+  const [mode, setMode] = useState<HistoryMode>(readHistoryMode)
   const [data, setData] = useState<Page | null>(null)
   const [error, setError] = useState('')
 
   useEffect(() => {
     let gone = false
     setError('')
-    api.history(page)
+    api.history(page, mode)
       .then((body) => { if (!gone) setData(body) })
       .catch((err) => { if (!gone && !(err instanceof AuthError)) setError(problemText(err)) })
     return () => { gone = true }
-  }, [page])
+  }, [page, mode])
+
+  /** Another choice of the switch: kept for the next visit, and its list starts on page 1. */
+  function choose(next: HistoryMode) {
+    setMode(next)
+    saveHistoryMode(next)
+    if (page > 1) navigate('/history?tab=questions')
+  }
 
   if (error) return <div className="errbox">{error}</div>
   if (!data) return <Loading />
+  const none = !data.counts || data.counts.all === 0 || mode === 'all'
   return (
     <>
       <UsageBox usage={data.usage} />
-      <div className="mut">Your own questions, newest first.</div>
+      <div className="ui-scope" style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 12, marginBottom: 12 }}>
+        <ModeSwitch label="Which questions to show" value={mode} counts={data.counts} onChange={choose} />
+        <span className="mut">Your own questions, newest first.</span>
+      </div>
       {data.questions.length ? (
         <>
           <div className="twrap scroll">
@@ -161,9 +183,13 @@ function Questions({ page }: { page: number }) {
         </>
       ) : (
         <div className="card">
-          <div className="h2">No questions yet</div>
-          <div className="mut" style={{ marginBottom: 14 }}>You have not asked anything yet. Your questions will show up here.</div>
-          <Link className="btn primary" to="/ask">Go to the Assistant</Link>
+          <div className="h2">{none ? 'No questions yet' : mode === 'ml' ? 'No ML Insights questions yet' : 'No Assistant questions yet'}</div>
+          <div className="mut" style={{ marginBottom: 14 }}>
+            {none ? 'You have not asked anything yet. Your questions will show up here.' : 'The other switch has your questions.'}
+          </div>
+          {mode === 'ml'
+            ? <Link className="btn primary" to="/insights">Go to ML Insights</Link>
+            : <Link className="btn primary" to="/ask">Go to the Assistant</Link>}
         </div>
       )}
     </>

@@ -1,8 +1,9 @@
 // History's "Chats" tab (12-Nov: it took the place of the chat list on the left of the Ask page): the chats by
 // day with a link to each, the "..." menu (Rename / Remove from list / Delete, which asks first), the removed
 // chats with Restore, and the two tabs of the History page.
+// 18-Nov: the switch Assistant (first) | ML Insights | All, with counts, kept in this browser.
 import { fireEvent, screen, waitFor, within } from '@testing-library/react'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { callsTo, fakeFetch } from '../test/fakeFetch'
 import { renderAt } from '../test/render'
 import type { ChatSummary } from '../types'
@@ -36,6 +37,27 @@ describe('HistoryChats', () => {
     expect(screen.getByText('1 question · last one 03 Nov, 09:05 AM')).toBeInTheDocument()
     expect(screen.getByText('Removed chats (1)')).toBeInTheDocument()
     expect(screen.getByRole('link', { name: 'New chat' })).toHaveAttribute('href', '/new')
+  })
+
+  it('marks an ML Insights chat with a small "ML" badge and opens it on ML Insights (17-Nov)', async () => {
+    const ML = chat(4, 'Sales forecast for 3 months', { mode: 'ml' })
+    const OLD_ML = chat(5, 'Customers at risk', { mode: 'ml', archived: true, group: undefined })
+    fakeFetch({ '/api/chats': { body: { chats: [ML, SALES], removed: [OLD_ML] } } })
+    renderAt('/history', <HistoryChats />)
+    fireEvent.click(await screen.findByRole('button', { name: 'All (2)' }))   // both kinds (18-Nov)
+
+    const link = await screen.findByRole('link', { name: 'Sales forecast for 3 months' })
+    expect(link).toHaveAttribute('href', '/insights?chat=4')
+    expect(within(link.closest('li') as HTMLElement).getByTitle('A chat of ML Insights - it opens there')).toHaveTextContent('ML Insights chat')
+    // a normal chat: no badge, opens on the Assistant as before
+    const sales = screen.getByRole('link', { name: 'Net sales by month' })
+    expect(sales).toHaveAttribute('href', '/c/1')
+    expect(within(sales.closest('li') as HTMLElement).queryByTitle('A chat of ML Insights - it opens there')).not.toBeInTheDocument()
+    // a removed ML chat opens there too
+    expect(screen.getByRole('link', { name: 'Customers at risk' })).toHaveAttribute('href', '/insights?chat=5')
+
+    fireEvent.click(link)
+    expect(window.location.pathname + window.location.search).toBe('/insights?chat=4')
   })
 
   it('says so when there are no chats yet', async () => {
@@ -114,17 +136,119 @@ describe('HistoryChats', () => {
   })
 })
 
+describe('HistoryChats switch: Assistant | ML Insights | All (18-Nov)', () => {
+  const ML = chat(4, 'Sales forecast for 3 months', { mode: 'ml' })
+  const OLD_ML = chat(5, 'Customers at risk', { mode: 'ml', archived: true, group: undefined })
+  const BOTH = { body: { chats: [ML, SALES, STOCK], removed: [OLD, OLD_ML] } }
+  const pressed = (name: string) => expect(screen.getByRole('button', { name })).toHaveAttribute('aria-pressed', 'true')
+  const BADGE = 'A chat of ML Insights - it opens there'
+
+  it('has three tabs with their counts and opens on the Assistant: no ML chat there', async () => {
+    fakeFetch({ '/api/chats': BOTH })
+    renderAt('/history', <HistoryChats />)
+
+    expect(await screen.findByRole('link', { name: 'Net sales by month' })).toBeInTheDocument()
+    expect(screen.getByRole('group', { name: 'Which chats to show' })).toBeInTheDocument()
+    pressed('Assistant (2)')
+    expect(screen.getByRole('button', { name: 'ML Insights (1)' })).toHaveAttribute('aria-pressed', 'false')
+    expect(screen.getByRole('button', { name: 'All (3)' })).toHaveAttribute('aria-pressed', 'false')
+    expect(screen.getByRole('link', { name: 'Stock value' })).toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: 'Sales forecast for 3 months' })).not.toBeInTheDocument()
+    expect(screen.queryByTitle(BADGE)).not.toBeInTheDocument()
+    expect(screen.getByText('Removed chats (1)')).toBeInTheDocument()                   // only the Assistant's removed one
+    expect(screen.queryByRole('link', { name: 'Customers at risk' })).not.toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'New chat' })).toHaveAttribute('href', '/new')
+  })
+
+  it('ML Insights shows only the ML chats (and removed ones), All shows both with the badge; the choice is kept', async () => {
+    fakeFetch({ '/api/chats': BOTH })
+    renderAt('/history', <HistoryChats />)
+
+    fireEvent.click(await screen.findByRole('button', { name: 'ML Insights (1)' }))
+    pressed('ML Insights (1)')
+    expect(screen.getByRole('link', { name: 'Sales forecast for 3 months' })).toHaveAttribute('href', '/insights?chat=4')
+    expect(screen.queryByRole('link', { name: 'Net sales by month' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: 'Stock value' })).not.toBeInTheDocument()
+    expect(screen.getByText('Removed chats (1)')).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Customers at risk' })).toHaveAttribute('href', '/insights?chat=5')
+    expect(screen.getByRole('link', { name: 'New chat' })).toHaveAttribute('href', '/insights?new=1')
+    expect(window.localStorage.getItem('mi.historyMode')).toBe('ml')
+
+    fireEvent.click(screen.getByRole('button', { name: 'All (3)' }))
+    pressed('All (3)')
+    for (const name of ['Sales forecast for 3 months', 'Net sales by month', 'Stock value']) {
+      expect(screen.getByRole('link', { name })).toBeInTheDocument()
+    }
+    expect(within(screen.getByRole('link', { name: 'Sales forecast for 3 months' }).closest('li') as HTMLElement)
+      .getByTitle(BADGE)).toBeInTheDocument()
+    expect(screen.getByText('Removed chats (2)')).toBeInTheDocument()
+    expect(window.localStorage.getItem('mi.historyMode')).toBe('all')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Assistant (2)' }))
+    expect(window.localStorage.getItem('mi.historyMode')).toBeNull()                    // the first one: nothing kept
+  })
+
+  it('opens on the last choice of this browser', async () => {
+    window.localStorage.setItem('mi.historyMode', 'ml')
+    fakeFetch({ '/api/chats': BOTH })
+    renderAt('/history', <HistoryChats />)
+
+    expect(await screen.findByRole('link', { name: 'Sales forecast for 3 months' })).toBeInTheDocument()
+    pressed('ML Insights (1)')
+    expect(screen.queryByRole('link', { name: 'Net sales by month' })).not.toBeInTheDocument()
+  })
+
+  it('works without the browser storage (the Assistant first)', async () => {
+    vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => { throw new Error('blocked') })
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw new Error('blocked') })
+    fakeFetch({ '/api/chats': BOTH })
+    renderAt('/history', <HistoryChats />)
+
+    expect(await screen.findByRole('link', { name: 'Net sales by month' })).toBeInTheDocument()
+    pressed('Assistant (2)')
+    fireEvent.click(screen.getByRole('button', { name: 'ML Insights (1)' }))
+    pressed('ML Insights (1)')
+    expect(screen.getByRole('link', { name: 'Sales forecast for 3 months' })).toBeInTheDocument()
+  })
+
+  it('says so when one side has no chats', async () => {
+    fakeFetch({ '/api/chats': LIST })
+    renderAt('/history', <HistoryChats />)
+    fireEvent.click(await screen.findByRole('button', { name: 'ML Insights (0)' }))
+    expect(screen.getByText('No ML Insights chats yet')).toBeInTheDocument()
+    expect(screen.queryByText('Removed chats (1)')).not.toBeInTheDocument()            // the removed one is the Assistant's
+  })
+
+  it('the chat menu works under ML Insights: remove puts the chat in its removed list', async () => {
+    let removed = false
+    const fetch = fakeFetch({
+      '/api/chats': () => ({ body: { chats: [...(removed ? [] : [ML]), SALES],
+                                     removed: [...(removed ? [{ ...ML, archived: true, group: undefined }] : []), OLD_ML, OLD] } }),
+      '/api/chats/4/remove': () => { removed = true; return { body: { chat: { ...ML, archived: true }, message: 'Removed.' } } },
+    })
+    window.localStorage.setItem('mi.historyMode', 'ml')
+    renderAt('/history', <HistoryChats />)
+    const row = await openMenu('Sales forecast for 3 months')
+    fireEvent.click(within(row).getByRole('button', { name: /Remove from list/ }))
+
+    await waitFor(() => expect(callsTo(fetch, '/api/chats/4/remove')).toHaveLength(1))
+    expect(await screen.findByText('Removed chats (2)')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'ML Insights (0)' })).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByText('No ML Insights chats yet')).toBeInTheDocument()
+  })
+})
+
 describe('HistoryPage tabs', () => {
   const HISTORY = { body: { questions: [], page: 1, pages: 1, count: 0, has_previous: false, has_next: false,
                             usage: { rows: [], period_start: '', period_end: '', week_start: '', week_end: '' } } }
 
   it('opens on Chats, and Questions is one click away', async () => {
-    const fetch = fakeFetch({ '/api/chats': LIST, '/api/history': HISTORY })
+    const fetch = fakeFetch({ '/api/chats': LIST, '/api/history?mode=assistant': HISTORY })
     renderAt('/history', <HistoryPage page={1} />)
 
     expect(screen.getByRole('button', { name: 'Chats' })).toHaveAttribute('aria-pressed', 'true')
     expect(await screen.findByRole('link', { name: 'Net sales by month' })).toBeInTheDocument()
-    expect(fetch.mock.calls.map(([url]) => url)).not.toContain('/api/history')     // not read until asked for
+    expect(fetch.mock.calls.filter(([url]) => url.startsWith('/api/history'))).toHaveLength(0) // not read until asked for
 
     fireEvent.click(screen.getByRole('button', { name: 'Questions' }))
     expect(await screen.findByText('No questions yet')).toBeInTheDocument()
@@ -132,7 +256,7 @@ describe('HistoryPage tabs', () => {
   })
 
   it('opens on Questions for ?tab=questions and for a page of the pager', async () => {
-    fakeFetch({ '/api/chats': LIST, '/api/history': HISTORY, '/api/history?page=2': HISTORY })
+    fakeFetch({ '/api/chats': LIST, '/api/history?mode=assistant': HISTORY, '/api/history?page=2&mode=assistant': HISTORY })
     const first = renderAt('/history?tab=questions', <HistoryPage page={1} />)
     expect(screen.getByRole('button', { name: 'Questions' })).toHaveAttribute('aria-pressed', 'true')
     first.unmount()

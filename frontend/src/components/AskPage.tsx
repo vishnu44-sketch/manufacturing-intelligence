@@ -17,27 +17,27 @@
 // chats, conv, conv-scroll, composer ...). Messages (a chat removed or deleted, a failed chat action) show
 // as toasts; deleting a chat asks in a dialog first. Colours are Tailwind token classes only (no fixed
 // colours), so the page follows the light and the dark theme.
-import { type KeyboardEvent, type ReactNode, useCallback, useEffect, useRef, useState } from 'react'
-import { ArrowUp, Check, Copy, Ellipsis, Info, Pencil } from 'lucide-react'
+// 17-Nov: the conversation parts (bubbles, live steps, streamed answer, question box) and the asking itself
+// (useAsk) moved to AskThread.tsx - ML Insights uses them too. The ML Insights chats (mode "ml") open on
+// that page: /ask skips them, and a /c/<id> of one goes on to /insights?chat=<id>.
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Ellipsis, Info } from 'lucide-react'
 import { toast } from 'sonner'
 import { copyText } from '../lib/clipboard'
 
 export { copyText }
 import { cn } from '@/lib/utils'
-import { AuthError, StreamUnavailable, api, problemText } from '../api'
-import { ASK_PATH, Link, chatPath, useRouter } from '../router'
+import { AuthError, api, problemText } from '../api'
+import { ASK_PATH, Link, chatPath, insightsPath, openChatPath, useRouter } from '../router'
 import type { AskResponse, Card, ChatDetail, ChatSummary, Me, SavedAnswer } from '../types'
 import AnswerCard from './AnswerCard'
 import AskStart from './AskStart'
+import { Bubble, PendingQuestion, QuestionBox, QuestionBubble, QuestionTime, chatsOf, scrollTo, useAsk } from './AskThread'
 import { type ChatActions, ChatMenu, deleteQuestion } from './ChatMenu'
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from './ui/alert-dialog'
 import { Button } from './ui/button'
-import { Card as Box } from './ui/card'
-import { Dots } from './ui/dots'
 import { Popover, PopoverContent, PopoverTrigger } from './ui/popover'
 import { Toaster } from './ui/sonner'
-import { Spinner } from './ui/spinner'
-import { Textarea } from './ui/textarea'
 import { tabTitle } from '../lib/brand'
 
 /** What History's "Ask again" passes along when it opens this page. */
@@ -48,206 +48,6 @@ export interface AskAgain {
 function isAskAgain(state: unknown): state is AskAgain {
   const again = (state as AskAgain | null)?.again
   return !!again && typeof again.id === 'number' && typeof again.text === 'string'
-}
-
-/** The card of "Thinking…" and of the streamed steps. */
-const WAIT_BOX = 'self-start max-w-full rounded-xl border border-border bg-card px-4 py-3 text-[13px] text-muted-foreground shadow-xs'
-
-/** "Thinking…" under a sent question - or, while the answer streams, the steps so far (the last one is
- *  running); after 20 s and 60 s it says why it takes so long. */
-function Thinking({ text = 'Thinking… writing the SQL and checking it', steps = [] }: { text?: string; steps?: string[] }) {
-  const [slow, setSlow] = useState(0)
-  useEffect(() => {
-    const first = window.setTimeout(() => setSlow(1), 20000)
-    const second = window.setTimeout(() => setSlow(2), 60000)
-    return () => { window.clearTimeout(first); window.clearTimeout(second) }
-  }, [])
-  const slowText = slow === 1 ? 'Still working… the AI service is busy, so this can take up to a minute.'
-    : slow === 2 ? <>Still working… the answer is saved as soon as it is ready - you can also find it in <Link to="/history">History</Link>.</>
-    : null
-  if (steps.length) {
-    // a small progress list: a green tick on a finished step, the dots on the running one
-    // (the <li> keep the class names "done" / "now")
-    return (
-      <div className={cn(WAIT_BOX, 'flex w-[min(420px,100%)] flex-col gap-2')} role="status">
-        <ol aria-label="Steps"
-            className={cn('flex flex-col gap-2 [&>li]:flex [&>li]:items-center [&>li]:gap-2.5',
-              '[&>li.done]:text-muted-foreground [&>li.now]:font-medium [&>li.now]:text-heading')}>
-          {steps.map((label, i) => (i < steps.length - 1
-            ? (
-              <li key={i} className="done">
-                <span className="grid size-5 shrink-0 place-items-center rounded-full bg-success-soft text-success" aria-hidden="true">
-                  <Check className="size-3" strokeWidth={3} />
-                </span>
-                {label}
-              </li>
-            ) : (
-              <li key={i} className="now" aria-current="step">
-                <span className="grid size-5 shrink-0 place-items-center rounded-full bg-primary-soft" aria-hidden="true">
-                  <Dots className="gap-[2px] [&>i]:size-1" />
-                </span>
-                {label}…
-              </li>
-            )))}
-        </ol>
-        {slowText && <div className="border-t border-border pt-2 text-xs">{slowText}</div>}
-      </div>
-    )
-  }
-  return (
-    <div className={cn(WAIT_BOX, 'inline-flex items-center gap-2.5')} role="status">
-      <Dots />{' '}
-      {slowText ?? text}
-    </div>
-  )
-}
-
-/** The answer while it is being written (streamed), until the finished card takes its place. */
-function LiveAnswer({ text }: { text: string }) {
-  return (
-    <Box className="live-answer px-5 py-4 max-[760px]:px-3.5" aria-live="polite" aria-busy="true">
-      <div className="answer text-[15px] leading-[1.65] text-foreground [overflow-wrap:anywhere]">{text}<span className="caret" aria-hidden="true" /></div>
-    </Box>
-  )
-}
-
-/** What the streamed answer has shown so far: the steps that started, and the answer's text. */
-type Live = { steps: string[]; text: string }
-
-function scrollTo(el: HTMLElement | null, block: ScrollLogicalPosition) {
-  el?.scrollIntoView?.({ block, behavior: 'smooth' }) // (jsdom has no scrollIntoView)
-}
-
-/** The grow-with-the-text height of a question box (up to `most` px; past it the box scrolls). */
-function grow(el: HTMLTextAreaElement | null, extra = 0, most = 220) {
-  if (!el) return
-  el.style.height = 'auto'
-  el.style.height = `${Math.min(el.scrollHeight + extra, most)}px`
-}
-
-/** The question box under a conversation: at most 6 rows of 24 px and its 2 x 6 px padding. */
-const SMALL_BOX_MOST = 6 * 24 + 12
-
-/** A question bubble (on the right, in the brand colour); keeps the class "bubble". */
-function Bubble({ text }: { text: string }) {
-  return (
-    <div className={cn('bubble max-w-[min(720px,88%)] rounded-2xl rounded-br-sm bg-primary px-4 py-2.5 text-sm leading-normal',
-      'whitespace-pre-wrap text-primary-foreground shadow-sm [overflow-wrap:anywhere] max-[700px]:max-w-full',
-      // 12-Nov: text marked with the mouse was blue on the blue bubble - not to be seen. Marked text here is
-      // the other way round: the bubble's text colour as the background, the bubble's colour as the text.
-      'selection:bg-primary-foreground selection:text-primary')}>
-      {text}
-    </div>
-  )
-}
-
-const HOVER_BUTTON = cn('opacity-0 transition-opacity group-hover/q:opacity-100 hover:bg-card hover:text-primary',
-  'focus-visible:opacity-100 [@media(hover:none)]:opacity-100')
-
-/** The copy button of a question: one click copies its whole text; a tick and "Copied" for 2 seconds say it worked. */
-function CopyButton({ text }: { text: string }) {
-  const [copied, setCopied] = useState(false)
-  useEffect(() => {
-    if (!copied) return
-    const timer = window.setTimeout(() => setCopied(false), 2000)
-    return () => window.clearTimeout(timer)
-  }, [copied])
-  const copy = async () => {
-    if (await copyText(text)) setCopied(true)
-    else toast.error('The question could not be copied in this browser.')
-  }
-  return (
-    <Button type="button" variant="ghost" size={copied ? 'sm' : 'icon-sm'} onClick={copy}
-            title={copied ? 'Copied' : 'Copy this question'} aria-label={copied ? 'Copied' : 'Copy this question'}
-            className={cn(HOVER_BUTTON, copied && 'gap-1 px-2 text-[11.5px] text-success opacity-100 hover:text-success')}>
-      {copied ? <><Check aria-hidden="true" className="size-3.5" />Copied</> : <Copy aria-hidden="true" className="size-3.5" />}
-    </Button>
-  )
-}
-
-function QuestionTime({ children }: { children: ReactNode }) {
-  return <div className="mt-1 text-[11px] text-muted-foreground">{children}</div>
-}
-
-/** One question of a chat: its bubble with the pencil, or the edit box while it is edited. */
-function QuestionBubble({ card, me, editable, onEdit }:
-  { card: Card; me: Me; editable: boolean; onEdit: (card: Card, text: string) => Promise<string> }) {
-  const [editing, setEditing] = useState(false)
-  const [text, setText] = useState(card.text)
-  const [sending, setSending] = useState(false)
-  const [error, setError] = useState('')
-  const box = useRef<HTMLTextAreaElement>(null)
-
-  useEffect(() => {
-    if (!editing) return
-    grow(box.current, 2)
-    box.current?.focus()
-    box.current?.setSelectionRange(box.current.value.length, box.current.value.length)
-  }, [editing])
-  useEffect(() => { grow(box.current, 2) }, [text])
-
-  function cancel() {
-    if (sending) return
-    setEditing(false)
-    setText(card.text)
-    setError('')
-  }
-
-  async function save() {
-    if (!text.trim()) { box.current?.focus(); return }
-    if (sending) return
-    setSending(true)
-    setError('')
-    const problem = await onEdit(card, text.trim())
-    setSending(false) // on success this bubble is replaced by the new question's
-    if (problem) setError(problem)
-  }
-
-  function onKey(event: KeyboardEvent<HTMLTextAreaElement>) {
-    if (event.key === 'Escape') { event.stopPropagation(); cancel(); return }
-    if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
-      event.preventDefault()
-      save()
-    }
-  }
-
-  return (
-    <>
-      <div className="group/q flex flex-col items-end">
-        {!editing && (
-          <div className="flex w-full items-center justify-end gap-1">
-            <CopyButton text={card.text} />
-            {editable && (
-              <Button type="button" variant="ghost" size="icon-sm" title="Edit this question" aria-label="Edit this question"
-                      className={cn(HOVER_BUTTON, 'mr-1')}
-                      onClick={() => setEditing(true)}>
-                <Pencil aria-hidden="true" className="size-3.5" />
-              </Button>
-            )}
-            <Bubble text={card.text} />
-          </div>
-        )}
-        {editing && (
-          <form className="w-[min(720px,100%)] rounded-2xl border border-primary bg-card px-3 py-2.5 shadow-md ring-3 ring-primary/10"
-                onSubmit={(e) => { e.preventDefault(); save() }}>
-            <Textarea ref={box} rows={2} maxLength={me.max_question_chars} required aria-label="Edit the question"
-                      className="min-h-11 border-0! bg-transparent! px-0.5! py-1! shadow-none focus-visible:ring-0"
-                      value={text} readOnly={sending} onChange={(e) => setText(e.target.value)} onKeyDown={onKey} />
-            <div className="mt-1 flex flex-wrap items-center justify-end gap-2 border-t border-border pt-2">
-              <span className="mr-auto text-[11.5px] text-muted-foreground">The new answer replaces this one here; the old version stays in History.</span>
-              <Button type="button" variant="outline" size="sm" onClick={cancel} disabled={sending}>Cancel</Button>
-              <Button type="submit" size="sm" disabled={sending}>
-                {sending && <Spinner />}Save &amp; ask
-              </Button>
-            </div>
-          </form>
-        )}
-        <QuestionTime>{card.created_text}{card.edited && ' · edited'}</QuestionTime>
-      </div>
-      {error && <div className="errbox" role="alert">{error}</div>}
-      {sending && <Thinking text="Thinking… asking the edited question" />}
-    </>
-  )
 }
 
 // the tips behind the (i) under the question box
@@ -261,9 +61,8 @@ export default function AskPage({ me }: { me: Me }) {
   const [detail, setDetail] = useState<ChatDetail | null>(null)
   const [single, setSingle] = useState<SavedAnswer | null>(null)
   const [loadError, setLoadError] = useState('')
-  const [pending, setPending] = useState<string | null>(null)
-  const [live, setLive] = useState<Live | null>(null) // the streamed progress of the pending question
-  const [askError, setAskError] = useState('')
+  // the question being asked, its streamed progress and the message when it failed (AskThread.tsx)
+  const { pending, live, error: askError, run: runAsk, askLive } = useAsk()
   const [question, setQuestion] = useState(route.kind === 'new' ? route.q.slice(0, me.max_question_chars) : '')
   const [justAsked, setJustAsked] = useState<number | null>(null)
   const [notices, setNotices] = useState<Record<number, string>>({}) // one-time token notices, by card id
@@ -295,10 +94,12 @@ export default function AskPage({ me }: { me: Me }) {
   }, [])
   useEffect(() => { refreshChats() }, [refreshChats])
 
+  // the Assistant's own chats: the ML Insights chats (mode "ml") open on that page instead
+  const ownChats = useMemo(() => chats && chatsOf(chats, ''), [chats])
   // /ask opens the most recently used chat (or the new-chat screen when there is none)
   useEffect(() => {
-    if (route.kind === 'latest' && chats && chats.length) navigate(chatPath(chats[0].id), { replace: true })
-  }, [route, chats, navigate])
+    if (route.kind === 'latest' && ownChats && ownChats.length) navigate(chatPath(ownChats[0].id), { replace: true })
+  }, [route, ownChats, navigate])
 
   // /new?q=... (an example link) fills the box
   useEffect(() => {
@@ -315,7 +116,12 @@ export default function AskPage({ me }: { me: Me }) {
     let gone = false
     setLoadError('')
     api.chat(chatId)
-      .then((data) => { if (!gone) setDetail(data) })
+      .then((data) => {
+        if (gone) return
+        // an ML Insights chat opens on its own page (with the ML results under it)
+        if (data.chat.mode === 'ml') navigate(insightsPath(data.chat.id), { replace: true })
+        else setDetail(data)
+      })
       .catch((error) => {
         if (gone || error instanceof AuthError) return
         setDetail(null)
@@ -362,39 +168,9 @@ export default function AskPage({ me }: { me: Me }) {
     refreshChats()
   }
 
-  async function run(text: string, call: () => Promise<AskResponse>, startedIn: number | null, keep: string) {
-    setPending(text)
-    setAskError('')
-    toast.dismiss()
-    try {
-      showAnswer(await call(), startedIn)
-    } catch (error) {
-      if (error instanceof AuthError) return // the app shows the Login page
-      setAskError(problemText(error, 'The question could not be asked.'))
-      setQuestion(keep) // keep what was typed
-    } finally {
-      setPending(null)
-      setLive(null)
-    }
-  }
-
-  /** Asks with the streamed answer, or the plain way when the stream cannot be used at all. */
-  async function askLive(text: string, target: number | null): Promise<AskResponse> {
-    setLive({ steps: [], text: '' })
-    try {
-      return await api.askStream(text, target, (event) => {
-        if (event.type === 'step') {
-          setLive((old) => old && (old.steps[old.steps.length - 1] === event.label ? old
-            : { ...old, steps: [...old.steps, event.label] }))
-        } else if (event.type === 'token') {
-          setLive((old) => old && { ...old, text: old.text + event.text })
-        }
-      })
-    } catch (error) {
-      if (!(error instanceof StreamUnavailable)) throw error
-      setLive(null) // "Thinking…" while the plain call runs
-      return api.ask(text, target)
-    }
+  function run(text: string, call: () => Promise<AskResponse>, startedIn: number | null, keep: string) {
+    // a failed question keeps what was typed in the box (a sign-in problem shows the Login page instead)
+    return runAsk(text, call, (reply) => showAnswer(reply, startedIn), () => setQuestion(keep))
   }
 
   function send() {
@@ -491,13 +267,6 @@ export default function AskPage({ me }: { me: Me }) {
     },
   }
 
-  function onKey(event: KeyboardEvent<HTMLTextAreaElement>) {
-    if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
-      event.preventDefault()
-      send()
-    }
-  }
-
   function fillExample(text: string) {
     setQuestion(text)
     box.current?.focus()
@@ -505,17 +274,14 @@ export default function AskPage({ me }: { me: Me }) {
 
   const chat = route.kind === 'chat' ? detail?.chat ?? null : null
   const showWelcome = !chat && !single && !loadError && route.kind !== 'question' && route.kind !== 'chat'
-    && (route.kind === 'new' || (route.kind === 'latest' && chats !== null && chats.length === 0))
+    && (route.kind === 'new' || (route.kind === 'latest' && ownChats !== null && ownChats.length === 0))
   // the start screen: a new / empty chat with nothing being asked - the question box is in the middle of the page
   const start = showWelcome && !pending
   const cards = route.kind === 'chat' ? detail?.cards ?? [] : []
   const withNotice = (card: Card) => (notices[card.id] ? { ...card, token_notice: notices[card.id] } : card)
   const listedChat = (id: number) => [...(chats ?? []), ...removed].find((c) => c.id === id)
-  const filled = question.trim() !== ''
   // the first question moves the box from the middle of the page to the bottom: the cursor stays in it
   useEffect(() => { if (!start && pending) box.current?.focus() }, [start]) // eslint-disable-line react-hooks/exhaustive-deps
-  // the box grows with the text: on the start screen up to 220 px, under a conversation up to 6 rows
-  useEffect(() => { grow(box.current, 0, start ? 220 : SMALL_BOX_MOST) }, [question, start])
 
   // the browser tab shows the open chat's title ("<chat title> · SS Manufacturing"); the frame's
   // "Assistant · SS Manufacturing" comes back when the chat is closed
@@ -532,32 +298,12 @@ export default function AskPage({ me }: { me: Me }) {
   const column = cn('conv-col mx-auto flex w-full flex-col',
     chat ? 'max-w-[min(920px,calc(100%_-_88px))] max-[700px]:max-w-full' : 'max-w-[920px]')
 
-  // The question box: a rounded card with the text and a round send button (in the brand colour when there
-  // is text, grey when empty). On the start screen two rows of text with the button under them at the right
-  // (a bigger shadow); under a conversation (16-Nov) one row that grows with the text, the button inside at the right.
-  const sendButton = (
-    <Button type="submit" size="icon" aria-label="Ask" title="Ask (Enter)" disabled={pending !== null}
-            className={cn('rounded-full', start ? 'size-10' : 'size-9',
-              !filled && 'bg-secondary text-muted-foreground shadow-none hover:bg-secondary hover:text-foreground')}>
-      {pending ? <Spinner /> : <ArrowUp aria-hidden="true" className="size-[18px]" strokeWidth={2.4} />}
-    </Button>
-  )
+  // The question box (AskThread.tsx): on the start screen big, in the middle of the page; under a conversation
+  // (16-Nov) one row that grows with the text, the send button inside at the right.
   const composer = (
-    <form id="composer" onSubmit={(e) => { e.preventDefault(); send() }}>
-      {askError && <div className="errbox" role="alert" style={{ marginBottom: 10 }}>{askError}</div>}
-      <div className={cn('border border-border bg-card transition-[border-color,box-shadow]',
-        'focus-within:border-primary focus-within:ring-3 focus-within:ring-primary/15',
-        start ? 'flex flex-col gap-2 rounded-3xl px-5 pt-4 pb-3 shadow-lg max-[700px]:px-4'
-          : 'flex items-end gap-2 rounded-[22px] py-1.5 pr-1.5 pl-4 shadow-sm')}>
-        <Textarea id="q" ref={box} rows={start ? 2 : 1} maxLength={me.max_question_chars} required aria-label="Your question"
-                  className={cn('flex-1 rounded-none! border-0! bg-transparent! px-0! shadow-none focus-visible:ring-0',
-                    start ? 'max-h-[220px]! min-h-12! py-0! text-[15px]!' : 'max-h-[156px]! min-h-9! py-1.5!')}
-                  value={question} readOnly={pending !== null} onChange={(e) => setQuestion(e.target.value)}
-                  onKeyDown={onKey}
-                  placeholder="Ask about sales, customers, orders, stock or documents…" />
-        {start ? <div className="flex items-center justify-end">{sendButton}</div> : sendButton}
-      </div>
-    </form>
+    <QuestionBox boxRef={box} value={question} onChange={setQuestion} onSend={send} pending={pending !== null} big={start}
+                 maxLength={me.max_question_chars} error={askError}
+                 placeholder="Ask about sales, customers, orders, stock or documents…" />
   )
 
   return (
@@ -598,7 +344,7 @@ export default function AskPage({ me }: { me: Me }) {
               <div className="saved-note mb-4 text-[12.5px] text-muted-foreground [overflow-wrap:anywhere]">
                 <span className="font-semibold text-heading">Saved answer</span>
                 {' · '}
-                {single?.chat && <>From the chat <Link to={chatPath(single.chat.id)}>{single.chat.title}</Link> · </>}
+                {single?.chat && <>From the chat <Link to={openChatPath(single.chat)}>{single.chat.title}</Link> · </>}
                 the rows come from running the saved SQL again (no AI call).
               </div>
             )}
@@ -629,12 +375,7 @@ export default function AskPage({ me }: { me: Me }) {
                   </div>
                 )
               })}
-              {pending && (
-                <div className="chat-item" ref={sending}>
-                  <div className="flex flex-col items-end"><Bubble text={pending} /></div>
-                  {live?.text ? <LiveAnswer text={live.text} /> : <Thinking steps={live?.steps} />}
-                </div>
-              )}
+              {pending && <PendingQuestion text={pending} live={live} itemRef={sending} />}
               {start && <AskStart examples={me.examples} onPick={fillExample}>{composer}</AskStart>}
             </div>
           </div>

@@ -131,3 +131,29 @@ MySQL server is never touched. A sales month runs from the 21st of the previous 
    'ss_ai_reader'@'localhost'; the second merges the batch (nothing dropped; running it twice changes nothing).
    `load_log` shows each run. Then build the search indexes again: `python manage.py ingest_docs` and
    `python manage.py ingest_pdfs`.
+
+## 7. ML: forecast, customers at risk, groups, unusual invoices, pairs, stock run-out
+
+`ml/run_ml.py` reads ss_gold, trains six small models (scikit-learn, statsmodels) and writes their results back
+into ss_gold as `ml_*` tables (only ml_* tables, only inside ss_gold - it refuses anything else). The Insights
+page (`/api/insights`) and the AI read them as the read-only user. It also writes each model's training data
+as CSV into `ml_inputdata/` (the ML's input files, next to `inputdata/`; not in git; `ml_inputdata/README.md` says what each file is). The models work "as of" the
+newest invoice date (ml_run_log.data_to), not today. One run takes about 15-30 seconds. Run it again after
+every data load (full or batch).
+
+On the laptop (the MySQL admin login of `.env`, like the loader):
+
+    venv\Scripts\python.exe ml\run_ml.py          (or: venv\Scripts\python.exe manage.py run_ml)
+    venv\Scripts\python.exe ml\run_ml.py --dry-run   (train + CSV files only, nothing written to MySQL)
+
+In the office Docker (branch docker-mysql), after the data load, with the loader service's admin settings:
+
+    docker compose build
+    docker compose --profile load run --rm --entrypoint python loader ml/run_ml.py
+    docker compose restart mi-web mi-mcp
+
+- `docker compose build` once after pulling this change: the image must hold `ml/` and the two new libraries.
+- `--entrypoint python` because the loader service's own entrypoint is `loader/load_gold.py`.
+- The CSV files stay inside that one-off container (removed by `--rm`); the ml_* tables are what matters.
+- The restart only after the FIRST run (when the ml_* tables are new): the AI's list of allowed tables is
+  read once per process. The Insights page reads the tables fresh and needs no restart.

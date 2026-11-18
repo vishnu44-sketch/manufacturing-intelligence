@@ -1,5 +1,6 @@
 // The answer card: an answered data question shows its SQL (folded), its rows and the Excel link;
-// a documents answer shows its PDF pages (📄) and no SQL, rows or Excel; a saved memory shows its chip only.
+// a documents answer shows its PDF pages (📄) and no SQL, rows or Excel; a saved memory shows its chip only;
+// a general answer (not about the company) shows its chip, a "not from company data" label and its lists.
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeAll, describe, expect, it, onTestFinished, vi } from 'vitest'
 import { CATEGORY_SALE_TYPE } from '../charts/testRows'
@@ -37,6 +38,15 @@ const MEMORY: Card = {
   ...OK, id: 9, text: 'Remember that I only work with export sales', status: 'memory',
   answer: 'Memory updated - I will remember: "I only work with export sales". You can see or delete it on the Memory page.',
   sql: '', has_rows: false, rows_url: '', excel_url: '', row_count: null, sources: [], time_steps: [], tries: 0, secs: 0.02,
+}
+
+// a question not about the company: the AI's own answer, with paragraphs, a "- " list and a "1. " list
+const GENERAL: Card = {
+  ...OK, id: 10, text: 'What is GST?', status: 'general',
+  answer: 'GST is the Goods and Services Tax of India.\n\nIt has a few rates:\n- 5% on basics\n- 18% on most services\n\n'
+    + '1. Register\n2. File returns\n\nAsk me about your own sales any time.',
+  sql: '', has_rows: false, rows_url: '', excel_url: '', row_count: null, sources: [], secs: 0.9,
+  time_steps: [{ label: 'Answer the question (AI)', secs: 0.9, note: '' }],
 }
 
 const ROWS = {
@@ -140,6 +150,55 @@ describe('AnswerCard', () => {
     expect(screen.queryByText('Show rows')).not.toBeInTheDocument()
     expect(screen.queryByText(/Time taken/)).not.toBeInTheDocument()
     expect(fetch).not.toHaveBeenCalled()
+  })
+
+  it('shows a general answer with its chip, the "not from company data" label, its paragraphs and lists, and no SQL, rows or Excel', () => {
+    const fetch = fakeFetch({})
+
+    const { container } = render(<AnswerCard card={GENERAL} autoRows staff />)
+
+    expect(screen.getByText('GENERAL ANSWER')).toHaveClass('chip', 'info')
+    expect(screen.getByText('General answer – not from company data')).toBeInTheDocument()
+    // two paragraphs, a bulleted list of 2 and a numbered list of 2 (starting at 1)
+    const paragraphs = container.querySelectorAll('p')
+    expect([...paragraphs].map((p) => p.textContent)).toEqual([
+      'GST is the Goods and Services Tax of India.',
+      'It has a few rates:',
+      'Ask me about your own sales any time.',
+    ])
+    expect([...container.querySelectorAll('ul li')].map((li) => li.textContent)).toEqual(['5% on basics', '18% on most services'])
+    const numbered = container.querySelector('ol')
+    expect(numbered).toHaveAttribute('start', '1')
+    expect([...numbered!.querySelectorAll('li')].map((li) => li.textContent)).toEqual(['Register', 'File returns'])
+    expect(screen.queryByText('Show SQL')).not.toBeInTheDocument()
+    expect(screen.queryByText('Download Excel')).not.toBeInTheDocument()
+    expect(screen.queryByText('Show rows')).not.toBeInTheDocument()
+    expect(screen.queryByRole('columnheader')).not.toBeInTheDocument() // no rows table (only the folded "Time taken")
+    expect(screen.getByText('Time taken: 0.9 s')).toBeInTheDocument()
+    expect(fetch).not.toHaveBeenCalled()
+  })
+
+  it('shows a general answer as text only: no HTML from the answer, and no rows even if the card says it has some', () => {
+    const fetch = fakeFetch({})
+
+    const { container } = render(<AnswerCard card={{ ...GENERAL, answer: '<b>bold</b> <img src=x onerror=alert(1)>',
+      has_rows: true, sql: 'SELECT 1', excel_url: '/api/questions/10/excel' }} autoRows staff />)
+
+    expect(screen.getByText('<b>bold</b> <img src=x onerror=alert(1)>')).toBeInTheDocument()
+    expect(container.querySelector('b, img')).toBeNull()
+    expect(screen.queryByText('Show SQL')).not.toBeInTheDocument()
+    expect(screen.queryByText('Download Excel')).not.toBeInTheDocument()
+    expect(fetch).not.toHaveBeenCalled()
+  })
+
+  it('still shows a refused card with its old chip and no label', () => {
+    fakeFetch({})
+
+    render(<AnswerCard card={{ ...GENERAL, status: 'refused', answer: 'I can only read data, not delete it.' }} />)
+
+    expect(screen.getByText('NOT A COMPANY DATA QUESTION')).toHaveClass('chip', 'skip')
+    expect(screen.getByText('I can only read data, not delete it.')).toBeInTheDocument()
+    expect(screen.queryByText(/General answer/)).not.toBeInTheDocument()
   })
 
   it('shows the backup-model note and the friendly rows error', async () => {

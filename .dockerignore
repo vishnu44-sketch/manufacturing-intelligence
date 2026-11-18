@@ -16,6 +16,8 @@ loader
 PLAN.md
 README.md
 eval_results
+# the ML step's training data (ml/run_ml.py writes it again in the container)
+ml_inputdata/*.csv
 # the React app: its packages and a local build (the image builds it again in its Node stage)
 frontend/node_modules
 portal/static/portal/app

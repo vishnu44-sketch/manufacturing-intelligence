@@ -1057,3 +1057,231 @@ GROUP BY l.report_date;
 
 Why: the minimum level IS in the SS Manufacturing data: dim_products.minimum_inventory_qty, the minimum set in SAP, where 0 means no minimum is set for that item - never write a MISSING line for it. Compare it with the stock of the newest stock report ('Closing balance' rows; an item with no closing row has 0 stock). ONE summary row, also when nothing is below: items_with_a_minimum_set tells "no item has a minimum set in SAP" (0) apart from "every item is above its minimum". Always return report_date.
 Expected: report 2026-10-31: 1,545 items with a minimum set, 122 below their minimum (CO00001, CO00006, CO00013 ...).
+
+## Q: What will our sales be next month?
+
+Also asked as: sales forecast for next month; expected / projected sales next month; how much will we sell next month; revenue prediction for the coming month.
+
+```sql
+WITH f AS (
+  SELECT sales_month, period_start, period_end, forecast_inr, low_inr, high_inr, mape_pct, model_name, data_to
+  FROM ml_sales_forecast
+  WHERE level = 'TOTAL'
+  ORDER BY period_start
+  LIMIT 1
+)
+SELECT f.sales_month,
+       f.period_start,
+       f.period_end,
+       f.forecast_inr,
+       f.low_inr,
+       f.high_inr,
+       f.mape_pct,
+       f.model_name,
+       f.data_to,
+       (SELECT ROUND(SUM(il.net_taxable_value), 2) FROM fact_invoice_lines il
+        WHERE il.invoice_date BETWEEN f.period_start AND LEAST(f.period_end, CURDATE())) AS actual_so_far_inr,
+       (SELECT MAX(il.invoice_date) FROM fact_invoice_lines il
+        WHERE il.invoice_date BETWEEN f.period_start AND LEAST(f.period_end, CURDATE())) AS actual_to
+FROM f;
+```
+
+Why: a forecast is in the ML results (ml_sales_forecast, an estimate made by run_ml from the invoices up to data_to) - never NO_DATA. 'TOTAL' rows = the whole company; "next month" = the first forecast sales month (the sales month after the newest complete one in the data - the same month as the product forecasts). The answer calls it a forecast and gives forecast_inr with its range (low_inr to high_inr, an 80 % range), the model's average error (mape_pct %), the sales month's dates and data_to. When that month has already started, its actual sales so far (actual_so_far_inr, invoices up to actual_to) are given next to the forecast - never added to it.
+Expected: (run of 18-Nov-2026, data to 31-Oct-2026) sales month Nov 2026 (21-Oct-2026 to 20-Nov-2026): forecast 534,887,655.19 (range 498,487,638.37 to 571,287,672.01), mape_pct 4.16, Holt-Winters; actual so far 189,269,525.00 (invoices up to 31-Oct-2026).
+
+## Q: What are the sales forecasts for the next 3 months?
+
+Also asked as: sales forecast for the next 3 sales months; expected sales Nov 2026 to Jan 2027; what will sales be in the coming months; forecast vs actual this month; forecast for the next 6 / 12 months (change the LIMIT).
+
+```sql
+WITH actual AS (
+  SELECT f.sales_month,
+         ROUND(SUM(il.net_taxable_value), 2) AS actual_so_far_inr,
+         MAX(il.invoice_date) AS actual_to
+  FROM ml_sales_forecast f
+  JOIN fact_invoice_lines il ON il.invoice_date BETWEEN f.period_start AND f.period_end
+  WHERE f.level = 'TOTAL'
+    AND il.invoice_date <= CURDATE()
+  GROUP BY f.sales_month
+)
+SELECT f.sales_month,
+       f.period_start,
+       f.period_end,
+       f.forecast_inr,
+       f.low_inr,
+       f.high_inr,
+       f.mape_pct,
+       f.data_to,
+       a.actual_so_far_inr,
+       a.actual_to
+FROM ml_sales_forecast f
+LEFT JOIN actual a ON a.sales_month = f.sales_month
+WHERE f.level = 'TOTAL'
+ORDER BY f.period_start
+LIMIT 3;
+```
+
+Why: the 'TOTAL' rows of ml_sales_forecast are the next 12 sales months after the data (data_to), Nov 2026 to Oct 2027; the first 3 in period order are the next 3 sales months. For another number of months change the LIMIT (the next 6 months = LIMIT 6; the next 12 months / all forecast months = no LIMIT); more than 12 months ahead is not forecast. A forecast month that already has invoices (sales month Nov 2026 = 21-Oct-2026 to 20-Nov-2026: invoices of 21-31 Oct only) also gets its actual so far from fact_invoice_lines, in its own column - never added to forecast_inr. Each month: forecast_inr, low_inr to high_inr, mape_pct.
+Expected: (run of 18-Nov-2026, data to 31-Oct-2026) 3 rows, mape_pct 4.16 - Nov 2026 534,887,655.19 (498,487,638.37 to 571,287,672.01; actual so far 189,269,525.00, invoices up to 31-Oct-2026); Dec 2026 520,192,526.92 (481,252,539.80 to 559,132,514.04); Jan 2027 546,371,110.54 (501,753,327.90 to 590,988,893.18).
+
+## Q: What will our total sales be in 2027?
+
+Also asked as: sales of next year; total sales of 2027; forecast for the whole year; sales this quarter / next quarter (forecast); full-year forecast.
+
+```sql
+SELECT f.sales_month, f.period_start, f.period_end,
+       ROUND(f.forecast_inr, 2) AS forecast_inr,
+       ROUND(f.low_inr, 2) AS low_inr,
+       ROUND(f.high_inr, 2) AS high_inr,
+       f.mape_pct, f.data_to,
+       COUNT(*) OVER () AS forecast_months_in_period
+FROM ml_sales_forecast f
+WHERE f.level = 'TOTAL' AND f.period_end >= '2027-01-01' AND f.period_start <= '2027-12-31'
+ORDER BY f.period_start;
+```
+
+Why: there are no actual sales after data_to (31-Oct-2026), and the forecast covers only the next 12 sales months (Nov 2026 to Oct 2027) - so a year (or quarter) question gets the forecast months INSIDE the period, one row per month, with range, accuracy and data_to, and forecast_months_in_period says how many. The answer names those months with their amounts and says the rest of the period is not forecast; never add the months up into the year's total, and the data date is data_to, never a period end.
+Expected: (run of 18-Nov-2026, data to 31-Oct-2026) 10 rows, mape_pct 4.16, data_to 2026-10-31 - sales months Jan 2027 to Oct 2027 (21-Dec-2026 to 20-Oct-2027) are forecast in 2027: Jan 2027 about 54.6 Cr (range 50.2 - 59.1 Cr), Feb 2027 54.0 Cr (49.2 - 58.7), Mar 2027 62.8 Cr (56.8 - 68.8), Apr 2027 57.6 Cr (51.7 - 63.4), May 2027 54.6 Cr (48.7 - 60.6), Jun 2027 56.3 Cr (49.8 - 62.9), Jul 2027 50.0 Cr (43.9 - 56.1), Aug 2027 53.7 Cr (46.8 - 60.7), Sep 2027 56.3 Cr (48.6 - 64.0), Oct 2027 58.3 Cr (50.0 - 66.7); Nov and Dec 2027 are not forecast and have no actual sales yet.
+
+## Q: What is the sales forecast for GCI TX-675 next month?
+
+Also asked as: forecast for product FG01484; how much of this product will we sell next month; which products will sell the most next month; product-wise sales forecast.
+
+```sql
+SELECT f.product_code,
+       f.product_description,
+       f.sales_month,
+       f.period_start,
+       f.period_end,
+       f.forecast_inr,
+       f.low_inr,
+       f.high_inr,
+       f.mape_pct,
+       f.data_to,
+       COUNT(*) OVER () AS matches
+FROM ml_sales_forecast f
+WHERE f.level = 'PRODUCT'
+  AND f.horizon_months = 1
+  AND (f.product_description LIKE '%GCI TX-675%' OR f.product_code LIKE '%GCI TX-675%')
+ORDER BY f.forecast_inr DESC;
+```
+
+Why: product forecasts ('PRODUCT' rows) exist only for the top 10 products by sales, for the next 3 sales months (Nov 2026, Dec 2026, Jan 2027; one row per product and month). "Next month" = horizon_months = 1; for the next 3 months of a product leave that filter out and ORDER BY f.product_code, f.period_start (a later month has no product forecast). Match the typed name with LIKE on the description and the code, one row per product. No row = no forecast for that product (it is not one of the top 10) - say so, never estimate one from past sales. "Which products will sell the most next month" = the same without the LIKE.
+Expected: (run of 18-Nov-2026, data to 31-Oct-2026) 1 row: FG01484 GCI TX-675-3A 0.4kW (415V 50Hz), sales month Nov 2026: forecast 16,517,213.63 (14,327,784.52 to 18,862,236.33), mape_pct 6.48. 'Coolant pump' gives no row (no coolant pump is in the top 10).
+
+## Q: Which customers might stop buying from us?
+
+Also asked as: customers at risk; churn risk; which customers are we likely to lose; customers whose buying is dropping; at-risk customers.
+
+```sql
+SELECT r.customer_name,
+       r.risk_score,
+       r.risk_level,
+       r.reason,
+       r.last_invoice_date,
+       r.days_since_last_invoice,
+       r.sales_last_3m_inr,
+       r.sales_prev_3m_inr,
+       r.change_pct,
+       r.lifetime_sales_inr,
+       SUM(r.risk_level = 'High') OVER () AS high_risk_customers,
+       (SELECT MAX(l.data_to) FROM ml_run_log l) AS data_to
+FROM ml_customer_risk r
+ORDER BY r.risk_score DESC, r.lifetime_sales_inr DESC
+LIMIT 20;
+```
+
+Why: "might stop buying" is a prediction: the risk score of ml_customer_risk (0-100, an estimate from recency, frequency and the sales trend up to data_to), highest first, with the reason. high_risk_customers = how many customers are 'High' in all (not only the 20 rows). Not the same as "Which customers stopped buying from us?" (no invoice in the last 3 months - fact_invoice_lines).
+Expected: (run of 17-Nov-2026, data to 31-Oct-2026) 118 High-risk customers (25 with risk 100.00); first Aurora Fluid Power Limited (risk 100.00, last invoice 17-Jul-2026, 106 days, lifetime 119,592,664.50), then Sunrise Fluid Power Pvt Ltd and Tejas Fabricators Pvt. Ltd.
+
+## Q: What customer groups do we have?
+
+Also asked as: customer segments; kinds of customers by buying behaviour; group our customers; customer clusters; which segment is the biggest.
+
+```sql
+SELECT s.segment_no,
+       s.segment_name,
+       COUNT(*) AS customers,
+       ROUND(SUM(s.sales_inr), 2) AS segment_sales_inr,
+       ROUND(AVG(s.sales_inr), 2) AS avg_sales_per_customer_inr,
+       ROUND(AVG(s.invoices), 1) AS avg_invoices,
+       ROUND(AVG(s.recency_days), 0) AS avg_days_since_last_invoice
+FROM ml_customer_segments s
+GROUP BY s.segment_no, s.segment_name
+ORDER BY segment_sales_inr DESC;
+```
+
+Why: customer groups by buying behaviour (how recently, how often, how much) are the segments of ml_customer_segments, found by a clustering model - one row per segment with its customers and sales. SAP's own customer_group ('Local Customer' / 'Foreign Customer', dim_customers) only when the user says local / foreign / SAP group. The customers of one segment: SELECT customer_name, sales_inr ... WHERE segment_name = '...'.
+Expected: (run of 17-Nov-2026, data to 31-Oct-2026) 5 groups: Big regular buyers 387 customers, 8,698,526,132.79; Regular buyers 1,330, 2,641,732,728.45; New customers 1,395, 1,066,053,204.50; Lapsed 678, 513,159,072.20; Occasional buyers 284, 10,488,744.00.
+
+## Q: Are there any unusual invoices?
+
+Also asked as: strange or suspicious invoices; invoices with odd prices; unusual quantities; large credit notes; anomalies in billing; invoices to check.
+
+```sql
+SELECT a.alert_type,
+       a.invoice_number,
+       a.invoice_date,
+       a.customer_name,
+       a.product_code,
+       a.product_description,
+       a.value_inr,
+       a.typical_inr,
+       a.score,
+       a.reason,
+       COUNT(*) OVER () AS alerts,
+       COUNT(*) OVER (PARTITION BY a.alert_type) AS alerts_of_this_type
+FROM ml_invoice_alerts a
+ORDER BY a.score DESC
+LIMIT 20;
+```
+
+Why: unusual invoice lines are found by a model (ml_invoice_alerts): 'Unusual price', 'Unusual quantity' or 'Large credit note', most unusual first (score), with the value, the typical value and the reason. They are lines to check, not proven errors. alerts = all alerts, alerts_of_this_type = per alert type.
+Expected: (run of 17-Nov-2026, data to 31-Oct-2026) 172 alerts (100 Unusual price, 60 Unusual quantity, 12 Large credit note); most unusual SSMI/D/2425/3672 of 21-Sep-2024, Nilgiri Tech Industries Pvt. Ltd., FG02665: unit price 26,827.50 vs usual 38,880.00 (score 7.42).
+
+## Q: Which products are bought together?
+
+Also asked as: products often bought together; what else do customers buy with FG00040; cross-sell; product pairs; market basket.
+
+```sql
+SELECT pp.product_a_code,
+       pp.product_a_description,
+       pp.product_b_code,
+       pp.product_b_description,
+       pp.orders_together,
+       pp.support_pct,
+       pp.confidence_pct,
+       pp.lift
+FROM ml_product_pairs pp
+ORDER BY pp.orders_together DESC, pp.lift DESC
+LIMIT 10;
+```
+
+Why: pairs of products on the same sales orders (ml_product_pairs, cancelled orders left out; each pair once, product A = the one with fewer orders): orders_together = sales orders with both, confidence_pct = of the orders with product A the % that also have B, lift above 1 = bought together more often than by chance. With one product X ("bought with X"): WHERE pp.product_a_description LIKE '%X%' OR pp.product_b_description LIKE '%X%' OR pp.product_a_code LIKE '%X%' OR pp.product_b_code LIKE '%X%', and name the other product of each pair.
+Expected: (run of 17-Nov-2026, data to 31-Oct-2026) 242 pairs; top FG00580 Coolant Unit HM-132-3A + FG01116 Procon Pump PR-317-3A on 146 orders (confidence 27.92 %, lift 11.77), then FG00542 + FG01484 on 144 orders (lift 1.98).
+
+## Q: Which items will run out of stock soon?
+
+Also asked as: items running out of stock; days of stock left; when will we run out; stock-out risk; items to reorder before they run out.
+
+```sql
+SELECT r.product_code,
+       r.product_description,
+       r.report_date,
+       r.stock_qty,
+       r.avg_daily_sales_qty,
+       r.days_left,
+       r.runout_date,
+       DATEDIFF(r.runout_date, CURDATE()) AS days_from_today,
+       r.status,
+       SUM(r.status = 'Under 30 days') OVER () AS items_under_30_days,
+       SUM(r.status = 'Under 90 days') OVER () AS items_under_90_days,
+       (SELECT COUNT(*) FROM ml_stock_runout o WHERE o.status = 'Out of stock') AS items_out_of_stock
+FROM ml_stock_runout r
+WHERE r.status IN ('Under 30 days', 'Under 90 days')
+ORDER BY r.days_left, r.product_code
+LIMIT 50;
+```
+
+Why: run-out = the stock of the latest stock report (report_date) divided by the recent average daily sales (ml_stock_runout, an estimate): soonest first, with the estimated runout_date counted from report_date, not today: days_from_today < 0 = the run-out date is already past - say the item would have run out by then (before today) unless new stock arrived. 'Out of stock' items have run out already (counted apart); 'No recent sales' items are not running out. Always keep the count columns (items_under_30_days ...) - the list is cut at 50, so the answer says e.g. "349 items are under 30 days; the 50 soonest are shown", never "the full list". Always say the report_date.
+Expected: (run of 17-Nov-2026, data to 31-Oct-2026) stock report 31-Oct-2026: 349 items under 30 days, 357 under 90 days, 0 out of stock; first FG00966 Coolant pump GX-597-1B 3.7kW (stock 4, 0.600 sold a day, 6.7 days, runs out 06-Nov-2026 = days_from_today -11 on 17-Nov-2026: already past); 50 rows shown of 349 + 357.

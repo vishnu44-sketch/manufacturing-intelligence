@@ -2,11 +2,13 @@
 // answer, "Understood as", the backup-model note, the one-time token notice, "Time taken" (folded),
 // the SQL (folded), the sources (folded, 📄 for a PDF page), and under the card the rows from
 // /api/questions/<id>/rows: a chart when they fit one, else (or on "Table") the rows table.
-// Only an answered data question has SQL, rows and the Excel download.
+// Only an answered data question has SQL, rows and the Excel download. A general answer (a question not about
+// the company, e.g. "what is GST?", answered by the AI itself) has a label that it is not from company data, and
+// its paragraphs and simple "- " / "1. " lists are drawn as paragraphs and lists.
 // Drawn with Tailwind + shadcn/ui (src/components/ui); the status chips, error boxes and the token
 // notice keep their app.css look (as on History). Colours are token classes only (light and dark theme).
 import { Suspense, lazy, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ChartColumnBig, Check, ChevronRight, Copy, ExternalLink, Table2 } from 'lucide-react'
+import { ChartColumnBig, Check, ChevronRight, Copy, ExternalLink, Info, Table2 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { ApiError, AuthError, api, problemText } from '../api'
 import { chartAskedFromText, chartWish, namesChartKind, pickChart, unusualChartFromText, uprightWish } from '../charts/pickChart'
@@ -30,6 +32,64 @@ const CHIPS: Record<Status, [string, string]> = {
   refused: ['skip', 'NOT A COMPANY DATA QUESTION'],
   error: ['fail', 'NOT ANSWERED'],
   memory: ['ok', 'MEMORY UPDATED'], // "Remember that ..." - no SQL, rows or Excel
+  general: ['info', 'GENERAL ANSWER'], // not about the company: the AI's own answer - no SQL, rows or Excel
+}
+
+/** A part of a general answer: a paragraph (its lines), a "- " list or a "1. " list (with its first number). */
+type TextBlock =
+  | { kind: 'p'; lines: string[] }
+  | { kind: 'ul'; items: string[] }
+  | { kind: 'ol'; items: string[]; start: number }
+
+const BULLET = /^\s*[-*•]\s+(.*)$/
+const NUMBERED = /^\s*(\d{1,3})[.)]\s+(.*)$/
+
+/** Splits an answer into paragraphs (an empty line ends one) and simple lists: lines that start with "- " (or
+ *  "* ", "• ") make a bulleted list, lines that start with "1. " (or "1) ") a numbered list. Only text comes
+ *  out - React writes it as text, so nothing in the answer can become HTML. */
+function textBlocks(text: string): TextBlock[] {
+  const blocks: TextBlock[] = []
+  for (const raw of text.replace(/\r\n?/g, '\n').split('\n')) {
+    const line = raw.trim()
+    const last = blocks[blocks.length - 1]
+    if (!line) {
+      if (last && last.kind === 'p' && last.lines.length > 0) blocks.push({ kind: 'p', lines: [] }) // ends the paragraph
+      continue
+    }
+    const bullet = BULLET.exec(line)
+    const numbered = bullet ? null : NUMBERED.exec(line)
+    if (bullet) {
+      if (last && last.kind === 'ul') last.items.push(bullet[1])
+      else blocks.push({ kind: 'ul', items: [bullet[1]] })
+    } else if (numbered) {
+      if (last && last.kind === 'ol') last.items.push(numbered[2])
+      else blocks.push({ kind: 'ol', items: [numbered[2]], start: Number(numbered[1]) })
+    } else if (last && last.kind === 'p') {
+      last.lines.push(line)
+    } else {
+      blocks.push({ kind: 'p', lines: [line] })
+    }
+  }
+  return blocks.filter((block) => block.kind !== 'p' || block.lines.length > 0)
+}
+
+/** A general answer: its paragraphs and lists, with a little space between them. */
+function GeneralText({ text }: { text: string }) {
+  return (
+    <div className="flex flex-col gap-2">
+      {textBlocks(text).map((block, i) => block.kind === 'p' ? (
+        <p key={i}>{block.lines.map((line, j) => <span key={j}>{j > 0 && <br />}{line}</span>)}</p>
+      ) : block.kind === 'ul' ? (
+        <ul key={i} className="list-disc space-y-0.5 pl-5 marker:text-muted-foreground">
+          {block.items.map((item, j) => <li key={j}>{item}</li>)}
+        </ul>
+      ) : (
+        <ol key={i} start={block.start} className="list-decimal space-y-0.5 pl-6 marker:text-muted-foreground">
+          {block.items.map((item, j) => <li key={j}>{item}</li>)}
+        </ol>
+      ))}
+    </div>
+  )
 }
 
 function sourceChip(kind: string): string {
@@ -159,6 +219,9 @@ export default function AnswerCard({ card, autoRows = false, staff = false }:
   { card: Card; autoRows?: boolean; staff?: boolean }) {
   const [rows, setRows] = useState<RowsState>({ state: 'idle' })
   const autoLoaded = useRef(false) // once only (React's dev mode runs every effect twice)
+  // a general answer never has rows, SQL or Excel (even if a card said it had)
+  const general = card.status === 'general'
+  const hasRows = card.has_rows && !general
 
   const loadRows = useCallback(() => {
     setRows({ state: 'loading' })
@@ -172,11 +235,11 @@ export default function AnswerCard({ card, autoRows = false, staff = false }:
 
   // the newest answer (and the one just asked) loads its rows at once; older ones on "Show rows"
   useEffect(() => {
-    if (autoRows && card.has_rows && !autoLoaded.current) {
+    if (autoRows && hasRows && !autoLoaded.current) {
       autoLoaded.current = true
       loadRows()
     }
-  }, [autoRows, card.has_rows, loadRows])
+  }, [autoRows, hasRows, loadRows])
 
   const [chipClass, chipText] = CHIPS[card.status] ?? CHIPS.error
   const loaded = rows.state === 'done' ? rows.rows : null
@@ -196,7 +259,7 @@ export default function AnswerCard({ card, autoRows = false, staff = false }:
     && (chartAskedFromText(wish) || namesChartKind(card.chart_kind))
     ? (loaded.rows.length === 1 ? 'Only 1 row, so no chart can be drawn.' : "This answer can't be drawn as a chart.")
     : ''
-  const folds = card.time_steps.length > 0 || (card.has_rows && card.sql) || card.sources.length > 0
+  const folds = card.time_steps.length > 0 || (hasRows && card.sql) || card.sources.length > 0
 
   return (
     <>
@@ -205,10 +268,10 @@ export default function AnswerCard({ card, autoRows = false, staff = false }:
           <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
             <span className={`chip ${chipClass}`}>{chipText}</span>
             <span className="text-[12.5px] text-muted-foreground tabular-nums">
-              {card.has_rows && rowCount != null && `${plural(rowCount, 'row')} · `}
+              {hasRows && rowCount != null && `${plural(rowCount, 'row')} · `}
               {card.secs.toFixed(1)} s{card.tries > 1 && ` · ${card.tries} tries`}
             </span>
-            {card.has_rows && (
+            {hasRows && (
               <span className="ml-auto flex flex-wrap items-center gap-1.5 max-[700px]:ml-0">
                 {rows.state === 'idle' && (
                   <Button type="button" variant="outline" size="sm" onClick={loadRows}>Show rows</Button>
@@ -222,8 +285,13 @@ export default function AnswerCard({ card, autoRows = false, staff = false }:
             )}
           </div>
           {card.understood_as && <div className="text-xs text-muted-foreground italic">Understood as: {card.understood_as}</div>}
+          {general && (
+            <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+              <Info aria-hidden="true" className="size-3.5 flex-none text-info" />General answer – not from company data
+            </div>
+          )}
           <div className="text-[15px] leading-[1.65] text-foreground [overflow-wrap:anywhere]">
-            {card.answer.split('\n').map((line, i) => (
+            {general ? <GeneralText text={card.answer} /> : card.answer.split('\n').map((line, i) => (
               <span key={i}>{i > 0 && <br />}{line}</span>
             ))}
           </div>
@@ -252,7 +320,7 @@ export default function AnswerCard({ card, autoRows = false, staff = false }:
                   </table>
                 </Fold>
               )}
-              {card.has_rows && card.sql && (
+              {hasRows && card.sql && (
                 <Fold summary="Show SQL">
                   <SqlBox sql={card.sql} staff={staff} />
                 </Fold>
@@ -274,7 +342,7 @@ export default function AnswerCard({ card, autoRows = false, staff = false }:
         </CardContent>
       </Box>
 
-      {card.has_rows && rows.state === 'loading' && (
+      {hasRows && rows.state === 'loading' && (
         <div className="flex flex-col gap-2">
           <Wait>Loading the rows…</Wait>
           <Skeleton className="h-9 w-full" />
@@ -282,7 +350,7 @@ export default function AnswerCard({ card, autoRows = false, staff = false }:
           <Skeleton className="h-9 w-4/5 opacity-50" />
         </div>
       )}
-      {card.has_rows && rows.state === 'failed' && <div className="errbox">{rows.message}</div>}
+      {hasRows && rows.state === 'failed' && <div className="errbox">{rows.message}</div>}
       {loaded && !loaded.rows_error && loaded.rows.length > 0 && unusual && <AiChartAsk card={card} kind={unusual} />}
       {loaded && (loaded.rows_error ? (
         <div className="errbox">{loaded.rows_error}</div>
