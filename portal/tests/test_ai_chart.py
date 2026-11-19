@@ -262,7 +262,8 @@ def test_a_cut_off_reply_is_a_friendly_message(client, user, monkeypatch, mysql,
 
 def test_a_busy_ai_is_a_friendly_503(client, user, monkeypatch, mysql, main_model):
     saved = saved_question(user)
-    use_fake_ai(monkeypatch, [rate_limit_error(retry_after=600)])   # longer than the app waits
+    # longer than the app waits; 18-Nov: then the backup is tried (the model chain) - busy too
+    use_fake_ai(monkeypatch, [rate_limit_error(retry_after=600), rate_limit_error(retry_after=600)])
     client.force_login(user)
 
     r = chart(client, saved.pk)

@@ -110,6 +110,10 @@ class Question(models.Model):
     # the chart the question asked for, as the SQL call's "CHART: <kind>" line named it ("bar", "hbar", "pie" ...
     # agent.CHART_KINDS); '' = no chart named, or saved before 17-Nov - the Ask page then picks the chart itself
     chart_kind = models.CharField(max_length=20, blank=True, default="")
+    # 18-Nov: why another AI model than the chain's first answered ("chosen by you", "Groq's daily limit was reached",
+    # the backup model's plain note) - saved so a reopened card says the same; '' = the first model answered, or the
+    # question was saved before this field (the card then says it from the model name: api._model_fields)
+    model_note = models.CharField(max_length=200, blank=True, default="")
 
     objects = QuestionQuerySet.as_manager()
 

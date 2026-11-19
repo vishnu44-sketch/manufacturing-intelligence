@@ -62,7 +62,7 @@ export default function AskPage({ me }: { me: Me }) {
   const [single, setSingle] = useState<SavedAnswer | null>(null)
   const [loadError, setLoadError] = useState('')
   // the question being asked, its streamed progress and the message when it failed (AskThread.tsx)
-  const { pending, live, error: askError, run: runAsk, askLive } = useAsk()
+  const { pending, live, error: askError, run: runAsk, askLive, choice } = useAsk('', me.is_staff)
   const [question, setQuestion] = useState(route.kind === 'new' ? route.q.slice(0, me.max_question_chars) : '')
   const [justAsked, setJustAsked] = useState<number | null>(null)
   const [notices, setNotices] = useState<Record<number, string>>({}) // one-time token notices, by card id
@@ -302,7 +302,7 @@ export default function AskPage({ me }: { me: Me }) {
   // (16-Nov) one row that grows with the text, the send button inside at the right.
   const composer = (
     <QuestionBox boxRef={box} value={question} onChange={setQuestion} onSend={send} pending={pending !== null} big={start}
-                 maxLength={me.max_question_chars} error={askError}
+                 maxLength={me.max_question_chars} error={askError} choice={choice}
                  placeholder="Ask about sales, customers, orders, stock or documents…" />
   )
 

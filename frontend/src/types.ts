@@ -24,6 +24,19 @@ export interface ChatSummary {
 /** How a new chat asks: 'ml' = from the ML Insights page (forecasts and the other ML results); '' = the Assistant. */
 export type AskMode = 'ml' | ''
 
+/** One AI model an administrator can choose for a question (GET /api/models, staff only). "auto" = the server
+ *  picks (the main model first, the others when it is busy or its daily limit is reached). */
+export interface ModelOption {
+  id: string // 'auto' | 'groq-main' | 'gemini-flash' | 'gemini-flash-lite' | 'groq-backup'
+  label: string
+  available: boolean // false: shown greyed out, with the note saying why
+  note?: string
+}
+
+export interface ModelList {
+  models: ModelOption[]
+}
+
 export interface TimeStep {
   label: string
   secs: number
@@ -45,7 +58,9 @@ export interface Card {
   status: Status
   answer: string
   understood_as: string
-  backup_model: string // '' = the main model answered
+  backup_model: string // '' = the main model answered (older answers; newer ones use model_label / model_note)
+  model_label?: string // 18-Nov: the human name of the model that answered (e.g. "Gemini Flash")
+  model_note?: string // why that model answered: '' when the first model of the chain did; else e.g. "chosen by you"
   token_notice: string // only right after asking
   time_steps: TimeStep[]
   sql: string // '' when the card has no rows (docs, nodata, refused, error, memory, general)
@@ -104,10 +119,12 @@ export interface AskResponse {
   card: Card
 }
 
-/** One line of /api/ask/stream: a step starts, a piece of the answer, the finished card, or a failure. */
+/** One line of /api/ask/stream: a step starts, a piece of the answer, the finished card, or a failure.
+ *  'reset': the app's answer check found the streamed answer wrong - its text is cleared, the rewrite streams next. */
 export type StreamEvent =
   | { type: 'step'; label: string }
   | { type: 'token'; text: string }
+  | { type: 'reset' }
   | { type: 'done'; chat: ChatSummary; card: Card }
   | { type: 'error'; message: string }
 

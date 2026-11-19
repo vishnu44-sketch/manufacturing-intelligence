@@ -9,7 +9,7 @@ from django.core.management import call_command
 from django.core.management.base import CommandError
 
 from portal.evals import grading
-from portal.evals.questions import ITEMS, QUICK
+from portal.evals.questions import ITEMS, ML_QUICK, QUICK
 from portal.lc import calls as lc_calls
 from portal.lc.calls import LcRequest
 from portal.management.commands import run_eval
@@ -23,7 +23,7 @@ IDS = [item["id"] for item in ITEMS]
 
 def test_the_golden_set_has_unique_ids_and_known_keys():
     assert len(IDS) == len(set(IDS)) >= 50
-    keys = {"id", "question", "must", "should", "must_have", "must_not", "allow", "expect", "context"}
+    keys = {"id", "question", "must", "should", "must_have", "must_not", "allow", "expect", "context", "mode"}
     assert all(set(item) <= keys and item["question"].strip() for item in ITEMS)
 
 
@@ -35,6 +35,19 @@ def test_a_follow_up_comes_after_the_questions_of_its_chat():
 
 def test_the_quick_set_is_15_questions_of_the_golden_set():
     assert len(QUICK) == len(set(QUICK)) == 15 and set(QUICK) <= set(IDS)
+
+
+def test_the_ml_set_has_the_questions_that_failed_on_18_nov():
+    """18-Nov: a weaker model failed these in ML Insights; they are asked as in an ML Insights chat (mode 'ml')."""
+    assert len(ML_QUICK) == len(set(ML_QUICK)) == 10 and set(ML_QUICK) <= set(IDS)
+    by_id = {item["id"]: item for item in ITEMS}
+    assert [by_id[i]["question"] for i in ("N30", "N31", "N32", "N33")] == [
+        "my top customer in Aug 2027", "predict sales for Aug 2027 and give me top 5 customers",
+        "What is the sales forecast for August 2027?", "can you give it for sep 2027"]
+    assert by_id["N33"]["context"] == ["N32"] and by_id["N34"]["context"] == ["N24"]
+    assert by_id["N37"]["context"] == ["N21"]
+    assert all(by_id[i].get("mode") == "ml" for i in ML_QUICK if i not in ("N21", "N24"))
+    assert {item.get("mode", "") for item in ITEMS} == {"", "ml"}
 
 
 def test_phrases_are_written_in_lower_case():
@@ -90,6 +103,23 @@ def test_grade_pass_partial_and_fail(truth):
     assert grading.grade({"id": "N10", "question": "?", "expect": "refused"}, {"status": "ok"})[0] == "FAIL"
 
 
+def test_expect_may_allow_several_statuses(truth):
+    item = {"id": "X", "question": "?", "expect": ["general", "ok"]}
+    assert grading.grade(item, {"status": "general", "answer": "a"}) == ("PASS", [])
+    assert grading.grade(item, {"status": "ok", "answer": "a"}) == ("PASS", [])
+    assert grading.grade(item, {"status": "nodata", "answer": "a"}) == (
+        "FAIL", ["status nodata (expected general or ok)"])
+
+
+def test_a_forecast_is_found_as_the_answer_writes_it(truth):
+    """The truth of a forecast is its amount in Cr with one decimal (CONCAT(ROUND(x / 10000000, 1)) gives '53.7'),
+    as agent.ML_RESULTS_NOTE has the answer write it."""
+    item = {"id": "X", "question": "?", "must": ["53.7"], "must_not": ["you can ask me"]}
+    assert grading.grade(item, {"status": "ok", "answer": "Aug 2027: about INR 53.7 Cr"}) == ("PASS", [])
+    assert grading.grade(item, {"status": "ok", "answer": "about INR 56.3 Cr"})[0] == "FAIL"
+    assert grading.grade(item, {"status": "ok", "answer": "53.7 Cr. You can ask me more"})[0] == "PARTIAL"
+
+
 # ---------- the command ----------
 
 @pytest.fixture
@@ -103,7 +133,7 @@ def results_dir(tmp_path, monkeypatch):
 def test_a_run_asks_grades_and_adds_a_score_line(results_dir, truth, monkeypatch, staff):
     asked = []
 
-    def fake_ask(question, user, context=None, use_memories=True):
+    def fake_ask(question, user, context=None, use_memories=True, mode="", model=""):
         asked.append((question, len(context or [])))
         assert use_memories is False                          # the user's saved memories never reach the eval
         status = "refused" if question.startswith("delete") else "ok"
@@ -132,7 +162,7 @@ def test_a_run_stops_before_the_token_cap(results_dir, truth, monkeypatch, staff
     use_fake_ai(monkeypatch, [("Top customers in Sep 2026?", 7_000)] * 5)   # every call 'costs' 7,000 tokens
 
     # one AI call through LangChain, like the agent makes
-    def ask_one_call(question, user, context=None, use_memories=True):
+    def ask_one_call(question, user, context=None, use_memories=True, mode="", model=""):
         lc_calls.chat(LcRequest("rewrite", {"earlier": "1. Q (latest)", "question": question}), 100, "low")
         return agent.AskResult(text=question, status="ok")
     monkeypatch.setattr(agent, "ask", ask_one_call)
@@ -154,7 +184,7 @@ def test_a_run_never_spends_the_other_models_tokens(results_dir, truth, monkeypa
     fake = use_fake_ai(monkeypatch, [("Top customers in Sep 2026?", 7_000)])
     refused = []
 
-    def ask_both(question, user, context=None, use_memories=True):
+    def ask_both(question, user, context=None, use_memories=True, mode="", model=""):
         request = LcRequest("rewrite", {"earlier": "1. Q (latest)", "question": question})
         try:
             lc_calls.chat(request, 100, "low", "qwen/qwen3.8-27b")
@@ -187,7 +217,7 @@ def test_memory_store_searches_the_docs_in_a_store_in_memory(results_dir, truth,
     monkeypatch.setattr(vectorstore, "get_embeddings", lambda: LetterEmbeddings())
     search_before, found = agent.search, []
 
-    def ask_search(question, user, context=None, use_memories=True):
+    def ask_search(question, user, context=None, use_memories=True, mode="", model=""):
         found.extend(agent.search(question, top_k=3))
         return agent.AskResult(text=question, status="ok")
     monkeypatch.setattr(agent, "ask", ask_search)
@@ -204,9 +234,89 @@ def test_memory_store_searches_the_docs_in_a_store_in_memory(results_dir, truth,
 def test_nothing_of_a_run_stays_in_history(results_dir, truth, monkeypatch, staff):
     from portal.models import Question
 
-    def ask_and_save(question, user, context=None, use_memories=True):
+    def ask_and_save(question, user, context=None, use_memories=True, mode="", model=""):
         Question.objects.create(user=user, text=question)
         return agent.AskResult(text=question, status="ok")
     monkeypatch.setattr(agent, "ask", ask_and_save)
     call_command("run_eval", "quick", "--ids", "Q38", "--cap", "1000000", "--out", str(results_dir / "h.json"))
     assert Question.objects.count() == 0
+
+
+# ---------- one chosen model of the chain (18-Nov: test each model before a demo) ----------
+
+@pytest.mark.django_db
+def test_model_choice_is_passed_to_every_question(results_dir, truth, monkeypatch, staff):
+    """--model gemini-flash: every question is asked with model='gemini-flash' (an admin's choice: only that
+    model); a call for another model never reaches the AI; the answers file and the score line name it.
+    The ML set is asked as in an ML Insights chat (mode 'ml', its follow-ups with their earlier answers)."""
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    fake = use_fake_ai(monkeypatch, [("Top customers in Sep 2026?", 3_000)])
+    asked, refused = [], []
+
+    def ask_gemini(question, user, context=None, use_memories=True, mode="", model=""):
+        asked.append((question, mode, model, len(context or [])))
+        request = LcRequest("rewrite", {"earlier": "1. Q (latest)", "question": question})
+        try:
+            lc_calls.chat(request, 100, "low", agent.model_name())        # the Groq main model: refused
+        except agent.DailyLimitReached:
+            refused.append(question)
+        if len(asked) == 1:
+            lc_calls.chat(request, 100, "low", "gemini-flash-latest")    # the chosen model: asked and counted
+        return agent.AskResult(text=question, status="ok", answer="about INR 53.7 Cr", model="gemini-flash-latest")
+    monkeypatch.setattr(agent, "ask", ask_gemini)
+
+    call_command("run_eval", "ml", "--model", "gemini-flash", "--cap", "1000000")
+
+    assert [model for _, _, model, _ in asked] == ["gemini-flash"] * 10 and len(refused) == 10
+    assert {question: mode for question, mode, _, _ in asked}["my top customer in Aug 2027"] == "ml"
+    assert ("can you give it for sep 2027", "ml", "gemini-flash", 1) in asked          # N33 after N32
+    assert fake.models == ["gemini-flash-latest"]
+    files = list(results_dir.glob("ml_gemini-flash_*.json"))
+    assert len(files) == 1
+    saved = json.loads(files[0].read_text(encoding="utf-8"))
+    assert list(saved) == ML_QUICK and saved["N21"]["calls"] == [
+        {"model": "gemini-flash-latest", "total": 3_000, "finish": "stop"}]
+    rows = list(csv.DictReader((results_dir / "scores.csv").open(encoding="utf-8")))
+    assert rows[0]["set"] == "ml" and rows[0]["model"] == "gemini-flash-latest" and rows[0]["of"] == "10"
+
+
+@pytest.mark.django_db
+def test_main_and_backup_are_the_groq_models(results_dir, truth, monkeypatch, staff):
+    monkeypatch.setenv("GROQ_FALLBACK_MODEL", "qwen/qwen3.8-27b")
+    chosen = []
+
+    def ask_one(question, user, context=None, use_memories=True, mode="", model=""):
+        chosen.append(model)
+        return agent.AskResult(text=question, status="ok")
+    monkeypatch.setattr(agent, "ask", ask_one)
+
+    call_command("run_eval", "quick", "--ids", "Q38", "--cap", "1000000")
+    call_command("run_eval", "quick", "--ids", "Q38", "--model", "backup", "--cap", "1000000")
+    call_command("run_eval", "quick", "--ids", "Q38", "--model", "groq-main", "--cap", "1000000",
+                 "--out", str(results_dir / "g.json"))
+    assert chosen == ["groq-main", "groq-backup", "groq-main"]
+    # the answers files keep their old names: main / backup
+    assert sorted(path.name.split("_")[1] for path in results_dir.glob("quick_*.json")) == ["backup", "main"]
+
+
+@pytest.mark.parametrize("model, message", [
+    ("gemini-flash", "gemini-flash is not set up"),            # no GEMINI_API_KEY in the tests
+    ("groq-backup", "groq-backup is not set up"),              # no GROQ_FALLBACK_MODEL
+])
+@pytest.mark.django_db
+def test_a_model_that_is_not_set_up_is_refused(results_dir, monkeypatch, staff, model, message):
+    monkeypatch.delenv("GROQ_FALLBACK_MODEL", raising=False)
+    monkeypatch.setattr(agent, "ask", lambda *args, **kwargs: pytest.fail("nothing may be asked"))
+    with pytest.raises(CommandError, match=message):
+        call_command("run_eval", "quick", "--ids", "Q38", "--model", model, "--cap", "1000000")
+
+
+@pytest.mark.django_db
+def test_gemini_flash_lite_cannot_answer_the_golden_questions_alone(results_dir, monkeypatch, staff):
+    from portal.lc import llm
+    if not hasattr(llm, "may_do"):
+        pytest.skip("every model of the chain writes SQL")
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    monkeypatch.setattr(agent, "ask", lambda *args, **kwargs: pytest.fail("nothing may be asked"))
+    with pytest.raises(CommandError, match="only does the small steps"):
+        call_command("run_eval", "quick", "--ids", "Q38", "--model", "gemini-flash-lite", "--cap", "1000000")

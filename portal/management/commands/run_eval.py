@@ -1,16 +1,20 @@
-"""Ask the golden questions with ONE Groq model, grade the answers and keep the score.
+"""Ask the golden questions with ONE model of the chain, grade the answers and keep the score.
 
 python manage.py run_eval quick           the 15 quick questions - after every docs or prompt change
+python manage.py run_eval ml              the 10 ML Insights questions (asked as in an ML Insights chat)
 python manage.py run_eval full            all questions - once a week; it stops before the token cap and,
                                           run again the same week, goes on where it stopped
 python manage.py run_eval grade FILE      grade a saved run again (no AI)
 python manage.py run_eval truth           the right values from our own SQL (no AI)
-options: --model main|backup  --cap auto|N  --ids Q38 N02  --out FILE  --memory-store (Qdrant off)
+options: --model main|backup|groq-main|gemini-flash|groq-backup  --cap auto|N  --ids Q38 N02  --out FILE
+         --memory-store (Qdrant off)
 
 - Nothing goes into History: every question runs inside a transaction that is rolled back.
 - Token cap 'auto': tests may use 70 % of a model's daily Groq tokens (the app's questions and the
   eval runs of the last 24 hours count); the other 30 % stay for the people using the app.
-- Only the chosen model is asked: no backup model during a main-model run (and the other way round).
+- Only the chosen model is asked (as an admin's model choice: agent.ask(model=...)): no other model of the
+  chain during the run. main = groq-main, backup = groq-backup; gemini-flash-lite only does the small steps,
+  so it cannot answer the golden questions alone.
 - The answers of a run go to eval_results/<set>_<model>_....json (not in git); every run adds one
   score line to eval_results/scores.csv (in git), so we see if answers get better or worse.
 """
@@ -34,7 +38,8 @@ from django.db.models import Sum
 from django.utils import timezone
 
 from ...evals import grading
-from ...evals.questions import ITEMS, QUICK
+from ...evals.questions import ITEMS, ML_QUICK, QUICK
+from ...lc import llm
 from ...models import Question
 from ...rag import agent
 
@@ -44,11 +49,15 @@ SCORE_FIELDS = ["when", "set", "model", "asked", "of", "pass", "partial", "fail"
 TEST_SHARE = 140_000          # 70 % of a model's 200,000 daily Groq tokens (Vishnu's rule)
 SAFETY = 5_000
 ESTIMATE, ESTIMATE_FOLLOW_UP = 7_000, 11_000   # Groq tokens of one question (a follow-up rewrites first)
+SETS = {"quick": QUICK, "ml": ML_QUICK}        # full = every question
+# --model: the chain's ids (lc/llm.py), and the old names main / backup (also the answers files' names)
+MODEL_ALIASES = {"main": "groq-main", "backup": "groq-backup"}
+FILE_LABELS = {"groq-main": "main", "groq-backup": "backup"}
 
 
 def pick_items(set_name, ids=()):
     """The items to ask, in golden-set order; a follow-up brings the earlier questions of its chat."""
-    wanted = set(ids or (QUICK if set_name == "quick" else [item["id"] for item in ITEMS]))
+    wanted = set(ids or SETS.get(set_name) or [item["id"] for item in ITEMS])
     unknown = wanted - {item["id"] for item in ITEMS}
     if unknown:
         raise CommandError(f"Not in the golden set: {', '.join(sorted(unknown))}")
@@ -79,6 +88,21 @@ def tokens_last_24h(model):
     return app, evals
 
 
+def chosen_model(name):
+    """--model -> the chain's ChainModel (lc.llm) to ask; CommandError when it is not set up in .env or cannot
+    write the SQL and the answers (Gemini Flash-Lite only does the small steps)."""
+    model_id = MODEL_ALIASES.get(name, name)
+    entry = next((model for model in llm.chain_models() if model.id == model_id), None)
+    if entry is None:   # as for an admin's choice: only a model of the chain can be asked
+        raise CommandError(f"{model_id} is not set up in .env (Groq backup: GROQ_FALLBACK_MODEL; "
+                           "Gemini: GEMINI_API_KEY) or not in AI_MODEL_CHAIN")
+    may_do = getattr(llm, "may_do", None)
+    if may_do and not may_do(entry, "sql"):
+        raise CommandError(f"{model_id} only does the small steps (rewrite, route) - it cannot answer the golden "
+                           "questions alone")
+    return entry
+
+
 def current_commit():
     """The git commit the answers came from ('+changes' when docs/ or portal/ have changes not committed)."""
     try:
@@ -94,12 +118,14 @@ def plain(value):
 
 
 class Command(BaseCommand):
-    help = "Ask the golden questions with one Groq model and grade the answers (quick | full | grade FILE | truth)."
+    help = ("Ask the golden questions with one model of the chain and grade the answers "
+            "(quick | ml | full | grade FILE | truth).")
 
     def add_arguments(self, parser):
-        parser.add_argument("action", choices=["quick", "full", "grade", "truth"])
+        parser.add_argument("action", choices=["quick", "ml", "full", "grade", "truth"])
         parser.add_argument("file", nargs="?", help="grade: the saved run (.json)")
-        parser.add_argument("--model", choices=["main", "backup"], default="main")
+        parser.add_argument("--model", choices=[*MODEL_ALIASES, *llm.MODEL_IDS], default="main",
+                            help="the one model asked: main (= groq-main), backup (= groq-backup), gemini-flash ...")
         parser.add_argument("--cap", default="auto", help="token cap of this run: auto (70%% rule) or a number")
         parser.add_argument("--ids", nargs="+", default=[], help="only these questions, e.g. Q38 N02")
         parser.add_argument("--out", help="the answers file (default: eval_results/<set>_<model>_<date>.json)")
@@ -122,14 +148,12 @@ class Command(BaseCommand):
     # ------------------------------------------------------------------ asking
     def run(self, set_name, opts):
         items = pick_items(set_name, opts["ids"])
-        main, backup = agent.model_name(), agent.fallback_model_name()
-        only = main if opts["model"] == "main" else backup
-        if not only:
-            raise CommandError("No backup model in .env (GROQ_FALLBACK_MODEL)")
+        entry = chosen_model(opts["model"])
+        only, label = entry.model, FILE_LABELS.get(entry.id, entry.id)
         RESULTS_DIR.mkdir(exist_ok=True)
         year, week, _ = date.today().isocalendar()   # full: one file a week, so a stopped run goes on
         stamp = f"{year}-W{week:02d}" if set_name == "full" else time.strftime("%Y-%m-%d_%H%M")
-        out = Path(opts["out"] or RESULTS_DIR / f"{set_name}_{opts['model']}_{stamp}.json")
+        out = Path(opts["out"] or RESULTS_DIR / f"{set_name}_{label}_{stamp}.json")
         results = json.loads(out.read_text(encoding="utf-8")) if out.exists() else {}
         used = sum(saved.get("tokens") or 0 for saved in results.values())
         if opts["cap"] == "auto":   # what is left of the test share (this file's own tokens are counted again below)
@@ -145,7 +169,7 @@ class Command(BaseCommand):
         self.stdout.write(f"answers file: {out}")
 
         calls, logs = [], []
-        with OneModel(only, opts["model"] == "backup", calls, logs, opts["memory_store"]):
+        with OneModel(only, entry.id == "groq-backup", calls, logs, opts["memory_store"]):
             for item in items:
                 qid = item["id"]
                 if qid in results:
@@ -160,8 +184,10 @@ class Command(BaseCommand):
                            for c in item.get("context", []) if c in results and results[c]["status"] in ("ok", "nodata")]
                 c0, l0 = len(calls), len(logs)
                 with transaction.atomic():   # nothing of the eval stays in History
-                    # the user's saved memories would change the prompts: the eval checks the plain app
-                    result = agent.ask(item["question"], user, context=context, use_memories=False)
+                    # the user's saved memories would change the prompts: the eval checks the plain app;
+                    # model = the one chosen model (as an admin's choice); mode 'ml' = an ML Insights chat
+                    result = agent.ask(item["question"], user, context=context, use_memories=False,
+                                       mode=item.get("mode", ""), model=entry.id)
                     transaction.set_rollback(True)
                 tokens = sum(call["total"] or 0 for call in calls[c0:])
                 used += tokens
@@ -213,13 +239,14 @@ class OneModel:
 
     def __enter__(self):
         from ...lc import calls as lc_calls
-        self.saved = {"search": agent.search, "_main_resting_until": agent._main_resting_until}
+        self.saved = {"search": agent.search, "_resting": agent._resting}
+        agent._resting = dict(agent._resting)                            # the run's own rests, put back at the end
         self.saved_chat = lc_calls.chat
         self.saved_fallback = os.environ.get("GROQ_FALLBACK_MODEL")
         original_chat, only, calls = lc_calls.chat, self.only, self.calls
 
         if self.backup:
-            agent._main_resting_until = time.monotonic() + 10 ** 9   # as after the main model's daily limit
+            agent.model_rests("groq-main", 10 ** 9, "eval of the backup")  # as after the main model's daily limit
         else:
             os.environ["GROQ_FALLBACK_MODEL"] = ""                   # no backup during a main-model run
 

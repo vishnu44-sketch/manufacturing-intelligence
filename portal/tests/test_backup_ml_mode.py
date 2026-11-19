@@ -167,6 +167,87 @@ def test_the_backup_gets_the_closest_note_that_names_an_ml_table():
     assert agent.backup_ml_hits([]) == []
 
 
+# ---------- 18-Nov: "which products customers buy together?" ----------
+# On ML Insights the backup answered it with the top customers by orders (fact_sales_order_lines), not the product
+# pairs. Its one note must be the bought-together example (else a note naming ml_product_pairs), never another ML
+# example such as 'might stop buying' that the search ranked higher, and its schema must show ml_product_pairs.
+
+PAIRS_QUESTION = "which products customers buy together?"
+PAIRS_EXAMPLE = "Q: Which products are bought together?"
+
+
+def notes_of(*headings):
+    """The real docs/ pieces whose headings start with these, in this order (closest first)."""
+    chunks = load_docs(DOCS)
+    notes = [next(c for c in chunks if c["heading"].startswith(heading)) for heading in headings]
+    return [{**note, "score": 0.9 - n / 10} for n, note in enumerate(notes)]
+
+
+def test_the_pairs_question_gives_the_backup_the_bought_together_example():
+    # the 5 notes the real search sent for the 18-Nov question
+    logged = notes_of(PAIRS_EXAMPLE, "ml_product_pairs - ", "Names in a question", "ml_customer_segments - ",
+                      "Q: Which customers bought from us between Jan 2026")
+    assert [n["heading"] for n in agent.backup_ml_hits(logged, PAIRS_QUESTION)] == [PAIRS_EXAMPLE]
+    # other ML notes ranked higher: still the bought-together example
+    harder = notes_of("Q: Which customers might stop buying from us?", "ml_customer_segments - ",
+                      "Q: Which customers bought from us between Jan 2026", "ML results (", PAIRS_EXAMPLE)
+    assert [n["heading"] for n in agent.backup_ml_hits(harder, PAIRS_QUESTION)] == [PAIRS_EXAMPLE]
+    # no pairs example among the notes: the closest note that names ml_product_pairs (its table piece, the ML rules)
+    no_example = notes_of("Q: Which customers might stop buying from us?", "ML results (", "ml_product_pairs - ")
+    assert agent.backup_ml_hits(no_example, PAIRS_QUESTION) == [no_example[1]]
+    # without the question (or a question that picks no ml_ table): the closest ML note, as before
+    assert agent.backup_ml_hits(harder) == [harder[0]]
+    assert agent.backup_ml_hits(harder, "anything interesting?") == [harder[0]]
+
+
+RULE_MINING_QUESTION = "which products in the order basket CSV dataset can be used for associative rule mining?"
+
+
+def test_the_rule_mining_question_gives_the_backup_the_pairs_example_and_table(monkeypatch):
+    """18-Nov: answered with 102 raw basket rows instead of the bought-together results."""
+    monkeypatch.setattr(warehouse, "schema_text", lambda: SCHEMA)
+    harder = notes_of("Q: Which customers might stop buying from us?", "Q: How many sales orders are open",
+                      "ML results (", PAIRS_EXAMPLE, "ml_product_pairs - ")
+    note = agent.backup_ml_hits(harder, RULE_MINING_QUESTION)
+    assert [n["heading"] for n in note] == [PAIRS_EXAMPLE]
+    assert ml_columns_shown(agent.backup_ml_schema(RULE_MINING_QUESTION, note)) == {"ml_product_pairs"}
+
+
+def test_the_pairs_question_shows_the_backup_the_pairs_table(monkeypatch):
+    monkeypatch.setattr(warehouse, "schema_text", lambda: SCHEMA)
+    note = notes_of(PAIRS_EXAMPLE)
+    assert ml_columns_shown(agent.backup_ml_schema(PAIRS_QUESTION, note)) == {"ml_product_pairs"}
+    assert ml_columns_shown(agent.backup_ml_schema(PAIRS_QUESTION, note, smallest=True)) == {"ml_product_pairs"}
+    assert ml_columns_shown(agent.backup_ml_schema(PAIRS_QUESTION, [])) == {"ml_product_pairs"}  # its words alone
+
+
+PAIRS_SQL = ("SELECT pp.product_a_code, pp.product_b_code, pp.orders_together, pp.lift FROM ml_product_pairs pp "
+             "ORDER BY pp.orders_together DESC, pp.lift DESC LIMIT 10")
+PAIRS_ROWS = {"columns": ["product_a_code", "product_b_code", "orders_together", "lift"],
+              "rows": [["FG00580", "FG01116", 146, 11.77]], "truncated": False}
+PAIRS_ANSWER = "FG00580 and FG01116 are bought together most often: on 146 sales orders."
+
+
+def test_the_backup_request_of_the_pairs_question(monkeypatch, ml_gold, user, with_backup):
+    ml_gold.results = [PAIRS_ROWS]
+    harder = notes_of("Q: Which customers might stop buying from us?", "ml_customer_segments - ",
+                      "Q: Which customers bought from us between Jan 2026", "ML results (", PAIRS_EXAMPLE)
+    monkeypatch.setattr(agent, "search", lambda question, top_k=5: harder[:top_k])
+    # (the pairs reply twice: the result check of the ranked customers may still send the first one back - only the
+    # backup's first request is checked here)
+    pairs_reply = (f"```sql\n{PAIRS_SQL}\n```", 3000)
+    fake = use_fake_ai(monkeypatch, [daily_limit_error(), pairs_reply, pairs_reply, (PAIRS_ANSWER, 800)])
+
+    result = agent.ask(PAIRS_QUESTION, user, mode="ml")
+
+    assert result.model == BACKUP and fake.models[:2] == [MAIN, BACKUP]
+    request = fake.calls[1][-1]["content"]
+    assert ml_columns_shown(request) == {"ml_product_pairs"}
+    assert "the 1 pieces" in request and PAIRS_EXAMPLE in request
+    assert "might stop buying" not in request.split("Question:")[0]
+    assert tokens(fake.calls[1]) + agent.FALLBACK_MAX_TOKENS <= BACKUP_BUDGET
+
+
 def test_for_backup_swaps_in_the_ml_values():
     values = {"schema": "all", "count": 5, "documents": "a\n\n---\n\nb\n\n---\n\nc", "today": "t",
               "preferences": "", "earlier": "E", "question": "q"}

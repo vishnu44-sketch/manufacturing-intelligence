@@ -65,19 +65,26 @@ ML_ROWS = [
 ML_BLOCK = (
     "This app's ML (ml/run_ml.py, input files in ml_inputdata/; latest run 17-Nov-2026, data up to 31-Oct-2026):\n"
     "- Sales forecast: Holt-Winters (trend + multiplicative 12-month season), best of 5 models in a backtest "
-    "(Holt-Winters multiplicative / additive, SARIMAX, last year x growth, 3-month average); "
+    "(lowest MAPE on the last 6 complete months held back; tried: Holt-Winters multiplicative / additive, SARIMAX, "
+    "last year x growth, 3-month average); "
     "forecast_monthly_sales.csv (complete sales months); trained on 30 complete sales months (May 2024 - Oct 2026); "
     "forecasts 12 sales months ahead (Nov 2026 - Oct 2027) total, 3 for the top 10 products; "
     "backtest MAPE % (last 6 months) = 4.16\n"
-    "- Customer risk: 0-100 points score: 40 % sales drop, 40 % fewer orders, 20 % overdue; customer_features.csv; "
+    "- Customer risk: 0-100 points score: 40 % how far sales dropped (last 3 months vs the customer's normal 3 "
+    "months), 40 % fewer sales orders than normal, 20 % days overdue (days since the last invoice vs the customer's "
+    "usual gap between invoices - not unpaid amounts); lowered for customers who order less than about once a month; "
+    "customer_features.csv; "
     "built from invoices 02-Apr-2024 - 31-Oct-2026 + sales orders up to 31-Oct-2026; customers High risk = 118\n"
-    "- Customer groups: KMeans on recency, frequency, money, tenure; customer_rfm.csv; "
+    "- Customer groups: KMeans, 5 groups, on recency (days since the last invoice), frequency (invoices), money "
+    "(net sales), tenure (days since the first invoice); customer_rfm.csv; "
     "built from invoices 02-Apr-2024 - 31-Oct-2026; customer groups = 5\n"
-    "- Unusual invoices: robust z-scores of price, quantity, credit-note size; invoice_lines_for_alerts.csv; "
+    "- Unusual invoices: robust z-scores: unit price and quantity vs that product's median, credit-note size vs the "
+    "usual credit note; invoice_lines_for_alerts.csv; "
     "built from invoices 02-Apr-2024 - 31-Oct-2026; alerts = 172\n"
-    "- Bought together: support, confidence, lift of pairs on one sales order; order_baskets.csv; "
+    "- Bought together: support, confidence, lift of product pairs on the same sales order; order_baskets.csv; "
     "built from sales orders 01-Apr-2024 - 31-Oct-2026; pairs kept = 242\n"
-    "- Stock run-out: stock / average daily sales of the last 90 days; stock_speed.csv; built from stock report "
+    "- Stock run-out: days left = stock quantity / average daily sales quantity of the last 90 days of invoices; "
+    "stock_speed.csv; built from stock report "
     "31-Oct-2026 + invoices 03-Aug-2026 - 31-Oct-2026 (the last 90 days); items under 30 days = 349")
 
 
@@ -149,8 +156,8 @@ def test_an_old_forecast_table_without_training_columns_says_the_run_logs_text(m
 
     assert ("trained on 30 complete sales months May 2024 - Oct 2026 (net sales per sales month); forecasts 2 sales "
             "months ahead (Nov 2026 - Dec 2026) total; backtest MAPE") in block
-    assert "- Customer risk: 0-100 points score: 40 % sales drop, 40 % fewer orders, 20 % overdue; " \
-           "customer_features.csv; customers High risk = 118" in block
+    assert "- Customer risk: 0-100 points score: 40 % how far sales dropped" in block
+    assert "about once a month; customer_features.csv; customers High risk = 118" in block
 
 
 def test_a_new_scenario_still_gets_its_line(monkeypatch):

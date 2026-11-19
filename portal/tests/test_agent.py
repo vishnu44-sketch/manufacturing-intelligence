@@ -139,6 +139,8 @@ def mysql(monkeypatch):
     monkeypatch.setattr(agent, "invoice_data_dates", lambda: (date(2025, 12, 21), date(2027, 3, 20)))
     # and the forecast months note of a forecast answer (test_forecast_checks.py)
     monkeypatch.setattr(agent, "forecast_months_note", lambda sql: "")
+    # and the forecast months per level of the forecast level checks (test_forecast_level_checks.py): none known
+    monkeypatch.setattr(agent, "forecast_levels", lambda: {})
     # and the totals of the ml_ result tables (test_ml_answers.py)
     monkeypatch.setattr(agent, "ml_totals_note", lambda sql: "")
     return fake
@@ -491,6 +493,7 @@ def test_a_first_question_has_no_rewrite_and_no_earlier_block(monkeypatch, mysql
 def test_a_failed_rewrite_still_answers_the_question_with_the_chat(monkeypatch, mysql, user, fails):
     """The rewrite call fails (Groq error) or replies nothing -> no 'Understood as', the question is
     answered anyway, and the SQL step still sees the chat (it may be a follow-up like 'and for Sep?')."""
+    monkeypatch.setenv("GROQ_FALLBACK_MODEL", "")  # one model: its failed call is the rewrite's failure (18-Nov chain)
     mysql.results = [ROWS]
     fake = use_fake_ai(monkeypatch, [api_error(400) if fails else "", GOOD_SQL, ANSWER])
 
@@ -673,6 +676,7 @@ def test_rate_limit_waits_and_tries_again(monkeypatch, mysql, user):
 
 def test_rate_limit_with_a_long_wait_gives_a_busy_message(monkeypatch, mysql, user):
     """If Groq asks us to wait more than a minute, the user gets a friendly 'busy' message."""
+    monkeypatch.setenv("GROQ_FALLBACK_MODEL", "")  # one model (18-Nov: with more, the next model is asked)
     waits = []
     monkeypatch.setattr(agent.time, "sleep", waits.append)
     use_fake_ai(monkeypatch, [rate_limit_error(retry_after=120)])
@@ -1872,6 +1876,7 @@ def too_large_error():
 
 def test_a_retry_too_large_for_a_minute_is_sent_again_without_the_full_schema(monkeypatch, mysql, user):
     """22-Oct: the retry after a MySQL error, with the full schema, asked for 8,071 tokens (limit 8,000 a minute)."""
+    monkeypatch.setenv("GROQ_FALLBACK_MODEL", "")  # one model (18-Nov: with more, the next model is asked first)
     monkeypatch.setattr(warehouse, "schema_text", lambda: THREE_TABLES)
     mysql.results = [warehouse.QueryError("(1054) Unknown column 'dec_sales'"), ROWS]
     fake = use_fake_ai(monkeypatch, [f"```sql\n{WRONG_MONTH_SQL}\n```", too_large_error(),
@@ -1886,6 +1891,7 @@ def test_a_retry_too_large_for_a_minute_is_sent_again_without_the_full_schema(mo
 
 
 def test_a_first_question_too_large_for_a_minute_gives_the_error_message(monkeypatch, mysql, user):
+    monkeypatch.setenv("GROQ_FALLBACK_MODEL", "")  # one model (18-Nov: with more, the next model is asked)
     use_fake_ai(monkeypatch, [too_large_error()])
 
     result = agent.ask("Compare sales of Jan 2027 with Dec 2026", user)
@@ -2344,6 +2350,7 @@ def test_the_router_saying_data_keeps_the_sql_path_as_before(monkeypatch, mysql,
                                           api_error(400), connection_error()])
 def test_an_unclear_or_failed_router_call_means_data(monkeypatch, mysql, user, router_reply):
     monkeypatch.setattr(agent.time, "sleep", lambda secs: None)     # the network retry waits 3 s
+    monkeypatch.setenv("GROQ_FALLBACK_MODEL", "")  # one model: its failed call is the router's failure (18-Nov chain)
     use_pdf_hits(monkeypatch, PDF_HITS)
     mysql.results = [ROWS]
     failures = [router_reply] * (2 if isinstance(router_reply, openai.APIConnectionError) else 1)

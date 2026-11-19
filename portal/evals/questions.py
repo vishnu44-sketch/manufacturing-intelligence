@@ -1,9 +1,12 @@
 """The golden set: questions people really asked (and new kinds), each with how to check its answer.
 
 Keys of one item (see grading.py): id, question, must, should, must_have, must_not, allow, expect,
-context = ids of earlier questions in the same chat (the item is then a follow-up).
+context = ids of earlier questions in the same chat (the item is then a follow-up),
+mode = 'ml' for a question asked in an ML Insights chat (agent.ask(mode='ml')).
+expect may be a list of statuses, e.g. ["general", "ok"] (either is right).
 Q.. = questions from the 09-Oct to 14-Oct evaluations, N.. = new kinds of questions (22-Oct on).
 QUICK = the short set to ask after every docs or prompt change (about 100,000 Groq tokens).
+ML_QUICK = the ML Insights set to ask before a demo (about 85,000 tokens).
 """
 
 SAME_DATES = """WITH cv AS (
@@ -44,6 +47,16 @@ MONTH = ("SELECT ROUND(SUM(il.net_taxable_value), 2) FROM fact_invoice_lines il 
 FORECAST = "FROM ml_sales_forecast WHERE level = 'TOTAL' ORDER BY period_start LIMIT {limit}"
 FORECAST_2027 = ("FROM ml_sales_forecast WHERE level = 'TOTAL' AND period_end >= '2027-01-01' "
                  "AND period_start <= '2027-12-31'")
+# 18-Nov: the answer writes a forecast in Cr ("about INR 53.7 Cr", agent.ML_RESULTS_NOTE), so the truth is that text
+CR = "CONCAT(ROUND({col} / 10000000, 1))"
+FORECAST_MONTH = "FROM ml_sales_forecast WHERE level = 'TOTAL' AND sales_month = '{m}'"
+# the top customer of the newest complete sales month (the past actuals next to a month's forecast)
+PAST_TOP_CUSTOMER = """SELECT cu.customer_name FROM fact_invoice_lines il
+JOIN dim_calendar c ON c.date_id = il.invoice_date_id JOIN dim_customers cu ON cu.customer_id = il.customer_id
+WHERE il.customer_id <> -1 AND c.sales_month = (SELECT c2.sales_month FROM dim_calendar c2
+  WHERE c2.sales_period_end <= (SELECT MAX(data_to) FROM ml_sales_forecast) ORDER BY c2.full_date DESC LIMIT 1)
+GROUP BY cu.customer_id, cu.customer_name ORDER BY SUM(il.net_taxable_value) DESC LIMIT 1"""
+NOT_ANSWERED = ["you can ask me", "could not write a working query"]
 
 ITEMS = [
     {"id": "Q38", "question": "what is last year and current year revenue",
@@ -246,11 +259,12 @@ ITEMS = [
      "must_have": ["so far"]},
     # 17-Nov: the ML results of run_ml (ml_* tables) - estimates, never "not in the data"
     {"id": "N21", "question": "What will our sales be next month?",
-     "must": f"SELECT forecast_inr {FORECAST.format(limit=1)}",
-     "should": f"SELECT low_inr, high_inr, period_start, period_end {FORECAST.format(limit=1)}",
+     "must": f"SELECT {CR.format(col='forecast_inr')} {FORECAST.format(limit=1)}",
+     "should": f"""SELECT {CR.format(col='low_inr')}, {CR.format(col='high_inr')}, period_start, period_end
+                   {FORECAST.format(limit=1)}""",
      "must_have": ["forecast"]},
     {"id": "N22", "question": "What will our sales be in the next 3 months?",
-     "must": f"SELECT forecast_inr {FORECAST.format(limit=3)}",
+     "must": f"SELECT {CR.format(col='forecast_inr')} {FORECAST.format(limit=3)}",
      "must_have": ["forecast"]},
     {"id": "N23", "question": "What is the sales forecast for GCI TX-675 next month?",
      "must": """SELECT forecast_inr FROM ml_sales_forecast WHERE level = 'PRODUCT' AND product_code = 'FG01484'
@@ -283,7 +297,41 @@ ITEMS = [
                         (SELECT sales_month {FORECAST_2027} ORDER BY period_start DESC LIMIT 1)""",
      "should": f"SELECT data_to {FORECAST_2027} LIMIT 1",
      "must_have": ["not forecast"]},
+    # 18-Nov: ML Insights questions a weaker model got wrong - a future month, customers in it (no forecast per
+    # customer: the month's TOTAL forecast + the newest complete month's top customers as past actuals)
+    {"id": "N30", "question": "my top customer in Aug 2027", "mode": "ml",
+     "must": f"SELECT {CR.format(col='forecast_inr')} {FORECAST_MONTH.format(m='Aug 2027')}",
+     "should": PAST_TOP_CUSTOMER,
+     "must_have": ["31-oct-2026", "customer"], "must_not": NOT_ANSWERED},
+    {"id": "N31", "question": "predict sales for Aug 2027 and give me top 5 customers", "mode": "ml",
+     "must": f"SELECT {CR.format(col='forecast_inr')} {FORECAST_MONTH.format(m='Aug 2027')}",
+     "should": PAST_TOP_CUSTOMER,
+     "must_have": ["forecast"], "must_not": NOT_ANSWERED},
+    {"id": "N32", "question": "What is the sales forecast for August 2027?", "mode": "ml",
+     "must": f"SELECT {CR.format(col='forecast_inr')} {FORECAST_MONTH.format(m='Aug 2027')}",
+     "should": f"SELECT {CR.format(col='low_inr')}, {CR.format(col='high_inr')} {FORECAST_MONTH.format(m='Aug 2027')}",
+     "must_not": NOT_ANSWERED + ["no forecast"]},
+    {"id": "N33", "question": "can you give it for sep 2027", "context": ["N32"], "mode": "ml",
+     "must": f"SELECT {CR.format(col='forecast_inr')} {FORECAST_MONTH.format(m='Sep 2027')}",
+     "should": f"SELECT {CR.format(col='low_inr')}, {CR.format(col='high_inr')} {FORECAST_MONTH.format(m='Sep 2027')}",
+     "must_not": NOT_ANSWERED + ["no forecast"]},
+    {"id": "N34", "question": "why is aurora on top?", "context": ["N24"], "mode": "ml", "expect": ["ok", "general"],
+     "must": "SELECT days_since_last_invoice FROM ml_customer_risk WHERE customer_name = 'Aurora Fluid Power Limited'",
+     "should": "SELECT last_invoice_date FROM ml_customer_risk WHERE customer_name = 'Aurora Fluid Power Limited'",
+     "must_have": ["aurora"]},
+    {"id": "N35", "question": "which products customers buy together?", "mode": "ml",
+     "must": "SELECT orders_together FROM ml_product_pairs ORDER BY orders_together DESC, lift DESC LIMIT 1",
+     "should": """SELECT product_a_code, product_b_code FROM ml_product_pairs
+                  ORDER BY orders_together DESC, lift DESC LIMIT 1"""},
+    {"id": "N36", "question": "which model you used for forecast and how accurate it is?", "mode": "ml",
+     "expect": ["general", "ok"],
+     "must": "SELECT DISTINCT mape_pct FROM ml_sales_forecast WHERE level = 'TOTAL'",
+     "must_have": ["holt-winters"], "must_not": ["i've worked", "not in the ss manufacturing data"]},
+    {"id": "N37", "question": "what does low_inr mean?", "context": ["N21"], "mode": "ml", "expect": ["general", "ok"],
+     "must_have": ["range"], "must_not": ["not available", "by mistake"]},
 ]
 
 # after every docs or prompt change: one question of each main kind + the bugs fixed before
 QUICK = ["Q38", "Q42", "Q43", "Q44", "Q45", "Q46", "Q51", "Q54", "Q55", "Q58", "N02", "N05", "N10", "N18", "N20"]
+# before a demo of ML Insights (run_eval ml): a forecast, the risk list, the questions that failed on 18-Nov
+ML_QUICK = ["N21", "N24", "N30", "N31", "N32", "N33", "N34", "N35", "N36", "N37"]

@@ -155,6 +155,7 @@ def test_a_saved_answer_has_its_answer_rows_sql_and_sources(client, user, mysql)
 
 def test_a_saved_answer_says_when_the_backup_model_answered(client, user, mysql, monkeypatch):
     monkeypatch.setenv("GROQ_MODEL", "openai/gpt-oss-120b")
+    monkeypatch.setenv("GROQ_FALLBACK_MODEL", "qwen/qwen3.8-27b")
     by_backup = saved_question(user, model="qwen/qwen3.8-27b")
     by_main = saved_question(user, model="openai/gpt-oss-120b")
     client.force_login(user)
@@ -163,8 +164,8 @@ def test_a_saved_answer_says_when_the_backup_model_answered(client, user, mysql,
     main = api_get(client, "api_question", by_main.pk).json()["card"]
     rows = history(client)["questions"]
 
-    assert backup["backup_model"] == "qwen/qwen3.8-27b"
-    assert main["backup_model"] == ""
+    assert backup["backup_model"] == "groq-backup"                       # 18-Nov: the model's id in the chain
+    assert main["backup_model"] == "" and main["model_note"] == "" and main["model_label"] == "Groq gpt-oss-120b"
     assert [r["backup"] for r in rows].count(True) == 1
 
 

@@ -46,6 +46,12 @@ Backup model: every Groq model has its own free DAILY token limit. When the main
 (GROQ_MODEL) says its daily limit is used up, the same call goes to the backup model
 (GROQ_FALLBACK_MODEL, empty = no backup) with the backup's smaller limits, and for the next
 MAIN_RESTING_SECS new questions start with the backup. A per-MINUTE limit still just waits.
+18-Nov, the model chain: Groq main -> Gemini Flash -> Gemini Flash-Lite -> the Groq backup (lc/llm.py, AI_MODEL_CHAIN
+sets the order; Gemini only with GEMINI_API_KEY). _ask_models() tries them in turn: a daily limit, a busy or
+unreachable model, a request too large even when cut, or any other error moves the call to the next model, and a
+model that hit its daily limit (or was busy) rests a while (passed over). Gemini Flash-Lite only does the small
+calls (rewrite, route - never the SQL or an answer: lc.llm.ALLOWED_CALLS). Staff may choose a model: then only that
+model is asked, and when it cannot answer the error card says why (chosen_failed) - no quiet fallback.
 """
 import datetime
 import decimal
@@ -86,9 +92,16 @@ MAX_WAIT_SECS = 60        # longer waits are not worth it - the user gets a "bus
 FALLBACK_MAX_TOKENS = 1000
 FALLBACK_ROWS_FOR_ANSWER = 20       # rows the backup sees when it writes the answer ...
 FALLBACK_MAX_ANSWER_CHARS = 16000   # ... and fewer if the request is still big (~4,500 tokens)
+# 18-Nov: when Groq still says the backup's answer request is too large (413), it is sent once more with the
+# smallest one: these rows (fewer if still more than these characters) and only the app's facts (explain_values)
+BACKUP_SMALLEST_ROWS = 8
+BACKUP_SMALLEST_ANSWER_CHARS = 10000
 MAIN_RESTING_SECS = 600   # after the main model's daily limit: new questions use the backup for 10 min
+BUSY_RESTING_SECS = 120   # a busy / unreachable model (5xx, timeout, network): tried last for 2 minutes
+MINUTE_RESTING_SECS = 60  # a model at its per-minute limit (not the main Groq model, which waits): 1 minute
 DAILY_TOKEN_LIMIT = 200_000  # Groq free tier: tokens per model per day (shown on History)
-DAILY_LIMIT = re.compile(r"per day|\((?:TPD|RPD)\)", re.I)  # Groq's text for a daily (not per-minute) limit
+# a daily (not per-minute) limit: Groq's "tokens per day (TPD)", Gemini's quota "GenerateRequestsPerDay..."
+DAILY_LIMIT = re.compile(r"per day|PerDay|\((?:TPD|RPD)\)", re.I)
 PDF_TOP_K = 3             # PDF pieces the router looks at and a document answer is written from
 # 03-Nov, measured with the real PDF index: the 10 test document questions scored 0.656 to 0.818, the 52 golden
 # data questions 0.479 to 0.738 (only 3 at 0.64 or more). Below this score a question goes to the data with no AI call.
@@ -109,6 +122,7 @@ STEP_NAMES = [
     ("check", "Check the SQL (guard and checks)"),
     ("mysql", "Run the SQL on MySQL (ss_gold)"),
     ("answer_ai", "Write the answer (AI)"),
+    ("answer_fix", "Rewrite the answer to match the data (AI)"),  # 18-Nov: answer_verify.py sent it back once
     ("general", "Write a general answer (AI)"),  # 17-Nov: a question not about the data or documents
     ("wait", "Wait for Groq's per-minute limit"),
     ("other", "Other app work"),
@@ -140,12 +154,15 @@ HISTORY_START_NOTE = ("invoice_history_starts is where the invoice data starts: 
                       "where our data starts)\".")
 # 17-Nov: the answer step of a query on the ml_ tables (run_ml's forecasts and estimates) gets this note
 # 18-Nov: the words of each table (a risk score was called "the forecast model", counted pairs "the estimate")
+# 18-Nov: "my top customer in Aug 2027" failed - there is no forecast per customer, only the TOTAL (and top 10 products)
 ML_RESULTS_NOTE = ("these rows are ML results on the data up to data_to. Words: ml_sales_forecast = "
                    "forecast; risk_score = risk score (never a forecast); segments = customer groups; product pairs = "
                    "counted from real sales orders (not an estimate); alerts = to check, not proven errors. A "
                    "forecast: give forecast_inr with its range (low_inr to high_inr), the "
                    "model's average error (mape_pct %) and the month's dates, and an actual so far separately - never "
-                   "added to the forecast. Product forecasts exist only for the top 10 products. Give the reason of a "
+                   "added to the forecast. Product forecasts exist only for the top 10 products; no forecast per "
+                   "customer: say so, give the month's TOTAL forecast and call customer rows of a past month past "
+                   "actuals. Give the reason of a "
                    "risk score or an alert and the report_date of a stock "
                    "run-out. The forecast covers only the months in its rows: for a longer period (a year, a quarter) name those "
                    "months and say plainly the rest is not forecast (e.g. \"Jan 2027 to Oct 2027 of 2027 are forecast; Nov "
@@ -204,14 +221,44 @@ TABLE_WORDS = {  # words in the question -> a table the SQL will likely need
                     r"hydraulic|motor|\b(?:fg|rm|co|ca)\d",
     "load_log": r"\bload|refresh|updated|cleaning|data quality|batch",
     # 17-Nov: the ML results of run_ml (estimates; docs/business_rules.md 'ML results')
-    "ml_sales_forecast": r"forecast|predict|project|expect|estimat|future|upcoming|coming months?|"
-                         r"next (?:\d+ |two |three |six |few )?(?:sales )?(?:months?|quarter)|will (?:we|our|the) ",
-    "ml_customer_risk": r"churn|risk|(?:might|may|will|could|likely to) (?:stop|leave)|stop buying|losing",
-    "ml_customer_segments": r"customer (?:segment|group|type)|(?:segments?|groups?|kinds?|types?) of customers|"
-                            r"cluster|\brfm\b",
-    "ml_invoice_alerts": r"unusual|anomal|strange|suspicious|outlier|abnormal|weird|\bodd\b|alert",
-    "ml_product_pairs": r"together|\bpairs?\b|basket|cross-?sell|bought with|buy with|along with",
-    "ml_stock_runout": r"run(?:s|ning)? out|run-?out|days of stock|days left|stock-?out|how long .*stock .*last",
+    # 18-Nov: "which products customers buy together?" - more ways and typos of asking for each ml_ table. Kept
+    # narrow so a normal question ("top customers last month", "sales by customer group", "which customers
+    # stopped buying", "sales along with freight") picks no ml_ table (test_schema_select.py checks both)
+    "ml_sales_forecast": r"fore?ca?st|predic|project|expect|estimat|future|upcoming|outlook|"
+                         r"coming (?:months?|quarters?|year)|rest of (?:the |this )?(?:year|fy|financial year)|"
+                         r"next (?:\d+ |two |three |six |few |twelve )?(?:sales )?"
+                         r"(?:months?|quarters?|years?|fy\b|financial year)|"
+                         r"will (?:we|our|the) |(?:going to|gonna) (?:sell|be|make)",
+    "ml_customer_risk": r"churn|chrun|attrition|risk|"
+                        r"(?:might|may|will|could|likely to|about to|going to|plan(?:ning)? to) (?:stop|leave|quit|lose)|"
+                        r"stops? (?:buying|ordering|purchasing)|losing|leaving us|"
+                        r"(?:go|goes|going|become|becoming) (?:inactive|quiet|dormant)|inactive soon|(?:slip|drift)\w* away",
+    # "sales by / per customer group" is SAP's dim_customers.customer_group, not the ML groups
+    "ml_customer_segments": r"(?<!by )(?<!per )(?<!each )customers? (?:segment|group|cluster|persona|categor|tier|bucket)|"
+                            r"segmentation|(?:segments?|groups?|kinds?|types?|categories|clusters?|tiers?|buckets?) of "
+                            r"(?:our |the )?customers|(?:segment|group|cluster|classify|split|bucket)(?:ing)? "
+                            r"(?:our |the |my )?customers|cluster|\brfm\b|recency|"
+                            r"(?:big regular|regular|occasional|lapsed) buyers|\blapsed",
+    "ml_invoice_alerts": r"unusual|unusal|unsual|anomal|anamol|strange|suspic|outlier|abnormal|irregular|weird|\bodd\b|"
+                         r"alert|fraud|red flags?|\bflagged\b|out of the ordinary|mispric|wrong prices?|price errors?|"
+                         r"(?:invoices?|prices?|lines?|credit notes?) (?:to|that need|needing|worth|we should) "
+                         r"(?:check|review|look)",
+    "ml_product_pairs": r"together|togather|togeather|togther|toghether|togehter|\bpair(?:s|ed|ing)?\b|basket|"
+                        r"cross[- ]?sell|bundl|(?:product|item) combinations?|combinations? of (?:products|items)|"
+                        r"\bcombos?\b|affinit|(?:bought|buy|buys|buying|purchased|ordered) (?:along )?with|"
+                        r"along with (?:which|what|other)|(?:frequently|often|commonly|usually) "
+                        r"(?:bought|purchased|ordered|sold)|go(?:es)? (?:well )?with|"
+                        # 18-Nov: "which products in the order basket CSV dataset can be used for associative rule
+                        # mining?" - the names of the method (ml_product_pairs is its result)
+                        r"associat(?:ion|ive)\b|rule mining|apriori|fp[- ]?growth|frequent itemsets?|\bitemsets?\b",
+    "ml_stock_runout": r"\brun(?:s|ning|ing|nig)? (?:out|low|short)|run-?out|stock[- ]?outs?\b|"
+                       r"(?:be|go|goes|going|get|getting|will be) out of stock|out of stock (?:soon|next|by|in|within)|"
+                       r"days of (?:stock|cover|inventory|supply)|days left|weeks? of stock|stock cover|"
+                       r"how long .*(?:stock|inventory) .*last|"
+                       r"(?:need|needs|have|has|should|must|time) to re-?order|"
+                       r"when (?:to|should (?:we|i)|do (?:we|i) need to) re-?order|"
+                       r"re-?order (?:soon|now|next|list|suggestions?)|"
+                       r"(?:items?|products?|parts?|what|which) (?:to|should (?:we|i)) re-?order",
     "ml_run_log": r"\bml\b|machine learning|run_ml|model",
 }
 MAIN_TABLES = {"fact_invoice_lines", "fact_sales_order_lines", "fact_stock_ledger", "load_log", "ml_sales_forecast",
@@ -315,6 +362,11 @@ PREVIOUS_QUERY_CHARS = 1500  # the earlier answer's SQL is cut to this length (t
 PREVIOUS_QUERY = """Previous answer's query (columns: {columns}):
 {sql}{words}"""
 PREVIOUS_QUERY_SHOWN = """Previous answer's query: the SQL of earlier question {n} above (columns: {columns})."""
+# 18-Nov: a named column the query took straight from a table (e.g. low_inr of ml_sales_forecast) is explained from
+# its line in docs/data_dictionary.md (lc.memory.column_facts) - added only for such a question.
+PREVIOUS_QUERY_STORED = """
+Stored column of SS Manufacturing's data - its meaning from the data dictionary (explain it from this):
+{facts}"""
 PREVIOUS_QUERY_REWRITE = """
 
 The new question may be about an earlier answer's own result.
@@ -328,6 +380,20 @@ PREVIOUS_QUERY_GENERAL = """
 This message is about an earlier answer of this chat that came from SS Manufacturing's data.
 {query}
 Explain from this query: a column it made itself (a name after AS) is not stored in the data - say how the query made it (e.g. COUNT(*) = the number of rows in each group) and what it means for that answer. Never say such a column was added by mistake or does not exist."""
+
+# 18-Nov (ML Insights chat): after "which customers might stop buying from us?" (top row: Aurora Fluid Power Limited)
+# the follow-up "why is aurora on top?" got SQL with customer_name LIKE '%Aurora%' and an answer about another
+# customer, Aurora CNC Systems Pvt. Ltd. Now a follow-up word that is part of a name in the previous answer's result
+# (lc.memory.previous_names: the saved SQL runs again, read-only) gets one checked fact line per word in the rewrite
+# and SQL requests. No such word: nothing is added (no tokens, no query).
+FOLLOW_UP_NAME_ONE = 'In {which}, "{word}" = {name} (row {row} of its result).'
+FOLLOW_UP_NAME_SEVERAL = 'In {which}, "{word}" is part of {count} names of its result: {names}{more} - the first is row {row}.'
+FOLLOW_UP_NAMES_REWRITE = """
+
+{facts}
+When the new question means that name, write it out with the full name."""
+FOLLOW_UP_NAMES_SQL = """
+({facts} When this question means that name, use the exact full name (e.g. customer_name = '<full name>'), never a LIKE on the short word - it can match another name.)"""
 
 EXPLAIN_SYSTEM_PROMPT = """You are "Manufacturing Intelligence", the data assistant of a pump manufacturer ("SS Manufacturing").
 A user asked a question, a read-only SQL query ran on SS Manufacturing's database, and you get the rows it returned.
@@ -482,6 +548,29 @@ class RequestTooLarge(AIUnavailable):
         super().__init__(AI_ERROR)
 
 
+class ModelBusy(AIUnavailable):
+    """A model's per-minute limit (429): the next model of the chain is tried."""
+
+    def __init__(self):
+        super().__init__(AI_BUSY)
+
+
+class ModelDown(AIUnavailable):
+    """A model could not be reached: network, timeout or a server error (busy=True: 503, e.g. Gemini's "high
+    demand"). The next model of the chain is tried."""
+
+    def __init__(self, busy=False):
+        super().__init__(AI_DOWN)
+        self.busy = busy
+
+
+class ModelFailed(AIUnavailable):
+    """Any other error of a model (a wrong key, an unknown model, a bad request): the next model is tried."""
+
+    def __init__(self):
+        super().__init__(AI_ERROR)
+
+
 class StreamBroken(AIUnavailable):
     """A streamed reply failed after its first piece was shown: no retry and no backup model (the user already
     saw part of it). The answer step then shows the rows without a summary - never half an answer."""
@@ -514,6 +603,9 @@ class AskResult:
     step_secs: dict = field(default_factory=dict)  # seconds per step of STEP_NAMES (empty = not measured)
     chart_kind: str = ""                         # the chart the SQL call said was asked for (CHART_KINDS key; '' = none)
     mode: str = ""                               # 'ml' = asked in an ML Insights chat (ML_MODE_NOTE); '' = the Assistant
+    chosen_model: str = ""                       # staff's choice of the model to try first (lc.llm.MODEL_IDS; '' = auto)
+    model_reasons: dict = field(default_factory=dict)  # {model id: why it did not answer} for this question
+    model_note: str = ""                         # why the answering model was not the chain's first ('' = it was)
 
     @property
     def row_count(self):
@@ -585,7 +677,7 @@ class AskResult:
 
 
 # ------------------------------------------------------------------ the main flow
-def ask(question, user, context=None, use_memories=True, mode=""):
+def ask(question, user, context=None, use_memories=True, mode="", model=""):
     """Answer one question for one user, save it as a Question and return an AskResult.
     context = the chat's memory: a lc.memory.ChatHistory, or its earlier questions (saved Questions, oldest
     first, at most CONTEXT_SIZE are used), so a follow-up such as "and for Sep?" or "the above with profit %"
@@ -595,8 +687,9 @@ def ask(question, user, context=None, use_memories=True, mode=""):
     answered: the fact is saved for the user (status 'memory') - no SQL, no AI call, no tokens. The user's saved
     memories go into the prompts of every later question (use_memories=False leaves them out, e.g. the eval).
     In a chat, a question about the previous answer ("is that correct?", "how did you get this?") is answered by
-    answer_check.py: the earlier SQL runs again, no AI call, 0 tokens."""
-    return run_to_end(ask_events(question, user, context, use_memories, streaming=False, mode=mode))
+    answer_check.py: the earlier SQL runs again, no AI call, 0 tokens.
+    model = the model to try first (an admin's choice, lc.llm.MODEL_IDS; '' = the chain's own order)."""
+    return run_to_end(ask_events(question, user, context, use_memories, streaming=False, mode=mode, model=model))
 
 
 def run_to_end(events):
@@ -608,14 +701,14 @@ def run_to_end(events):
             return done.value
 
 
-def ask_events(question, user, context=None, use_memories=True, streaming=True, mode=""):
+def ask_events(question, user, context=None, use_memories=True, streaming=True, mode="", model=""):
     """ask() for the streamed Ask page: a generator that yields the question's progress while the graph runs -
     {"type": "step", "label": ...} as each step starts, {"type": "token", "text": ...} for each piece of the final
     answer - and returns the AskResult, saved exactly as ask() saves it (status, tokens, time per step).
     With streaming=False it yields nothing: that is ask() itself (the JSON API, the eval, the MCP server)."""
     started = time.perf_counter()
     text = (question or "").strip()[:MAX_QUESTION_CHARS]
-    result = AskResult(text=text, mode=mode or "")
+    result = AskResult(text=text, mode=mode or "", chosen_model=model or "")
     fact = user_memory.memory_fact(text)
     # "is that correct?" / "how did you get this?" in a chat: the previous answer is checked by our own code
     about = answer_check.about_earlier(text, context) if fact is None else None
@@ -671,6 +764,8 @@ def ask_events(question, user, context=None, use_memories=True, streaming=True, 
         understood_as=result.understood_as,
         step_secs=result.step_secs or None,
         chart_kind=result.chart_kind,
+        # 18-Nov: why another model than the chain's first answered - saved, so a reopened card says the same
+        model_note=(result.model_note if result.model else "")[:200],
     )
     memory = memory or result.memory  # saved by the rules above, or by the AI's REMEMBER reply
     if memory is not None:  # the memory points to the question that said "Remember ..."
@@ -811,11 +906,14 @@ SQL_BOTH_NOTE = ("\n(The part of this question about rules, terms or policies is
 DOCS_PART_NOTE = "\n(Answer only the part about the company documents - the data part is answered separately.)"
 
 # 17-Nov: a question of an ML Insights chat (mode 'ml') - added after the question in the SQL request, never to
-# SQL_SYSTEM_PROMPT, so the Assistant's questions pay nothing for it (about 70 tokens)
+# SQL_SYSTEM_PROMPT, so the Assistant's questions pay nothing for it (about 70 tokens; 18-Nov: about 115 with the
+# future month / no customer forecast sentences - "my top customer in Aug 2027" got "could not write a query")
 ML_MODE_NOTE = ("\n(This chat is ML Insights: answer from the ml_ tables first - sales forecasts, customers who might "
                 "stop buying, customer groups, unusual invoices, products bought together, stock run-out. Join the "
-                "other tables only for names, dates or the actual sales next to a forecast. A question that has "
-                "nothing to do with them is answered as usual.)")
+                "other tables only for names, dates or the actual sales next to a forecast. A month after data_to "
+                "has no actual sales: give its 'TOTAL' forecast. No forecast per customer: for customers in such a "
+                "month give that TOTAL forecast and the newest complete sales month's top customers as past actuals. "
+                "A question that has nothing to do with them is answered as usual.)")
 ML_SEARCH_K = 20  # ML mode: the notes searched for the best ML example / the ML rules (still TOP_K are sent)
 _ML_RULES_HEADING = "ml results"  # docs/business_rules.md '## ML results (forecast, risk, ...)'
 
@@ -892,15 +990,22 @@ ML_FACTS_SQL = ("SELECT l.scenario, l.result_table, l.metric_name, l.metric_valu
 # per scenario of ml/run_ml.py: (name, which model on which input file of ml_inputdata/) - read from ml/*.py, keep
 # them true. Short on purpose: the whole block is ~300 tokens.
 ML_FACT_LINES = {
-    "sales_forecast": ("Sales forecast", "{model}, best of 5 models in a backtest (Holt-Winters multiplicative / "
-                       "additive, SARIMAX, last year x growth, 3-month average); forecast_monthly_sales.csv (complete sales months)"),
-    "customer_risk": ("Customer risk", "0-100 points score: 40 % sales drop, 40 % fewer orders, 20 % overdue; "
-                      "customer_features.csv"),
-    "customer_segments": ("Customer groups", "KMeans on recency, frequency, money, tenure; customer_rfm.csv"),
-    "invoice_alerts": ("Unusual invoices", "robust z-scores of price, quantity, credit-note size; "
-                       "invoice_lines_for_alerts.csv"),
-    "product_pairs": ("Bought together", "support, confidence, lift of pairs on one sales order; order_baskets.csv"),
-    "stock_runout": ("Stock run-out", "stock / average daily sales of the last 90 days; stock_speed.csv"),
+    "sales_forecast": ("Sales forecast", "{model}, best of 5 models in a backtest (lowest MAPE on the last 6 complete "
+                       "months held back; tried: Holt-Winters multiplicative / additive, SARIMAX, last year x growth, "
+                       "3-month average); forecast_monthly_sales.csv (complete sales months)"),
+    # 18-Nov: "20 % overdue" was read as "overdue amounts" - it is DAYS since the last invoice (ml/customer_risk.py)
+    "customer_risk": ("Customer risk", "0-100 points score: 40 % how far sales dropped (last 3 months vs the "
+                      "customer's normal 3 months), 40 % fewer sales orders than normal, 20 % days overdue (days since "
+                      "the last invoice vs the customer's usual gap between invoices - not unpaid amounts); lowered for "
+                      "customers who order less than about once a month; customer_features.csv"),
+    "customer_segments": ("Customer groups", "KMeans, 5 groups, on recency (days since the last invoice), frequency "
+                          "(invoices), money (net sales), tenure (days since the first invoice); customer_rfm.csv"),
+    "invoice_alerts": ("Unusual invoices", "robust z-scores: unit price and quantity vs that product's median, "
+                       "credit-note size vs the usual credit note; invoice_lines_for_alerts.csv"),
+    "product_pairs": ("Bought together", "support, confidence, lift of product pairs on the same sales order; "
+                      "order_baskets.csv"),
+    "stock_runout": ("Stock run-out", "days left = stock quantity / average daily sales quantity of the last 90 "
+                     "days of invoices; stock_speed.csv"),
 }
 
 
@@ -908,6 +1013,31 @@ def about_app_ml(text):
     """True when a message names ML / models / the forecast / training data ... (then the general answer gets the
     "This app's ML" facts). Only decides whether facts are added; the route was already chosen by the AI."""
     return bool(ML_QUESTION_WORDS.search(text or ""))
+
+
+# 18-Nov (backup model): "which model you used for forecast and how accurate it is?" got NO_DATA "How the forecast
+# model works ... is not in the SS Manufacturing data" - how the app's own ML works is never missing data. The NO_DATA
+# reason must name the app's ML with one of these words: not a bare "model" or "segment" ("sales of product model
+# X" or "sales by segment" is a data question)
+ML_NO_DATA_WORDS = re.compile(
+    r"\b(ml|machine learning|algorithms?|forecast\w*|predict\w*|accura\w*|mape|backtest\w*|train(ed|ing)|holt|"
+    r"winters|arima|sarimax|k-?means|cluster\w*|z-?scores?|risk scor\w*|churn\w*|run-?out|bought together|"
+    r"market.basket)\b", re.I)
+
+
+def no_data_about_app_ml(question, reason):
+    """True when the SQL writer's NO_DATA (or a MISSING line with no SQL) for the WHOLE question is really about how
+    this app's own ML works - then the general answer with the "This app's ML" facts is given, not "data not
+    available". All three must hold: the question names the app's ML (about_app_ml, question + understood as), the
+    reason names it too (ML_NO_DATA_WORDS), and neither names a topic that is truly not in the data (profit,
+    payments, purchases, people, budget, market share: NOT_IN_DATA_TOPICS without 'forecast'). So "predict next
+    year's profit" with NO_DATA "profit forecast needs costs" stays NO_DATA."""
+    if not reason or not about_app_ml(question) or not ML_NO_DATA_WORDS.search(reason):
+        return False
+    # "days overdue" is part of the risk score (days since the last invoice), not the payments that are missing
+    text = re.sub(r"\bdays? overdue|\boverdue days?", "", f"{question} {reason}".lower())
+    missing = [pattern for name, pattern in NOT_IN_DATA_TOPICS.items() if name != "plans"] + [r"budget"]
+    return not any(re.search(pattern, text) for pattern in missing)
 
 
 def _ml_number(value):
@@ -1063,10 +1193,23 @@ def _schema_of(lines, chosen):
 # ml_ table and the ML notes: ~5,400 tokens + 1,000 for the reply, over the backup's ~6,000 tokens a minute, so Groq
 # refused it (413) twice. The backup now gets ONE note (the closest that names an ml_ table) and only the ml_ tables
 # the question's words pick (ml_sales_forecast when none is picked): ~4,200 + 1,000. The main model's request is as before.
-def backup_ml_hits(hits):
+def backup_ml_hits(hits, question=""):
     """ML mode, the backup model's SQL request: the one note it gets - the closest that names an ml_ table (the ML
-    example, rules or table piece), else the closest note."""
+    example, rules or table piece), else the closest note. 18-Nov ("which products customers buy together?"): when
+    the question's words pick an ml_ table, the closest EXAMPLE naming that table comes first (its SQL is the one
+    to follow), then the closest note naming it (its table piece or the ML rules) - never another ML note."""
     ml = [hit for hit in hits if _ML_TABLE.search(hit.get("text", ""))]
+    text = (question or "").lower()
+    picked = {table for table, words in TABLE_WORDS.items()
+              if table.startswith("ml_") and table != "ml_run_log" and re.search(words, text)}
+
+    def names_picked(hit):
+        return bool(picked & {name.lower() for name in _ML_TABLE.findall(hit.get("text", ""))})
+
+    for wanted in (lambda hit: hit.get("kind") == "example" and names_picked(hit), names_picked):
+        found = [hit for hit in ml if wanted(hit)]
+        if found:
+            return found[:1]
     return (ml or list(hits))[:1]
 
 
@@ -1084,21 +1227,62 @@ def backup_ml_schema(question, hits, smallest=False):
     return _schema_of(lines, chosen)
 
 
-def explain(result, memories=(), pdf_hits=(), on_token=None):
+def explain(result, memories=(), pdf_hits=(), on_token=None, on_rewrite=None):
     """Groq call #2 (LangChain's answer chain): a short plain-English answer from the question, the SQL
     and the rows. The backup model gets fewer rows (its free tier allows a smaller request).
     memories = the user's saved memories: the answer says when one of them changed the result.
     pdf_hits = the PDF pieces of a question about the data AND the documents: one answer covers both parts.
-    on_token = called with each piece of the answer while it is written (the streamed Ask page)."""
+    on_token = called with each piece of the answer while it is written (the streamed Ask page).
+    18-Nov: the answer is then checked by our own code against the rows and the facts it was given
+    (answer_verify.py: a "no forecast for Aug 2027" that is in the data, an amount that is not); a wrong one is sent
+    back ONCE with the correction and rewritten (its tokens count as the answer's, its time as 'answer_fix').
+    on_rewrite = called just before that rewrite (the streamed page clears the first text and shows the step)."""
+    from .. import answer_verify  # imported here: it imports this module
     from ..lc.calls import LcRequest  # imported here: portal/lc/ imports this module
 
-    def request_for(model):
-        backup = model == fallback_model_name()
-        max_rows = FALLBACK_ROWS_FOR_ANSWER if backup else ROWS_FOR_ANSWER
-        max_chars = FALLBACK_MAX_ANSWER_CHARS if backup else None
-        return LcRequest("answer", explain_values(result, max_rows, max_chars, memories, pdf_hits))
-    return fy_labels(plain_text(_ask_ai(request_for, ANSWER_MAX_TOKENS, "low", result, step="answer",
-                                        on_token=on_token)))
+    sent = []  # the requests the models were sent (the check reads the facts in them)
+
+    def request_for(entry, retries=()):  # entry = the chain's model (lc.llm.ChainModel) the request is for
+        if entry.full_request:
+            request = LcRequest("answer", explain_values(result, ROWS_FOR_ANSWER, None, memories, pdf_hits),
+                                retries=list(retries))
+        else:
+            # Gemini Flash-Lite and the Groq backup: fewer rows; after a 413 (lc.calls.for_backup, smallest=True) the smallest request, made only
+            # then (its fact notes would read MySQL again)
+            request = LcRequest("answer", explain_values(result, FALLBACK_ROWS_FOR_ANSWER, FALLBACK_MAX_ANSWER_CHARS,
+                                                         memories, pdf_hits), retries=list(retries),
+                                backup={"smallest": lambda: explain_values(result, BACKUP_SMALLEST_ROWS,
+                                                                           BACKUP_SMALLEST_ANSWER_CHARS, memories,
+                                                                           pdf_hits, smallest=True)})
+        sent.append(request)
+        return request
+
+    answer = fy_labels(plain_text(_ask_ai(request_for, ANSWER_MAX_TOKENS, "low", result, step="answer",
+                                          on_token=on_token)))
+    if not answer or not answer_verify.applies(result, pdf_hits):
+        return answer
+    seen = " ".join(str(value) for value in sent[-1].values.values()) if sent else ""
+    correction, facts = answer_verify.problems(result, answer, seen)
+    if not correction:
+        return answer
+    log.warning("Answer check: the answer is sent back once - %s", correction[:500])
+    from langchain_core.messages import AIMessage, HumanMessage
+
+    retries = [AIMessage(answer), HumanMessage(correction)]
+    if on_rewrite:
+        on_rewrite()
+    try:
+        second = fy_labels(plain_text(_ask_ai(lambda entry: request_for(entry, retries), ANSWER_MAX_TOKENS, "low",
+                                              result, step="answer", timed_as="answer_fix", on_token=on_token)))
+    except AIUnavailable as exc:  # the rewrite failed: the first answer is still better than none
+        log.warning("Answer check: the rewrite failed (%s) - the first answer is kept", exc)
+        return answer
+    if not second:
+        return answer
+    still, _facts = answer_verify.problems(result, second, f"{seen} {correction}", facts)
+    if still:  # never a loop: the second answer is kept as it is
+        log.warning("Answer check: the rewritten answer still has a problem (kept) - %s", still[:500])
+    return second
 
 
 _SQL_TEXT = re.compile(r"('(?:[^'\\]|\\.|'')*'|\"(?:[^\"\\]|\\.|\"\")*\"|`[^`]*`)")  # quoted values and names
@@ -1272,22 +1456,28 @@ def ml_totals_note(sql):
         return ""
 
 
-def explain_values(result, max_rows, max_chars=None, memories=(), pdf_hits=()):
+def explain_values(result, max_rows, max_chars=None, memories=(), pdf_hits=(), smallest=False):
     """The {fields} of EXPLAIN_REQUEST for this result (question, sql, note, understood, preferences, periods,
     table, documents), with at most max_rows rows; with max_chars, rows are halved (down to 5) until the request
     text fits. documents = the PDF pieces of a question about the data AND the documents ('' without them).
+    smallest=True (the backup's last try after Groq said too large): the app's facts only - the two general rules
+    (data dates, history start) are left out and only the closest PDF piece is kept.
+    Every fact the app works out (totals, highest / lowest, run-out dates, missing months ...) is worked out from
+    ALL the rows of the result, never from the rows shown here.
     LangChain's answer template (lc/prompts.EXPLAIN_PROMPT) fills them in."""
     lines = [" | ".join(result.columns)]
     for row in result.rows[:max_rows]:
         lines.append(" | ".join(format_value(v, c)[0] for v, c in zip(row, result.columns)))
     periods = period_notes(result.sql)
+    pdf_hits = list(pdf_hits)[:1] if smallest else pdf_hits
     # the rule on the data's own dates goes only with rows that have them (in the system prompt it made
     # the model add a vague "based on data from ..." sentence to every answer)
-    data_dates = ("\n\nData dates: " + DATA_DATES_NOTE) if any("data_from" in c for c in result.columns) else ""
+    data_dates = ("\n\nData dates: " + DATA_DATES_NOTE) if any("data_from" in c for c in result.columns) \
+        and not smallest else ""
     coverage = data_coverage_notes(result.sql)
     if coverage:
         data_dates += "\n\nDates the data really covers (worked out by the app):\n" + "\n".join(coverage)
-    if "invoice_history_starts" in result.columns:  # new customers: "first time" since the data starts
+    if "invoice_history_starts" in result.columns and not smallest:  # new customers: "first time" since data start
         data_dates += "\n\nData start: " + HISTORY_START_NOTE
     if _ML_TABLE.search(result.sql or ""):  # forecasts, risk scores ... (only then: no tokens on other answers)
         data_dates += "\n\nML results: " + ML_RESULTS_NOTE
@@ -1297,9 +1487,7 @@ def explain_values(result, max_rows, max_chars=None, memories=(), pdf_hits=()):
     forecast = forecast_months_note(result.sql)
     if forecast:  # 18-Nov: which months are forecast at all (a forecast month was told as the year's total)
         data_dates += "\n\nForecast months available (worked out by the app): " + forecast
-    extremes = highest_lowest(result)
-    if extremes:
-        data_dates += "\n\nHighest / lowest (worked out by the app - use these, never compare the rows yourself): " + extremes
+    at_extremes = len(data_dates)  # the highest / lowest line goes here - in the loop below (it needs the rows shown)
     unnamed = unnamed_groups(result)
     if unnamed:
         data_dates += "\n\nGroups with no real name (always mention them with their amount): " + unnamed
@@ -1326,12 +1514,18 @@ def explain_values(result, max_rows, max_chars=None, memories=(), pdf_hits=()):
         limited = limit_note(result)
         if limited:
             note += "; " + limited
+        # 18-Nov: a list already in order needs no highest / lowest only when the AI sees all of it (the backup may
+        # see 5 of 20 rows); the line itself is worked out from all the rows
+        extremes = highest_lowest(result, seen=min(shown, FALLBACK_ROWS_FOR_ANSWER))
+        facts = data_dates[:at_extremes] + ("\n\nHighest / lowest (worked out by the app - use these, never compare "
+                                            "the rows yourself): " + extremes if extremes else "") \
+            + data_dates[at_extremes:]
         values = dict(
             question=result.text, sql=compact_sql(result.sql), note=note,
             understood=f"\n(Understood as: {result.understood_as})" if result.understood_as else "",
             preferences=preferences(memories, "answer"),
             periods=("\nPeriods used by the query:\n" + "\n".join(periods) + "\n") if periods else "",
-            table=("\n".join(lines) if shown else "(no rows)") + data_dates
+            table=("\n".join(lines) if shown else "(no rows)") + facts
             + ("\n\nNote: " + " ".join(result.notes) if result.notes else ""),
             documents=EXPLAIN_DOCUMENTS.format(pieces=pdf_pieces_text(pdf_hits)) if pdf_hits else "")
         request = EXPLAIN_REQUEST.format(**values)
@@ -1357,10 +1551,11 @@ def limit_note(result):
             f"never call these the full list or say there are only {limit}")
 
 
-def highest_lowest(result, max_columns=3):
+def highest_lowest(result, max_columns=3, seen=FALLBACK_ROWS_FOR_ANSWER):
     """'highest net_sales_inr: Jan 2027 = 3,958,025,198.88; lowest net_sales_inr: Aug 2026 = 5,440,490.00'
-    for up to 3 amount columns, worked out here: the model named the wrong lowest month of 15 rows
+    for up to 3 amount columns, worked out here from ALL the rows: the model named the wrong lowest month of 15 rows
     (13-Oct test). Only for more than 4 rows that are all here (not cut at 500); '' otherwise.
+    seen = the rows the AI is shown: a column already in order is left out only when the AI sees every row.
     18-Nov: never for the ranked ML lists (risk, pairs, alerts, run-out, groups) - the answer told "the lowest lift"
     and a credit note's negative sales_prev_3m_inr as if they mattered. Forecasts keep it (the highest month)."""
     if result.row_count <= 4 or result.truncated or _ML_TOTALS_TABLE.search(result.sql or ""):
@@ -1381,7 +1576,7 @@ def highest_lowest(result, max_columns=3):
                 or _PLAIN_INT.search(column) or _NOT_AN_AMOUNT.search(column)
                 or not all(isinstance(v, (int, float, decimal.Decimal)) and not isinstance(v, bool) for v in values)):
             continue  # not an amount, or the same on every row (a summary figure)
-        if result.row_count <= FALLBACK_ROWS_FOR_ANSWER and (values == sorted(values) or values == sorted(values, reverse=True)):
+        if result.row_count <= seen and (values == sorted(values) or values == sorted(values, reverse=True)):
             continue  # already in order and all rows seen: the row order shows it ("lowest of the top 5" was noise)
         rows = [row for row in result.rows if row[i] is not None]
         for word, row in (("highest", max(rows, key=lambda r: r[i])), ("lowest", min(rows, key=lambda r: r[i]))):
@@ -2216,6 +2411,220 @@ def _one_forecast_month(where):
     return False
 
 
+# 18-Nov 17:07: "What is the sales forecast for August 2027?" read the level 'PRODUCT' rows of Aug 2027 - 0 rows, and the
+# answer said there was no forecast for August 2027. Its TOTAL row is there (about 53.7 Cr): product forecasts cover only
+# the top products for the first sales months. Two checks send such a query back once (lc/graph.py check_sql before it
+# runs, run_sql after 0 rows); the MCP server's looks_wrong has a SQL-only one.
+FORECAST_LEVELS_SQL = ("SELECT level, sales_month, period_start, product_code, product_description "
+                       "FROM ml_sales_forecast ORDER BY level DESC, period_start")
+FORECAST_PRODUCT_COLUMNS = ("product_code", "product_description", "product_id")
+FORECAST_LEVEL_PROBLEM = ("The question names no product: use level = 'TOTAL' (company total, {total}); product "
+                          "forecasts (level 'PRODUCT') {products}.")
+FORECAST_TOTAL_MONTH_PROBLEM = ("{months} {has} a TOTAL forecast row (level = 'TOTAL'); product forecasts (level "
+                                "'PRODUCT') {products} - query level = 'TOTAL'.")
+PRODUCT_FORECAST_MONTH_PROBLEM = ("{months} {has} no product forecast, only a TOTAL one: for the company total use level = "
+                                  "'TOTAL' ({total}); product forecasts (level 'PRODUCT') {products}.")
+# a question about products in so many words: "which products will sell the most", "item-wise", an item code (FG01484)
+_PRODUCT_ASKED = re.compile(r"\b(?:products?|items?|skus?|(?:product|item)[\s-]*wise)\b|\b(?:FG|RM|CO|CA)\d{3,}\b", re.I)
+# a sales month named with its year: "August 2027", "Aug 2027", "aug-2027", 'Sep 2027' in the SQL
+_MONTH_ASKED = re.compile(r"\b(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|"
+                          r"sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\.?[\s,'-]*((?:19|20)\d\d)\b",
+                          re.I)
+# words of a product description that a question about the company total may use as well
+_NOT_PRODUCT_WORDS = {"sales", "sale", "forecast", "total", "company", "month", "months", "next", "with", "and", "for",
+                      "the", "new", "all", "top", "set", "type", "year", "jan", "feb", "mar", "apr", "may", "jun", "jul",
+                      "aug", "sep", "oct", "nov", "dec"}
+
+
+def forecast_levels():
+    """The forecast months of ml_sales_forecast per level and the forecast products, read from MySQL (one query of
+    about 40 rows): {"TOTAL": ['Nov 2026', ... 'Oct 2027'], "PRODUCT": ['Nov 2026', 'Dec 2026', 'Jan 2027'],
+    "products": ['FG01484 GCI TX-675-3A 0.4kW (415V 50Hz)', ...]}, the months in period order. {} on any error or when
+    the table is empty (the forecast level checks then let every query through)."""
+    try:
+        rows = warehouse.run_select(check_sql(FORECAST_LEVELS_SQL, warehouse.allowed_tables()))["rows"]
+        levels, products = {}, []
+        for level, month, _start, code, description in (list(row)[:5] for row in rows):
+            months = levels.setdefault(str(level).upper(), [])
+            if month and str(month) not in months:
+                months.append(str(month))
+            name = " ".join(str(part) for part in (code, description) if part)
+            if name and name not in products:
+                products.append(name)
+        return {**levels, "products": products} if levels else {}
+    except Exception:  # noqa: BLE001 - a check is extra: any failure lets the query through
+        log.warning("forecast levels not read", exc_info=True)
+        return {}
+
+
+def _words(text):
+    """The words of a text in small letters (3+ characters with a letter in them), also each part of a hyphenated one:
+    'GCI TX-675-3A' -> gci, tx-675-3a."""
+    words = set()
+    for word in re.findall(r"[a-z0-9][a-z0-9.\-]*[a-z0-9]", (text or "").lower()):
+        for part in (word, *word.split("-")):
+            if len(part) >= 3 and re.search(r"[a-z]", part):
+                words.add(part)
+    return words
+
+
+def names_a_product(question, levels=None):
+    """True when the question is about products: a product word ("which products ...", "item-wise"), an item code
+    (FG01484) or a word of a forecast product's code / description ("GCI TX-675")."""
+    if _PRODUCT_ASKED.search(question or ""):
+        return True
+    words = _words(question)
+    return any(words & (_words(name) - _NOT_PRODUCT_WORDS) for name in (levels or {}).get("products", []))
+
+
+def forecast_months_asked(text):
+    """The sales months named with their year in a question or SQL, as ml_sales_forecast.sales_month names them
+    ('Aug 2027'), in order, each once."""
+    months = []
+    for name, year in _MONTH_ASKED.findall(text or ""):
+        month = f"{name[:3].title()} {year}"
+        if month not in months:
+            months.append(month)
+    return months
+
+
+def _forecast_where_columns(sql):
+    """The WHERE columns of ml_sales_forecast in the SQL: a column with the table's name or alias, `level` (only that
+    table has it), or an unqualified one in a SELECT that reads only ml_sales_forecast. [] for other or unreadable SQL."""
+    if not _FORECAST_TABLE.search(sql or ""):
+        return []
+    try:
+        tree = sqlglot.parse_one(sql, read="mysql")
+    except (sqlglot.errors.ParseError, sqlglot.errors.TokenError):
+        return []
+    if tree is None:
+        return []
+    names = {t.alias_or_name.lower() for t in tree.find_all(exp.Table) if t.name.lower() == "ml_sales_forecast"}
+    columns = []
+    for where in tree.find_all(exp.Where):
+        select = where.parent
+        own = [t for t in select.find_all(exp.Table) if t.find_ancestor(exp.Select) is select] if select else []
+        alone = bool(own) and all(t.name.lower() == "ml_sales_forecast" for t in own)
+        for column in where.find_all(exp.Column):
+            table = (column.table or "").lower()
+            if table in names or (not table and (alone or column.name.lower() == "level")):
+                columns.append(column)
+    return columns
+
+
+def _level_value(column):
+    """The level a WHERE condition on the level column picks: 'PRODUCT' (= 'PRODUCT', <> 'TOTAL', IN ('PRODUCT')),
+    'TOTAL' (the same for TOTAL), or '' for anything else."""
+    node, value = column.parent, ""
+    if isinstance(node, (exp.EQ, exp.NEQ)):
+        other = node.expression if node.this is column else node.this
+        if isinstance(other, exp.Literal) and other.is_string:
+            value = other.this.upper()
+            if isinstance(node, exp.NEQ):
+                value = {"TOTAL": "PRODUCT", "PRODUCT": "TOTAL"}.get(value, "")
+    elif isinstance(node, exp.In) and node.this is column:
+        values = {e.this.upper() for e in node.expressions if isinstance(e, exp.Literal) and e.is_string}
+        if len(values) == 1 and len(node.expressions) >= 1 and all(isinstance(e, exp.Literal) for e in node.expressions):
+            value = values.pop()
+    return value if value in ("TOTAL", "PRODUCT") else ""
+
+
+def forecast_level_filter(sql):
+    """How the SQL's WHERE picks ml_sales_forecast rows, as a set of: 'PRODUCT' (level = 'PRODUCT' / <> 'TOTAL'),
+    'TOTAL' (level = 'TOTAL', or product_id / product_code IS NULL - only TOTAL rows have no product) and
+    'product columns' (any other condition on product_code / product_description / product_id). Empty set: no such
+    filter, or no ml_sales_forecast."""
+    found = set()
+    for column in _forecast_where_columns(sql):
+        name = column.name.lower()
+        if name == "level":
+            value = _level_value(column)
+            if value:
+                found.add(value)
+        elif name in FORECAST_PRODUCT_COLUMNS:
+            is_null = isinstance(column.parent, exp.Is) and not isinstance(column.parent.parent, exp.Not)
+            found.add("TOTAL" if is_null else "product columns")
+    return found
+
+
+def _months_span(months):
+    """'Nov 2026 - Oct 2027' for months in order, or the one month."""
+    return months[0] if len(months) == 1 else f"{months[0]} - {months[-1]}"
+
+
+def _product_forecasts_text(levels):
+    """What the product forecasts cover, e.g. 'exist only for the top 10 products, Nov 2026 - Jan 2027'."""
+    months = levels.get("PRODUCT") or []
+    if not months:
+        return "do not exist in the forecast"
+    count = len(levels.get("products") or [])
+    return f"exist only for the top {count} products, {_months_span(months)}" if count else \
+        f"exist only for some products, {_months_span(months)}"
+
+
+def _total_months_text(levels):
+    """The TOTAL forecast months, e.g. '12 sales months Nov 2026 - Oct 2027'."""
+    months = levels["TOTAL"]
+    return f"sales month {months[0]}" if len(months) == 1 else f"{len(months)} sales months {_months_span(months)}"
+
+
+def forecast_level_problem(question, sql, levels=None, rows=None):
+    """(problem, levels): a query on the product forecasts for a question that names no product (18-Nov 17:07), or ''.
+    levels = forecast_levels() when it was read already (lc/graph.py keeps it for the run), else None: it is read
+    only when the cheap checks found such a query, and handed back for the next check.
+    rows=None, before running: the WHERE picks product rows (level 'PRODUCT' or a product column) and not level
+    'TOTAL' -> FORECAST_LEVEL_PROBLEM.
+    rows given, after running: no rows, the WHERE does not pick level 'TOTAL', and a sales month the question / SQL
+    names is a TOTAL forecast month -> FORECAST_TOTAL_MONTH_PROBLEM. A month beyond the forecast is not flagged (the
+    0-row answer stays; the answer step gets forecast_months_note).
+    Never flagged: a question with a product word, an item code or a word of a forecast product's name; SQL that does
+    not read ml_sales_forecast; an empty forecast table or a failing read."""
+    if not _FORECAST_TABLE.search(sql or "") or _PRODUCT_ASKED.search(question or ""):
+        return "", levels
+    found = forecast_level_filter(sql)
+    if "TOTAL" in found:
+        return "", levels
+    if rows is None:
+        if not found & {"PRODUCT", "product columns"}:
+            return "", levels
+        months = []
+    else:
+        months = forecast_months_asked(f"{question} {sql}") if found_nothing(rows) else []
+        if not months:
+            return "", levels
+    if levels is None:
+        levels = forecast_levels()
+    if not levels.get("TOTAL") or names_a_product(question, levels):
+        return "", levels
+    products = _product_forecasts_text(levels)
+    if rows is None:
+        return FORECAST_LEVEL_PROBLEM.format(total=_total_months_text(levels), products=products), levels
+    months = [month for month in months if month in levels["TOTAL"]]
+    if not months:
+        return "", levels
+    return FORECAST_TOTAL_MONTH_PROBLEM.format(months=" and ".join(months), has="has" if len(months) == 1 else "have",
+                                               products=products), levels
+
+
+def product_forecast_months(sql, levels=None):
+    """The MCP server's check (no question there, so SQL only): level = 'PRODUCT' with no product named (no condition
+    on a product column) for sales months that only the TOTAL forecast has -> PRODUCT_FORECAST_MONTH_PROBLEM, else ''.
+    The forecast months are read only for such a query."""
+    if forecast_level_filter(sql) != {"PRODUCT"}:
+        return ""
+    months = forecast_months_asked(sql)
+    if not months:
+        return ""
+    levels = forecast_levels() if levels is None else levels
+    only_total = [m for m in months if m in levels.get("TOTAL", []) and m not in levels.get("PRODUCT", [])]
+    if not only_total:
+        return ""
+    return PRODUCT_FORECAST_MONTH_PROBLEM.format(months=" and ".join(only_total),
+                                                 has="has" if len(only_total) == 1 else "have",
+                                                 total=_total_months_text(levels),
+                                                 products=_product_forecasts_text(levels))
+
+
 NAME_COLUMNS =("customer_name", "product_description", "sales_person_name")  # typed partly by users
 NAME_MATCHES_PROBLEM = ("the query adds every {column} that matches the LIKE into one number. List one row "
                         "per matching name with its own value (GROUP BY its id and {column}) and add "
@@ -2604,85 +3013,259 @@ def fallback_model_name():
     return "" if backup == model_name() else backup
 
 
-_main_resting_until = 0.0  # time.monotonic() until which new questions start with the backup
+# {model id: (time.monotonic() until which it rests, why)} - new calls pass a resting model over
+_resting = {}
 
 
-def _models_to_try(result=None):
-    """The models for the next call of this question, in order (result=None: a call outside a question, e.g. the
-    AI chart)."""
-    main, backup = model_name(), fallback_model_name()
-    if not backup:
-        return [main]
-    if getattr(result, "model", "") == backup or time.monotonic() < _main_resting_until:
-        return [backup, main]  # this question already moved, or the main model rests a while
-    return [main, backup]
+def model_rests(model_id, secs, why):
+    """This model is passed over for the next `secs` seconds (its daily limit, or it was busy)."""
+    _resting[model_id] = (time.monotonic() + secs, why)
 
 
 def main_model_rests():
-    """Groq said the main model's DAILY limit is used up: new calls start with the backup for MAIN_RESTING_SECS."""
-    global _main_resting_until
-    _main_resting_until = time.monotonic() + MAIN_RESTING_SECS
+    """Groq said the main model's DAILY limit is used up: new calls start with the next model for MAIN_RESTING_SECS."""
+    model_rests("groq-main", MAIN_RESTING_SECS, "Groq's daily limit was reached")
 
 
-def _ask_backup(request, max_tokens, effort, model, streamed):
-    """One call of the backup model with the request cut to its smaller free tier (lc.calls.for_backup).
-    18-Nov (question 118): the main model's daily limit moved the SQL call to the backup, but the full SQL request
-    was more than the backup's tokens a minute - Groq refused it at once (413, RequestTooLarge) and the question
-    ended with "returned an error". Too large even when cut: once more with the smallest request, then
-    RequestTooLarge as before."""
+def resting(model_id):
+    """(seconds left, why) while this model rests; None when it does not."""
+    until, why = _resting.get(model_id, (0.0, ""))
+    left = until - time.monotonic()
+    return (left, why) if left > 0 else None
+
+
+def _first_chosen(chain, chosen=""):
+    """The chain with the chosen model (an admin's choice) moved to the front."""
+    return [entry for entry in chain if entry.id == chosen] + [entry for entry in chain if entry.id != chosen]
+
+
+def models_in_order(chosen="", answered_by=""):
+    """The models one AI call tries, in order (lc.llm.ChainModel). An admin's chosen model is the ONLY one (18-Nov:
+    no fallback - tried even while it rests; [] when it is not set up or not in the chain: _ask_models then says
+    so). Auto: the chain without the resting models - all of them when every model rests (as before: after the
+    backup's daily limit too, the main model is asked again). answered_by = the model name that answered this
+    question's earlier call: it goes first, so one question stays with one model."""
+    from ..lc import llm  # imported here: portal/lc/ imports this module
+
+    if chosen:
+        return [entry for entry in llm.chain_models() if entry.id == chosen]
+    base = llm.chain_models()
+    order = [entry for entry in base if entry.id == chosen or not resting(entry.id)] or base
+    first = [entry for entry in order if answered_by and entry.model == answered_by]
+    return first + [entry for entry in order if entry not in first]
+
+
+def _failure(entry, exc):
+    """(kind, why, rest secs) of a model's failed call - kind: 'daily' / 'busy' / 'down' / 'too_large' / 'key' /
+    'error'; why = the short reason shown on the answer card ("Groq's daily limit was reached")."""
+    from ..lc import llm  # imported here: portal/lc/ imports this module
+
+    name = entry.short
+    if isinstance(exc, DailyLimitReached):
+        return "daily", f"{name}'s daily limit was reached", MAIN_RESTING_SECS
+    if isinstance(exc, RequestTooLarge):
+        return "too_large", f"the question was too large for {name}", 0
+    if isinstance(exc, ModelBusy):
+        return "busy", f"{name} was busy", MINUTE_RESTING_SECS
+    if isinstance(exc, ModelDown):
+        if exc.busy:
+            return "busy", f"{name} was busy", BUSY_RESTING_SECS
+        return "down", f"{name} could not be reached", BUSY_RESTING_SECS
+    if str(exc) in (llm.MISSING_KEY, llm.GEMINI_MISSING_KEY):
+        return "key", f"{name} is not set up", 0
+    return "error", f"{name} returned an error", 0
+
+
+def _all_failed(kinds, messages):
+    """The error when no model of the chain answered: the daily-limit message when every model is over its daily
+    limit, RequestTooLarge when the request was too large (graph.write_sql may still send it smaller), the busy /
+    unreachable / not-set-up message when every other model failed that way, else "returned an error"."""
+    found = set(kinds)
+    if found == {"daily"}:
+        return AIUnavailable(AI_DAILY_LIMIT)
+    if "too_large" in found and found <= {"daily", "too_large"}:
+        return RequestTooLarge()
+    others = found - {"daily"}
+    if others == {"busy"}:
+        return AIUnavailable(AI_BUSY)
+    if others and others <= {"busy", "down"}:
+        return AIUnavailable(AI_DOWN)
+    if others == {"key"}:
+        return AIUnavailable(next(m for k, m in zip(kinds, messages) if k == "key"))
+    return AIUnavailable(AI_ERROR)
+
+
+def _ask_one(request, max_tokens, effort, entry, streamed):
+    """One model's call. A model with full_request=False (Gemini Flash-Lite, the Groq backup) gets the request cut
+    to its size (lc.calls.for_backup) and, when that is still too large, once the smallest one. Gemini Flash gets
+    the full request and, when too large, once the cut one. The main Groq model's 413 goes straight to the next
+    model: it is Groq's tokens-a-minute limit, and Gemini Flash takes the full request.
+    18-Nov (question 118): the backup's request must fit its smaller free tier - see test_backup_model.py."""
     from ..lc import calls  # imported here: portal/lc/ imports this module
 
-    cut = calls.for_backup(request)
+    if entry.id == "groq-backup":
+        max_tokens = min(max_tokens, FALLBACK_MAX_TOKENS)
+    first = request if entry.full_request else calls.for_backup(request)
     try:
-        return calls.chat(cut, max_tokens, effort, model, **streamed)
+        return calls.chat(first, max_tokens, effort, entry.model, **streamed)
     except RequestTooLarge:
-        smallest = calls.for_backup(request, smallest=True)
-        if smallest.inputs() == cut.inputs():
+        if entry.id == "groq-main":
             raise
-        log.warning("Request too large for the backup model %s - sent again with one notes piece", model)
-        return calls.chat(smallest, max_tokens, effort, model, **streamed)
+        smaller = calls.for_backup(request, smallest=not entry.full_request)
+        if smaller.inputs() == first.inputs():
+            raise
+        log.warning("Request too large for %s (%s) - sent again smaller", entry.model, request.chain)
+        return calls.chat(smaller, max_tokens, effort, entry.model, **streamed)
+
+
+def chosen_failed(chosen, kind):
+    """The error card's message when the model an admin chose (lc.llm.MODEL_IDS) cannot answer - 18-Nov: a chosen
+    model is the only one asked, so the admin is told plainly why instead of another model answering quietly.
+    kind = _failure's kind ('busy', 'daily', 'down', 'key', 'error'), 'small_only' (a model that only does the small
+    calls was chosen for the SQL or an answer: lc.llm.ALLOWED_CALLS) or 'missing' (not set up / not in the chain)."""
+    from ..lc import llm  # imported here: portal/lc/ imports this module
+
+    name = llm.SHORT_NAMES.get(chosen, chosen)
+    name = name[:1].upper() + name[1:]          # "the Groq backup model" -> "The Groq backup model"
+    tier = "Google" if chosen.startswith("gemini") else "Groq"
+    setting = {"gemini-flash": "GEMINI_API_KEY", "gemini-flash-lite": "GEMINI_API_KEY",
+               "groq-backup": "GROQ_FALLBACK_MODEL"}.get(chosen, "GROQ_API_KEY")
+    if kind == "missing" and chosen in llm.known_models():
+        return f"{name} is not in AI_MODEL_CHAIN (.env). Choose another model, or Auto."
+    messages = {
+        "busy": f"{name} is busy right now ({tier} free tier). Try again in a minute, or choose Auto.",
+        "daily": f"{name} has reached its daily limit ({tier} free tier). Choose another model, or Auto.",
+        "down": f"{name} could not be reached right now. Try again in a minute, or choose Auto.",
+        "key": f"{name} is not set up ({setting} missing). Choose another model, or Auto.",
+        "missing": f"{name} is not set up ({setting} missing). Choose another model, or Auto.",
+        "small_only": (f"{name} only does the small steps (rewriting a follow-up, choosing the route), not the SQL "
+                       f"or the answers. Choose another model, or Auto."),
+    }
+    return messages.get(kind, f"{name} returned an error. Try again, or choose Auto.")
+
+
+def _ask_models(request, max_tokens, effort, order, reasons=None, on_token=None, timed=None, chosen="",
+                skipped=None):
+    """Try the models of `order` (models_in_order) in turn until one answers -> (reply, tokens, cut_off, the
+    ChainModel that answered). request is an lc.calls.LcRequest, or a function ChainModel -> LcRequest.
+    A model that may not do this call (lc.llm.may_do: Gemini Flash-Lite writes no SQL and no answer) is passed
+    over without a call (its id goes to `skipped`, a set). A failed model is passed over (its reason goes to
+    `reasons`, {id: why}) and may rest a while (_failure); a streamed reply that broke after its first piece is not
+    tried again (StreamBroken). No model answered -> _all_failed's error.
+    chosen = an admin's chosen model id ('' = auto): it is the only model of `order`, and when it cannot answer the
+    error says so plainly (chosen_failed) - no other model is asked.
+    timed(secs, waited) gets each model's call time and the part spent waiting."""
+    from ..lc import llm  # imported here: portal/lc/ imports this module
+
+    streamed = {"on_token": on_token} if on_token else {}  # only then: calls.chat stays as it was for the rest
+    reasons = {} if reasons is None else reasons
+    skipped = set() if skipped is None else skipped
+    kinds, messages = [], []
+    if chosen and not order:  # the chosen model is not set up (no key) or not in AI_MODEL_CHAIN
+        raise AIUnavailable(chosen_failed(chosen, "missing"))
+    for entry in order:
+        asked = request(entry) if callable(request) else request
+        call = getattr(asked, "chain", "")
+        # every model of the chain that may not do this call (also one resting now): model_note leaves it out
+        skipped.update(other.id for other in llm.chain_models() if not llm.may_do(other, call))
+        if not llm.may_do(entry, call):
+            if chosen:
+                raise AIUnavailable(chosen_failed(chosen, "small_only"))
+            log.info("%s (%s) does not do the %s call - the next model is tried", entry.id, entry.model, call)
+            continue
+        _waited.secs = 0.0
+        started = time.perf_counter()
+        try:
+            reply, tokens, cut_off = _ask_one(asked, max_tokens, effort, entry, streamed)
+        except StreamBroken:
+            raise
+        except (DailyLimitReached, AIUnavailable) as exc:
+            kind, why, rest_secs = _failure(entry, exc)
+            kinds.append(kind)
+            messages.append(str(exc))
+            reasons[entry.id] = why
+            if rest_secs:
+                model_rests(entry.id, rest_secs, why)
+            if chosen:  # an admin's choice: no other model - the error card says why (a request too large keeps
+                # RequestTooLarge: graph.write_sql may still send it smaller)
+                log.warning("%s (%s), chosen by an admin, did not answer: %s", entry.id, entry.model, why)
+                if kind == "too_large":
+                    raise RequestTooLarge() from None
+                raise AIUnavailable(chosen_failed(chosen, kind)) from None
+            log.warning("%s (%s) did not answer: %s - the next model is tried", entry.id, entry.model, why)
+            continue
+        finally:
+            if timed:
+                timed(time.perf_counter() - started, getattr(_waited, "secs", 0.0))
+        return reply, tokens, cut_off, entry
+    raise _all_failed(kinds, messages)
+
+
+def model_note(chosen, answered, reasons, skipped=()):
+    """Why `answered` (a ChainModel) answered and not the chain's first model: '' when it is the first, "chosen by
+    you" for an admin's choice, else the reasons of the models before it ("Groq's daily limit was reached").
+    skipped = the ids of the models that may not do this call (lc.llm.may_do): they are not named.
+    18-Nov: when the Groq backup answered, the note says it plainly ("the backup model qwen answered - Groq and Gemini
+    Flash were not available (...); answers may be less exact"). At most 200 letters (Question.model_note)."""
+    from ..lc import llm  # imported here: portal/lc/ imports this module
+
+    if chosen and answered.id == chosen:
+        return "chosen by you"
+    base = _first_chosen(llm.chain_models(), chosen)
+    if not base or answered.id == base[0].id:
+        return ""
+    whys, names = [], []
+    for entry in base:
+        if entry.id == answered.id:
+            break
+        if entry.id in skipped:
+            continue
+        rest = resting(entry.id)
+        whys.append(reasons.get(entry.id) or (rest[1] if rest else "") or f"{entry.short} was not used")
+        names.append(entry.short)
+    why = "; ".join(dict.fromkeys(whys))
+    if answered.id == "groq-backup":
+        family = llm._family(answered.model)
+        if not names:
+            return f"the backup model {family} answered; answers may be less exact"
+        who = " and ".join([", ".join(names[:-1]), names[-1]] if len(names) > 1 else names)
+        were = "were" if len(names) > 1 else "was"
+        note = (f"the backup model {family} answered - {who} {were} not available"
+                + (f" ({why})" if why else "") + "; answers may be less exact")
+        if len(note) > 200:  # many reasons: the plain part stays
+            note = f"the backup model {family} answered - {who} {were} not available; answers may be less exact"
+        return note[:200]
+    return why[:200]
 
 
 def _ask_ai(request, max_tokens, effort, result, step="sql", timed_as=None, on_token=None):
-    """One AI call for this question -> the reply text. The main model first; when a model's
-    DAILY limit is used up, the next model. request is an lc.calls.LcRequest, or a function model -> LcRequest;
+    """One AI call for this question -> the reply text, through the model chain (_ask_models): the chosen model
+    (an admin's) or the chain's first, the next model after a daily limit or any other failure.
+    request is an lc.calls.LcRequest, or a function ChainModel -> LcRequest;
     lc.calls.chat() sends it through its LangChain chain (and waits after a per-minute limit).
-    Sets result.model to the model that replied and adds the call's tokens to the step
-    ('sql' or 'answer') - a refused call reports no tokens and adds nothing.
+    Sets result.model to the model that replied (and result.model_note: why it was not the first) and adds the
+    call's tokens to the step ('sql' or 'answer') - a refused call reports no tokens and adds nothing.
     The call's seconds go to the time step timed_as (default 'sql_ai' / 'answer_ai'); the seconds
     spent waiting for Groq's per-minute limit go to 'wait'.
     on_token = the reply is streamed and each piece handed to it while it is written (the streamed Ask page);
     a failure after the first piece raises StreamBroken (an AIUnavailable)."""
-    from ..lc import calls  # imported here: portal/lc/ imports this module
-
     timed_as = timed_as or ("answer_ai" if step == "answer" else "sql_ai")
-    streamed = {"on_token": on_token} if on_token else {}  # only then: calls.chat stays as it was for the rest
-    for model in _models_to_try(result):
-        backup = model == fallback_model_name()
-        _waited.secs = 0.0
-        started = time.perf_counter()
-        try:
-            asked = request(model) if callable(request) else request
-            if backup:
-                reply, tokens, cut_off = _ask_backup(asked, min(max_tokens, FALLBACK_MAX_TOKENS), effort, model,
-                                                     streamed)
-            else:
-                reply, tokens, cut_off = calls.chat(asked, max_tokens, effort, model, **streamed)
-        except DailyLimitReached:
-            if model == model_name():
-                main_model_rests()
-            continue
-        finally:
-            waited = getattr(_waited, "secs", 0.0)
-            result.add_secs(timed_as, time.perf_counter() - started - waited)
-            result.add_secs("wait", waited)
-        result.model = model
-        result.add_tokens(step, tokens)
-        if cut_off and reply and step == "sql":  # half a query: a retry would stop at the same limit
-            log.warning("Groq reply cut off at %s tokens (%s)", max_tokens, model)
-            raise ReplyCutOff()
-        return reply
-    raise AIUnavailable(AI_DAILY_LIMIT)
+
+    def timed(secs, waited):
+        result.add_secs(timed_as, secs - waited)
+        result.add_secs("wait", waited)
+
+    order = models_in_order(result.chosen_model, result.model)
+    skipped = set()  # the models that may not do this call (Gemini Flash-Lite: no SQL, no answer)
+    reply, tokens, cut_off, entry = _ask_models(request, max_tokens, effort, order, result.model_reasons,
+                                                on_token, timed, chosen=result.chosen_model, skipped=skipped)
+    result.model = entry.model
+    result.model_note = model_note(result.chosen_model, entry, result.model_reasons, skipped)
+    result.add_tokens(step, tokens)
+    if cut_off and reply and step == "sql":  # half a query: a retry would stop at the same limit
+        log.warning("AI reply cut off at %s tokens (%s)", max_tokens, entry.model)
+        raise ReplyCutOff()
+    return reply
 
 
 def _model_options(model, effort):

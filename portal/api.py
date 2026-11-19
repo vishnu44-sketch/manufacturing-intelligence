@@ -34,6 +34,7 @@ from django.views.decorators.cache import never_cache
 from django.views.decorators.csrf import csrf_exempt
 
 from . import audit, charts, home, insights, knowledge_graph, services, sql_page, user_memory
+from .lc import llm
 from .models import AuditLog, Question, SavedQuery, UserMemory
 from .rag import agent, warehouse
 from .usage import ai_usage
@@ -136,7 +137,7 @@ def _card(saved, token_notice=""):
         "status": saved.status,
         "answer": saved.answer,
         "understood_as": saved.understood_as,
-        "backup_model": saved.model if result.answered_by_backup else "",  # '' = the main model answered
+        **_model_fields(saved, result),
         "token_notice": token_notice,  # only right after asking
         "time_steps": [{"label": s["label"], "secs": round(s["secs"], 3), "note": s["note"]}
                        for s in result.time_steps],
@@ -155,6 +156,24 @@ def _card(saved, token_notice=""):
         "created_text": _when(saved.created_at),
         "edited": saved.chat_order is not None,
     }
+
+
+def _model_fields(saved, result):
+    """Which AI model answered, for the card (18-Nov, the model chain - lc/llm.py):
+    backup_model = the model's id when it was not the main Groq model ('' = the main model answered; kept for the
+    older pages), model_label = its name ("Gemini Flash (gemini-flash-latest)"), model_note = why it was not the
+    chain's first ('' = it was; "Groq's daily limit was reached", "chosen by you"). The exact reason is saved with
+    the question (Question.model_note, since 18-Nov), so a reopened card says the same; a question saved before that
+    has none and says it from the model name ("used instead of Groq")."""
+    if not saved.model:
+        return {"backup_model": "", "model_label": "", "model_note": ""}
+    entry = llm.find(saved.model)
+    note = getattr(saved, "model_note", "") or ""
+    if not note:
+        first = llm.chain_models()[:1]
+        note = "" if not first or first[0].model == saved.model else f"used instead of {first[0].short}"
+    return {"backup_model": (entry.id if entry else saved.model) if result.answered_by_backup else "",
+            "model_label": llm.label_of(saved.model), "model_note": note}
 
 
 def _audit_memories(request, saved):
@@ -307,15 +326,37 @@ def _asked(request):
     return question, chat, mode, None
 
 
+MODEL_CHOICES = ("auto",) + llm.MODEL_IDS
+BAD_MODEL = "model must be one of: " + ", ".join(MODEL_CHOICES) + "."
+
+
+def _chosen_model(request):
+    """(the AI model an admin chose to try first, None) - '' = auto, the chain's own order - or (None, the JSON
+    error 400 for an unknown id). Only staff choose: anyone else's "model" is ignored (always auto)."""
+    if not services.is_admin(request.user):
+        return "", None
+    chosen = (_body(request) or {}).get("model") or ""
+    chosen = chosen.strip().lower() if isinstance(chosen, str) else chosen
+    if chosen in ("", "auto"):
+        return "", None
+    if chosen not in llm.MODEL_IDS:
+        return None, _error(400, BAD_MODEL)
+    return chosen, None
+
+
 @api_view(["POST"])
 def ask(request):
-    """{question, chat_id, mode} -> asks it (chat_id null = a new chat; mode 'ml' = a new ML Insights chat) and
-    returns the new answer card with its chat. 400 when the question is empty or too long or the mode is wrong;
-    404 for a chat that is not the user's own."""
+    """{question, chat_id, mode, model} -> asks it (chat_id null = a new chat; mode 'ml' = a new ML Insights chat)
+    and returns the new answer card with its chat. model (staff only, '' / 'auto' = the chain's order) = the AI
+    model to try first (GET /api/models). 400 when the question is empty or too long or the mode or the model is
+    wrong; 404 for a chat that is not the user's own."""
     question, chat, mode, refused = _asked(request)
     if refused:
         return refused
-    saved, chat = services.answer_in_chat(request.user, chat, question, mode)
+    model, refused = _chosen_model(request)
+    if refused:
+        return refused
+    saved, chat = services.answer_in_chat(request.user, chat, question, mode, model)
     _audit_memories(request, saved)  # the question itself is in the Question table (its own audit trail)
     return JsonResponse(_answered(saved, chat))
 
@@ -329,6 +370,7 @@ def ask_stream(request):
     anything is sent) and the same saved question, but the reply is one JSON object per line while it runs:
         {"type": "step", "label": "Search the SQL notes (vector DB Qdrant: mi_docs)"}    a step starts
         {"type": "token", "text": "..."}                           a piece of the final answer as it is written
+        {"type": "reset"}                                          the answer check sends it back once: clear the text
         {"type": "done", "chat": {...}, "card": {...}}              the same reply as /api/ask
         {"type": "error", "message": "..."}                         something failed outside the question itself
     A problem inside the question (the AI is busy, MySQL is down ...) is a saved question with a friendly answer:
@@ -336,7 +378,10 @@ def ask_stream(request):
     question, chat, mode, refused = _asked(request)
     if refused:
         return refused
-    response = StreamingHttpResponse(_ask_lines(request, chat, question, mode), content_type=STREAM_TYPE)
+    model, refused = _chosen_model(request)
+    if refused:
+        return refused
+    response = StreamingHttpResponse(_ask_lines(request, chat, question, mode, model), content_type=STREAM_TYPE)
     response["X-Accel-Buffering"] = "no"  # nginx and similar proxies: pass each line on at once
     return response
 
@@ -346,10 +391,10 @@ def _line(event):
     return (json.dumps(event) + "\n").encode("utf-8")
 
 
-def _ask_lines(request, chat, question, mode=""):
+def _ask_lines(request, chat, question, mode="", model=""):
     """The lines of ask_stream. When the browser stops listening (closed, reloaded), the question still runs to
     the end and is saved - as on /api/ask - only nothing more is sent."""
-    events = services.answer_in_chat_streamed(request.user, chat, question, mode)
+    events = services.answer_in_chat_streamed(request.user, chat, question, mode, model)
     gone = False
     while True:
         try:
@@ -450,8 +495,11 @@ def question_chart(request, pk):
     problem = charts.kind_problem(kind)
     if problem:
         return _error(400, problem)
+    model, refused = _chosen_model(request)  # staff may choose the model to try first, as on /api/ask
+    if refused:
+        return refused
     try:
-        made = charts.make_chart(saved, kind)
+        made = charts.make_chart(saved, kind, model)
     except charts.ChartError as exc:
         return _error(exc.status, str(exc))
     return JsonResponse({"option": made.option, "tokens": made.tokens, "model": made.model, "recorded": made.recorded})
@@ -588,6 +636,46 @@ def memory_delete_all(request):
     else:
         message = "Your 1 memory was deleted." if count == 1 else f"All {count} memories were deleted."
     return JsonResponse({"deleted": count, "message": message})
+
+
+# ------------------------------------------------------------------ AI models (staff)
+# the name shown for a model that is not set up (its .env line is missing)
+NOT_SET_UP = {"groq-main": ("Groq", "GROQ_MODEL"),
+              "gemini-flash": (f"Gemini Flash ({llm.DEFAULT_GEMINI_MODEL})", "GEMINI_API_KEY"),
+              "gemini-flash-lite": (f"Gemini Flash-Lite ({llm.DEFAULT_GEMINI_LITE_MODEL})", "GEMINI_API_KEY"),
+              "groq-backup": ("Groq backup", "GROQ_FALLBACK_MODEL")}
+
+
+def _model_choice(model_id, found, in_chain):
+    """One model of /api/models: {id, label, available[, note]} - available = set up, in the chain and not
+    resting now (note says why not, e.g. "resting until 03:45 PM (Groq's daily limit was reached)")."""
+    entry = found.get(model_id)
+    if entry is None:
+        label, setting = NOT_SET_UP[model_id]
+        return {"id": model_id, "label": label, "available": False, "note": f"{setting} is not set in .env"}
+    row = {"id": model_id, "label": entry.label, "available": False}
+    rest = agent.resting(model_id)
+    if model_id not in in_chain:
+        row["note"] = "not in AI_MODEL_CHAIN"
+    elif model_id in llm.ALLOWED_CALLS:  # 18-Nov: Gemini Flash-Lite writes no SQL and no answer (llm.may_do)
+        row["note"] = "only for the small steps (rewrite, route) - not for the SQL or the answers"
+    elif rest:
+        until = timezone.localtime() + datetime.timedelta(seconds=rest[0])
+        row["note"] = f"resting until {_format(until, 'h:i A')} ({rest[1]})"
+    else:
+        row["available"] = True
+    return row
+
+
+@api_view(["GET"], staff_only=True)
+def models(request):
+    """The AI models an admin may choose on the Ask page (POST /api/ask "model"): "auto" (the chain's own order:
+    Groq main, Gemini Flash, Gemini Flash-Lite, the Groq backup) and each model of the chain - its key set, able to
+    do every step (not Gemini Flash-Lite) and not resting right now = available. A chosen model is the only one
+    asked (18-Nov: no fallback - a clear error card when it cannot answer). Never a key."""
+    found, in_chain = llm.known_models(), {entry.id for entry in llm.chain_models()}
+    return JsonResponse({"models": [{"id": "auto", "label": "Auto (recommended)", "available": True}]
+                         + [_model_choice(model_id, found, in_chain) for model_id in llm.MODEL_IDS]})
 
 
 # ------------------------------------------------------------------ Documents and Data (staff)

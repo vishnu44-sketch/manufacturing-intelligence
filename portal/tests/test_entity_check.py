@@ -21,6 +21,15 @@ from portal.rag import agent, warehouse
 from portal.tests.test_agent import earlier, mysql, use_fake_ai  # noqa: F401
 from portal.tests.test_graph import DATA_START, steps  # noqa: F401
 
+
+@pytest.fixture(autouse=True)
+def no_answer_check(monkeypatch):
+    """These tests are about the ranking / chart retries: their fake answers are short made-up texts whose amounts
+    are not in the fake rows, so the answer check (answer_verify.py, 18-Nov) is switched off here - it has its own
+    tests in test_answer_verify.py."""
+    from portal import answer_verify
+    monkeypatch.setattr(answer_verify, "applies", lambda *args, **kwargs: False)
+
 pytestmark = pytest.mark.django_db  # agent.ask() saves a Question
 
 QUESTION = "Top customers of Coolant pump GX-664-1B 0.75kW (415V 50Hz)"

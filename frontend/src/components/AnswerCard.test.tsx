@@ -209,6 +209,27 @@ describe('AnswerCard', () => {
     expect(screen.getByText(/Answered by the backup model \(qwen\/qwen3.8-27b\)/)).toBeInTheDocument()
     expect(await screen.findByText(/could not be loaded again/)).toHaveClass('errbox')
   })
+
+  it('says which model answered and why when it was not the first one (18-Nov)', () => {
+    fakeFetch({})
+    render(<AnswerCard card={{ ...OK, has_rows: false, model_label: 'Gemini Flash', model_note: "Groq's daily limit was reached" }} />)
+    const line = document.querySelector('[data-model-line]')
+    expect(line).toHaveTextContent("Answered by Gemini Flash - Groq's daily limit was reached.")
+    expect(line?.querySelector('svg')).not.toBeNull()   // the info icon
+    expect(screen.queryByText(/Answered by the backup model/)).not.toBeInTheDocument()
+  })
+
+  it('the new line wins over the old backup sentence; nothing when the first model answered', () => {
+    fakeFetch({})
+    const { unmount } = render(<AnswerCard card={{ ...OK, has_rows: false, backup_model: 'qwen/qwen3.8-27b',
+                                                   model_label: 'Groq backup', model_note: 'chosen by you.' }} />)
+    expect(document.querySelector('[data-model-line]')).toHaveTextContent('Answered by Groq backup - chosen by you.')
+    expect(screen.queryByText(/Answered by the backup model/)).not.toBeInTheDocument()
+    unmount()
+
+    render(<AnswerCard card={{ ...OK, has_rows: false, model_label: 'Groq main', model_note: '' }} />)
+    expect(screen.queryByText(/Answered by/)).not.toBeInTheDocument()
+  })
 })
 
 describe('AnswerCard chart wish', () => {

@@ -6,8 +6,9 @@ is only for the unusual ones, and only when the user clicks "Make this chart wit
 
 The steps: the saved SQL runs again exactly like the rows endpoint (services.saved_result: guard + read-only
 MySQL, no AI call), then ONE AI call (the main model, low effort, at most MAX_TOKENS) through lc/calls.chat -
-so the app's rate-limit rules apply (wait on a per-minute limit; after the main model's daily limit the backup
-model, as for a question; a friendly message when both are used up). The AI
+so the app's rate-limit rules apply (wait on a per-minute limit; 18-Nov: the model chain as for a question -
+Groq main, Gemini Flash, the Groq backup (never Gemini Flash-Lite), or only an admin's chosen model; a friendly
+message when none answers). The AI
 gets the question, the column names, at most MAX_ROWS rows and the chart asked for, and must reply with ONLY
 an Apache ECharts option as JSON.
 
@@ -227,9 +228,10 @@ def check_option(option):
     return option
 
 
-def make_chart(saved, kind):
+def make_chart(saved, kind, model=""):
     """The AI chart of a saved, answered question -> AiChart. ChartError with a friendly message when it cannot
-    be made (the rows cannot run again, no rows, the AI is busy or down, the reply is not a safe chart)."""
+    be made (the rows cannot run again, no rows, the AI is busy or down, the reply is not a safe chart).
+    model = the model to try first (an admin's choice, lc.llm.MODEL_IDS; '' = the chain's own order)."""
     if saved.status != "ok" or not saved.sql:
         raise ChartError(NOT_ANSWERED, 404)
     result, rows_error = services.saved_result(saved, load_rows=True)  # the same re-run as the rows endpoint
@@ -237,24 +239,22 @@ def make_chart(saved, kind):
         raise ChartError(rows_error, 503)
     if not result.rows:
         raise ChartError(NO_ROWS, 400)
-    # 18-Nov: like every AI call of a question, the main model first and the backup after its DAILY limit (or
-    # the backup first while the main model rests); the backup gets fewer rows (its free tier allows a smaller
-    # request) and at most agent.FALLBACK_MAX_TOKENS for its reply
-    for model in agent._models_to_try():
-        backup = model == agent.fallback_model_name()
-        max_rows = agent.FALLBACK_ROWS_FOR_ANSWER if backup else MAX_ROWS
-        request = LcRequest("chart", chart_values(saved, result.columns, result.rows, kind, max_rows))
-        max_tokens = min(MAX_TOKENS, agent.FALLBACK_MAX_TOKENS) if backup else MAX_TOKENS
-        try:
-            text, tokens, cut_off = calls.chat(request, max_tokens, EFFORT, model=model)
-            break
-        except agent.DailyLimitReached:
-            if model == agent.model_name():
-                agent.main_model_rests()
-        except agent.AIUnavailable as exc:
-            raise ChartError(str(exc) or agent.AI_ERROR, 503) from None
-    else:  # every model's daily limit is used up
-        raise ChartError(DAILY_LIMIT, 503)
+    # 18-Nov: like every AI call of a question, through the model chain (agent._ask_models; never Gemini Flash-Lite,
+    # and an admin's chosen model is the only one asked); a model that gets the cut request (the Groq backup) gets
+    # fewer rows, and the Groq backup at most
+    # agent.FALLBACK_MAX_TOKENS for its reply (agent._ask_one)
+    def request_for(entry):
+        max_rows = MAX_ROWS if entry.full_request else agent.FALLBACK_ROWS_FOR_ANSWER
+        return LcRequest("chart", chart_values(saved, result.columns, result.rows, kind, max_rows))
+
+    try:
+        text, tokens, cut_off, entry = agent._ask_models(request_for, MAX_TOKENS, EFFORT,
+                                                         agent.models_in_order(model), chosen=model or "")
+    except agent.AIUnavailable as exc:
+        if str(exc) == agent.AI_DAILY_LIMIT:  # every model's daily limit is used up
+            raise ChartError(DAILY_LIMIT, 503) from None
+        raise ChartError(str(exc) or agent.AI_ERROR, 503) from None
+    model = entry.model
     recorded = record_tokens(saved, model, tokens)
     if cut_off:
         raise ChartError(CUT_OFF, 502)

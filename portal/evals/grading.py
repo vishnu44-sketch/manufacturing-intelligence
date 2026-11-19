@@ -4,7 +4,7 @@ The truth always comes from the question's own SQL, run now on ss_gold (never fr
   must      values that MUST appear in the answer (wrong / missing -> FAIL)
   should    values that should appear too, e.g. the report date (missing -> PARTIAL)
   must_have / must_not   phrases (case-insensitive); by default no "profit" and no vague data-date sentence
-  expect    the status the answer must have (default 'ok'; e.g. 'nodata', 'refused')
+  expect    the status the answer must have (default 'ok'; e.g. 'nodata', 'refused'; a list = any of them)
   format    dates like 20-Mar-2027 and FY 2025-26 (2027-03-20 or "FY 2526" -> PARTIAL)
 """
 import re
@@ -55,8 +55,9 @@ def grade(item, saved):
     """(verdict, [reasons]) for one golden item and its saved answer {status, answer, ...}."""
     answer = " ".join((saved.get("answer") or "").replace(" ", " ").split())
     expected = item.get("expect", "ok")
-    if saved.get("status") != expected:
-        return "FAIL", [f"status {saved.get('status')} (expected {expected})"]
+    allowed = [expected] if isinstance(expected, str) else list(expected)   # a list: any of these statuses
+    if saved.get("status") not in allowed:
+        return "FAIL", [f"status {saved.get('status')} (expected {' or '.join(allowed)})"]
     missing = [f"missing {spellings(v)[0]}" for v in truth_values(item.get("must")) if not found(v, answer)]
     if missing:
         return "FAIL", missing

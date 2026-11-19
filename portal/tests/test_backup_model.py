@@ -154,7 +154,7 @@ def test_a_daily_limit_at_the_general_answer_moves_it_to_the_backup(monkeypatch,
     assert result.model == BACKUP and Question.objects.get().model == BACKUP
 
 
-# ---------- not a daily limit: no backup ----------
+# ---------- not a daily limit ----------
 
 def test_a_per_minute_limit_waits_for_the_main_model_and_never_uses_the_backup(monkeypatch, five_notes, user,
                                                                                with_backup):
@@ -170,14 +170,25 @@ def test_a_per_minute_limit_waits_for_the_main_model_and_never_uses_the_backup(m
     assert "note piece 5" in sql_request(fake.calls[1])                 # the main model's full request
 
 
-def test_another_error_of_the_main_model_gives_the_error_message_and_no_backup(monkeypatch, five_notes, user,
-                                                                               with_backup):
-    fake = use_fake_ai(monkeypatch, [api_error(400, "Error code: 400 - invalid request")])
+def test_another_error_of_the_main_model_moves_the_call_to_the_backup(monkeypatch, five_notes, user, with_backup):
+    """18-Nov, the model chain: any error of a model (here a 400) moves the call on to the next model."""
+    five_notes.results = [ROWS]
+    fake = use_fake_ai(monkeypatch, [api_error(400, "Error code: 400 - invalid request"), GOOD_SQL, ANSWER])
+
+    result = agent.ask("Top customers in Aug 2026?", user)
+
+    assert result.status == "ok" and result.model == BACKUP
+    assert fake.models == [MAIN, BACKUP, BACKUP]                         # the question stays with the backup
+
+
+def test_another_error_of_both_models_gives_the_error_message(monkeypatch, five_notes, user, with_backup):
+    fake = use_fake_ai(monkeypatch, [api_error(400, "Error code: 400 - invalid request"),
+                                     api_error(400, "Error code: 400 - invalid request")])
 
     result = agent.ask("Top customers in Aug 2026?", user)
 
     assert result.status == "error" and result.answer == agent.AI_ERROR
-    assert fake.models == [MAIN]
+    assert fake.models == [MAIN, BACKUP]
 
 
 def test_another_error_of_the_backup_gives_the_error_message(monkeypatch, five_notes, user, with_backup):
