@@ -7,7 +7,7 @@ is only for the unusual ones, and only when the user clicks "Make this chart wit
 The steps: the saved SQL runs again exactly like the rows endpoint (services.saved_result: guard + read-only
 MySQL, no AI call), then ONE AI call (the main model, low effort, at most MAX_TOKENS) through lc/calls.chat -
 so the app's rate-limit rules apply (wait on a per-minute limit; 18-Nov: the model chain as for a question -
-Groq main, Gemini Flash, the Groq backup (never Gemini Flash-Lite), or only an admin's chosen model; a friendly
+Groq main, the second Groq key (19-Nov), the Groq backup, or only an admin's chosen model; a friendly
 message when none answers). The AI
 gets the question, the column names, at most MAX_ROWS rows and the chart asked for, and must reply with ONLY
 an Apache ECharts option as JSON.
@@ -239,8 +239,8 @@ def make_chart(saved, kind, model=""):
         raise ChartError(rows_error, 503)
     if not result.rows:
         raise ChartError(NO_ROWS, 400)
-    # 18-Nov: like every AI call of a question, through the model chain (agent._ask_models; never Gemini Flash-Lite,
-    # and an admin's chosen model is the only one asked); a model that gets the cut request (the Groq backup) gets
+    # 18-Nov: like every AI call of a question, through the model chain (agent._ask_models; an admin's chosen model
+    # is the only one asked); a model that gets the cut request (the Groq backup) gets
     # fewer rows, and the Groq backup at most
     # agent.FALLBACK_MAX_TOKENS for its reply (agent._ask_one)
     def request_for(entry):

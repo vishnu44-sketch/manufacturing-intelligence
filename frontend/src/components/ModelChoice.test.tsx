@@ -24,9 +24,8 @@ const CARD: Card = {
 const MODELS = {
   models: [
     { id: 'auto', label: 'Auto (recommended)', available: true },
-    { id: 'groq-main', label: 'Groq main', available: true },
-    { id: 'gemini-flash', label: 'Gemini Flash', available: false, note: 'no API key set' },
-    { id: 'gemini-flash-lite', label: 'Gemini Flash Lite', available: true },
+    { id: 'groq-main', label: 'Groq gpt-oss-120b', available: true },
+    { id: 'groq-main-2', label: 'Groq gpt-oss-120b (2nd key)', available: false, note: 'no API key set' },
     { id: 'groq-backup', label: 'Groq backup', available: true },
   ],
 }
@@ -65,8 +64,8 @@ describe('the model pill (administrators)', () => {
     expect(select.closest('label')).toHaveTextContent('Auto')
     const options = within(select).getAllByRole('option') as HTMLOptionElement[]
     expect(options.map((o) => o.textContent)).toEqual(
-      ['Auto (recommended)', 'Groq main', 'Gemini Flash - no API key set', 'Gemini Flash Lite', 'Groq backup'])
-    expect(options.map((o) => o.disabled)).toEqual([false, false, true, false, false])
+      ['Auto (recommended)', 'Groq gpt-oss-120b', 'Groq gpt-oss-120b (2nd key) - no API key set', 'Groq backup'])
+    expect(options.map((o) => o.disabled)).toEqual([false, false, true, false])
     expect(options[2]).toHaveAttribute('title', 'no API key set')
     expect(fetch.mock.calls.filter(([url]) => url === '/api/models')).toHaveLength(1)
   })
@@ -80,12 +79,12 @@ describe('the model pill (administrators)', () => {
     expect(callsTo(fetch, '/api/ask/stream')).toEqual([{ question: QUESTION, chat_id: null }])
 
     // under the conversation now: the same pill in the bottom box
-    fireEvent.change(await picker(), { target: { value: 'gemini-flash-lite' } })
-    expect((await picker()).closest('label')).toHaveTextContent('Gemini Flash Lite')
-    expect(window.localStorage.getItem('askModel')).toBe('gemini-flash-lite')
+    fireEvent.change(await picker(), { target: { value: 'groq-backup' } })
+    expect((await picker()).closest('label')).toHaveTextContent('Groq backup')
+    expect(window.localStorage.getItem('askModel')).toBe('groq-backup')
     await ask('Your question', 'And for Sep?')
     await waitFor(() => expect(callsTo(fetch, '/api/ask/stream')).toHaveLength(2))
-    expect(callsTo(fetch, '/api/ask/stream')[1]).toEqual({ question: 'And for Sep?', chat_id: 7, model: 'gemini-flash-lite' })
+    expect(callsTo(fetch, '/api/ask/stream')[1]).toEqual({ question: 'And for Sep?', chat_id: 7, model: 'groq-backup' })
 
     // back to Auto: forgotten, no "model" again
     fireEvent.change(await picker(), { target: { value: 'auto' } })
@@ -101,7 +100,7 @@ describe('the model pill (administrators)', () => {
     await waitFor(() => expect(callsTo(fetch, '/api/ask/stream')).toEqual([{ question: QUESTION, chat_id: null, model: 'groq-backup' }]))
     unmount()
 
-    window.localStorage.setItem('askModel', 'gemini-flash')   // unavailable in the list
+    window.localStorage.setItem('askModel', 'groq-main-2')   // unavailable in the list
     const fetch2 = fakeFetch(replies())
     renderAt('/new', <AskPage me={BOSS} />)
     expect(await picker()).toHaveValue('auto')
@@ -123,13 +122,13 @@ describe('the model pill (administrators)', () => {
   })
 
   it('on ML Insights too: the chosen model goes with the ML question', async () => {
-    window.localStorage.setItem('askModel', 'gemini-flash-lite')
+    window.localStorage.setItem('askModel', 'groq-backup')
     const fetch = fakeFetch(replies({ '/api/ask/stream': () => done() }))
     renderAt('/insights', <InsightsPage me={BOSS} />)
-    expect(await picker()).toHaveValue('gemini-flash-lite')
+    expect(await picker()).toHaveValue('groq-backup')
     await ask('Your question about forecasts and insights')
     await waitFor(() => expect(callsTo(fetch, '/api/ask/stream')).toEqual(
-      [{ question: QUESTION, chat_id: null, mode: 'ml', model: 'gemini-flash-lite' }]))
+      [{ question: QUESTION, chat_id: null, mode: 'ml', model: 'groq-backup' }]))
   })
 
   it('no pill and Auto when the models list cannot be read', async () => {

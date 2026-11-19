@@ -66,15 +66,18 @@ class FakeAI:
     replies = what each call returns, in order (an Exception in the list is raised instead, e.g. an
     openai.RateLimitError; a (text, tokens) pair also reports the tokens, as ChatOpenAI does with Groq).
     calls = the messages of every call as {role, content} dicts (roles system / user / assistant);
-    models / max_tokens = the model and the max_tokens of every call."""
+    models / max_tokens = the model and the max_tokens of every call; keys = the .env setting of the Groq key each
+    chat model was made with (19-Nov: GROQ_API_KEY or GROQ_API_KEY_2 - one per make_llm, so a waited retry adds one)."""
 
     def __init__(self, replies):
         self.replies = list(replies)
         self.calls = []
         self.models = []       # the model of every call
         self.max_tokens = []   # the max_tokens of every call
+        self.keys = []         # the key setting of every chat model made
 
-    def make_llm(self, model, max_tokens, effort):
+    def make_llm(self, model, max_tokens, effort, key_env=llm.KEY):
+        self.keys.append(key_env)
         return FakeChatModel(ai=self, model=model, max_tokens=max_tokens)
 
     def install(self, monkeypatch):

@@ -161,8 +161,9 @@ def _card(saved, token_notice=""):
 def _model_fields(saved, result):
     """Which AI model answered, for the card (18-Nov, the model chain - lc/llm.py):
     backup_model = the model's id when it was not the main Groq model ('' = the main model answered; kept for the
-    older pages), model_label = its name ("Gemini Flash (gemini-flash-latest)"), model_note = why it was not the
-    chain's first ('' = it was; "Groq's daily limit was reached", "chosen by you"). The exact reason is saved with
+    older pages), model_label = its name ("Groq qwen (qwen/qwen3.8-27b)"), model_note = why it was not the
+    chain's first ('' = it was; "Groq's daily limit was reached", "chosen by you"; 19-Nov: both Groq keys save the
+    same model name, so the note says when the second key answered). The exact reason is saved with
     the question (Question.model_note, since 18-Nov), so a reopened card says the same; a question saved before that
     has none and says it from the model name ("used instead of Groq")."""
     if not saved.model:
@@ -641,8 +642,7 @@ def memory_delete_all(request):
 # ------------------------------------------------------------------ AI models (staff)
 # the name shown for a model that is not set up (its .env line is missing)
 NOT_SET_UP = {"groq-main": ("Groq", "GROQ_MODEL"),
-              "gemini-flash": (f"Gemini Flash ({llm.DEFAULT_GEMINI_MODEL})", "GEMINI_API_KEY"),
-              "gemini-flash-lite": (f"Gemini Flash-Lite ({llm.DEFAULT_GEMINI_LITE_MODEL})", "GEMINI_API_KEY"),
+              "groq-main-2": ("Groq (2nd key)", llm.KEY_2),                # 19-Nov: the second Groq key
               "groq-backup": ("Groq backup", "GROQ_FALLBACK_MODEL")}
 
 
@@ -657,8 +657,6 @@ def _model_choice(model_id, found, in_chain):
     rest = agent.resting(model_id)
     if model_id not in in_chain:
         row["note"] = "not in AI_MODEL_CHAIN"
-    elif model_id in llm.ALLOWED_CALLS:  # 18-Nov: Gemini Flash-Lite writes no SQL and no answer (llm.may_do)
-        row["note"] = "only for the small steps (rewrite, route) - not for the SQL or the answers"
     elif rest:
         until = timezone.localtime() + datetime.timedelta(seconds=rest[0])
         row["note"] = f"resting until {_format(until, 'h:i A')} ({rest[1]})"
@@ -670,9 +668,9 @@ def _model_choice(model_id, found, in_chain):
 @api_view(["GET"], staff_only=True)
 def models(request):
     """The AI models an admin may choose on the Ask page (POST /api/ask "model"): "auto" (the chain's own order:
-    Groq main, Gemini Flash, Gemini Flash-Lite, the Groq backup) and each model of the chain - its key set, able to
-    do every step (not Gemini Flash-Lite) and not resting right now = available. A chosen model is the only one
-    asked (18-Nov: no fallback - a clear error card when it cannot answer). Never a key."""
+    Groq main, the same model on the second Groq key (19-Nov), the Groq backup) and each model of the chain - set up
+    in .env, in the chain and not resting right now = available (each key rests on its own). A chosen model is the
+    only one asked (18-Nov: no fallback - a clear error card when it cannot answer). Never a key."""
     found, in_chain = llm.known_models(), {entry.id for entry in llm.chain_models()}
     return JsonResponse({"models": [{"id": "auto", "label": "Auto (recommended)", "available": True}]
                          + [_model_choice(model_id, found, in_chain) for model_id in llm.MODEL_IDS]})

@@ -246,38 +246,40 @@ def test_nothing_of_a_run_stays_in_history(results_dir, truth, monkeypatch, staf
 
 @pytest.mark.django_db
 def test_model_choice_is_passed_to_every_question(results_dir, truth, monkeypatch, staff):
-    """--model gemini-flash: every question is asked with model='gemini-flash' (an admin's choice: only that
-    model); a call for another model never reaches the AI; the answers file and the score line name it.
+    """--model second (19-Nov: groq-main-2, the same model on the second Groq key): every question is asked with
+    model='groq-main-2' (an admin's choice: only that model); a call on the first key never reaches the AI although
+    it is the same model name; the answers file and the score line name it.
     The ML set is asked as in an ML Insights chat (mode 'ml', its follow-ups with their earlier answers)."""
-    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    from portal.lc import llm
+    monkeypatch.setenv("GROQ_API_KEY_2", "test-key-2")
     fake = use_fake_ai(monkeypatch, [("Top customers in Sep 2026?", 3_000)])
     asked, refused = [], []
 
-    def ask_gemini(question, user, context=None, use_memories=True, mode="", model=""):
+    def ask_second(question, user, context=None, use_memories=True, mode="", model=""):
         asked.append((question, mode, model, len(context or [])))
         request = LcRequest("rewrite", {"earlier": "1. Q (latest)", "question": question})
         try:
-            lc_calls.chat(request, 100, "low", agent.model_name())        # the Groq main model: refused
+            lc_calls.chat(request, 100, "low", agent.model_name())        # the same model on the first key: refused
         except agent.DailyLimitReached:
             refused.append(question)
-        if len(asked) == 1:
-            lc_calls.chat(request, 100, "low", "gemini-flash-latest")    # the chosen model: asked and counted
-        return agent.AskResult(text=question, status="ok", answer="about INR 53.7 Cr", model="gemini-flash-latest")
-    monkeypatch.setattr(agent, "ask", ask_gemini)
+        if len(asked) == 1:                                               # the chosen key: asked and counted
+            lc_calls.chat(request, 100, "low", agent.model_name(), key_env=llm.KEY_2)
+        return agent.AskResult(text=question, status="ok", answer="about INR 53.7 Cr", model=agent.model_name())
+    monkeypatch.setattr(agent, "ask", ask_second)
 
-    call_command("run_eval", "ml", "--model", "gemini-flash", "--cap", "1000000")
+    call_command("run_eval", "ml", "--model", "second", "--cap", "1000000")
 
-    assert [model for _, _, model, _ in asked] == ["gemini-flash"] * 10 and len(refused) == 10
+    assert [model for _, _, model, _ in asked] == ["groq-main-2"] * 10 and len(refused) == 10
     assert {question: mode for question, mode, _, _ in asked}["my top customer in Aug 2027"] == "ml"
-    assert ("can you give it for sep 2027", "ml", "gemini-flash", 1) in asked          # N33 after N32
-    assert fake.models == ["gemini-flash-latest"]
-    files = list(results_dir.glob("ml_gemini-flash_*.json"))
+    assert ("can you give it for sep 2027", "ml", "groq-main-2", 1) in asked          # N33 after N32
+    assert fake.models == [agent.model_name()] and fake.keys == [llm.KEY_2]
+    files = list(results_dir.glob("ml_second_*.json"))
     assert len(files) == 1
     saved = json.loads(files[0].read_text(encoding="utf-8"))
     assert list(saved) == ML_QUICK and saved["N21"]["calls"] == [
-        {"model": "gemini-flash-latest", "total": 3_000, "finish": "stop"}]
+        {"model": agent.model_name(), "total": 3_000, "finish": "stop"}]
     rows = list(csv.DictReader((results_dir / "scores.csv").open(encoding="utf-8")))
-    assert rows[0]["set"] == "ml" and rows[0]["model"] == "gemini-flash-latest" and rows[0]["of"] == "10"
+    assert rows[0]["set"] == "ml" and rows[0]["model"] == agent.model_name() and rows[0]["of"] == "10"
 
 
 @pytest.mark.django_db
@@ -300,7 +302,7 @@ def test_main_and_backup_are_the_groq_models(results_dir, truth, monkeypatch, st
 
 
 @pytest.mark.parametrize("model, message", [
-    ("gemini-flash", "gemini-flash is not set up"),            # no GEMINI_API_KEY in the tests
+    ("second", "groq-main-2 is not set up"),                   # no GROQ_API_KEY_2 in the tests
     ("groq-backup", "groq-backup is not set up"),              # no GROQ_FALLBACK_MODEL
 ])
 @pytest.mark.django_db
@@ -309,14 +311,3 @@ def test_a_model_that_is_not_set_up_is_refused(results_dir, monkeypatch, staff, 
     monkeypatch.setattr(agent, "ask", lambda *args, **kwargs: pytest.fail("nothing may be asked"))
     with pytest.raises(CommandError, match=message):
         call_command("run_eval", "quick", "--ids", "Q38", "--model", model, "--cap", "1000000")
-
-
-@pytest.mark.django_db
-def test_gemini_flash_lite_cannot_answer_the_golden_questions_alone(results_dir, monkeypatch, staff):
-    from portal.lc import llm
-    if not hasattr(llm, "may_do"):
-        pytest.skip("every model of the chain writes SQL")
-    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
-    monkeypatch.setattr(agent, "ask", lambda *args, **kwargs: pytest.fail("nothing may be asked"))
-    with pytest.raises(CommandError, match="only does the small steps"):
-        call_command("run_eval", "quick", "--ids", "Q38", "--model", "gemini-flash-lite", "--cap", "1000000")

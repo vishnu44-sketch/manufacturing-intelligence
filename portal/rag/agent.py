@@ -46,12 +46,13 @@ Backup model: every Groq model has its own free DAILY token limit. When the main
 (GROQ_MODEL) says its daily limit is used up, the same call goes to the backup model
 (GROQ_FALLBACK_MODEL, empty = no backup) with the backup's smaller limits, and for the next
 MAIN_RESTING_SECS new questions start with the backup. A per-MINUTE limit still just waits.
-18-Nov, the model chain: Groq main -> Gemini Flash -> Gemini Flash-Lite -> the Groq backup (lc/llm.py, AI_MODEL_CHAIN
-sets the order; Gemini only with GEMINI_API_KEY). _ask_models() tries them in turn: a daily limit, a busy or
-unreachable model, a request too large even when cut, or any other error moves the call to the next model, and a
-model that hit its daily limit (or was busy) rests a while (passed over). Gemini Flash-Lite only does the small
-calls (rewrite, route - never the SQL or an answer: lc.llm.ALLOWED_CALLS). Staff may choose a model: then only that
-model is asked, and when it cannot answer the error card says why (chosen_failed) - no quiet fallback.
+18-Nov, the model chain (19-Nov: Groq only, with a second Groq key): Groq main -> the same model on the second
+Groq key (GROQ_API_KEY_2, only when set) -> the Groq backup (lc/llm.py, AI_MODEL_CHAIN sets the order).
+_ask_models() tries them in turn: a daily limit, a busy or unreachable model, a request too large even when cut, or
+any other error moves the call to the next model, and a model that hit its daily limit (or was busy) rests a while
+(passed over). Resting goes by the chain's id, so the first key resting never makes the second key rest. Staff may
+choose a model: then only that model is asked, and when it cannot answer the error card says why (chosen_failed) -
+no quiet fallback.
 """
 import datetime
 import decimal
@@ -100,8 +101,8 @@ MAIN_RESTING_SECS = 600   # after the main model's daily limit: new questions us
 BUSY_RESTING_SECS = 120   # a busy / unreachable model (5xx, timeout, network): tried last for 2 minutes
 MINUTE_RESTING_SECS = 60  # a model at its per-minute limit (not the main Groq model, which waits): 1 minute
 DAILY_TOKEN_LIMIT = 200_000  # Groq free tier: tokens per model per day (shown on History)
-# a daily (not per-minute) limit: Groq's "tokens per day (TPD)", Gemini's quota "GenerateRequestsPerDay..."
-DAILY_LIMIT = re.compile(r"per day|PerDay|\((?:TPD|RPD)\)", re.I)
+# a daily (not per-minute) limit: Groq's "tokens per day (TPD)" / "requests per day (RPD)"
+DAILY_LIMIT = re.compile(r"per day|\((?:TPD|RPD)\)", re.I)
 PDF_TOP_K = 3             # PDF pieces the router looks at and a document answer is written from
 # 03-Nov, measured with the real PDF index: the 10 test document questions scored 0.656 to 0.818, the 52 golden
 # data questions 0.479 to 0.738 (only 3 at 0.64 or more). Below this score a question goes to the data with no AI call.
@@ -556,8 +557,8 @@ class ModelBusy(AIUnavailable):
 
 
 class ModelDown(AIUnavailable):
-    """A model could not be reached: network, timeout or a server error (busy=True: 503, e.g. Gemini's "high
-    demand"). The next model of the chain is tried."""
+    """A model could not be reached: network, timeout or a server error (busy=True: 503, e.g. Groq's "over
+    capacity"). The next model of the chain is tried."""
 
     def __init__(self, busy=False):
         super().__init__(AI_DOWN)
@@ -1247,8 +1248,8 @@ def explain(result, memories=(), pdf_hits=(), on_token=None, on_rewrite=None):
             request = LcRequest("answer", explain_values(result, ROWS_FOR_ANSWER, None, memories, pdf_hits),
                                 retries=list(retries))
         else:
-            # Gemini Flash-Lite and the Groq backup: fewer rows; after a 413 (lc.calls.for_backup, smallest=True) the smallest request, made only
-            # then (its fact notes would read MySQL again)
+            # the Groq backup: fewer rows; after a 413 (lc.calls.for_backup, smallest=True) the smallest request, made
+            # only then (its fact notes would read MySQL again)
             request = LcRequest("answer", explain_values(result, FALLBACK_ROWS_FOR_ANSWER, FALLBACK_MAX_ANSWER_CHARS,
                                                          memories, pdf_hits), retries=list(retries),
                                 backup={"smallest": lambda: explain_values(result, BACKUP_SMALLEST_ROWS,
@@ -3013,7 +3014,8 @@ def fallback_model_name():
     return "" if backup == model_name() else backup
 
 
-# {model id: (time.monotonic() until which it rests, why)} - new calls pass a resting model over
+# {model id: (time.monotonic() until which it rests, why)} - new calls pass a resting model over. 19-Nov: by the
+# chain's id, not the model name - groq-main and groq-main-2 send the same name, and each Groq key has its own limits
 _resting = {}
 
 
@@ -3044,7 +3046,8 @@ def models_in_order(chosen="", answered_by=""):
     no fallback - tried even while it rests; [] when it is not set up or not in the chain: _ask_models then says
     so). Auto: the chain without the resting models - all of them when every model rests (as before: after the
     backup's daily limit too, the main model is asked again). answered_by = the model name that answered this
-    question's earlier call: it goes first, so one question stays with one model."""
+    question's earlier call: it goes first, so one question stays with one model (19-Nov: both Groq keys have the
+    main model's name - they keep their own order, and a resting key stays left out)."""
     from ..lc import llm  # imported here: portal/lc/ imports this module
 
     if chosen:
@@ -3071,7 +3074,7 @@ def _failure(entry, exc):
         if exc.busy:
             return "busy", f"{name} was busy", BUSY_RESTING_SECS
         return "down", f"{name} could not be reached", BUSY_RESTING_SECS
-    if str(exc) in (llm.MISSING_KEY, llm.GEMINI_MISSING_KEY):
+    if str(exc) in llm.MISSING_KEYS.values():
         return "key", f"{name} is not set up", 0
     return "error", f"{name} returned an error", 0
 
@@ -3096,10 +3099,10 @@ def _all_failed(kinds, messages):
 
 
 def _ask_one(request, max_tokens, effort, entry, streamed):
-    """One model's call. A model with full_request=False (Gemini Flash-Lite, the Groq backup) gets the request cut
-    to its size (lc.calls.for_backup) and, when that is still too large, once the smallest one. Gemini Flash gets
-    the full request and, when too large, once the cut one. The main Groq model's 413 goes straight to the next
-    model: it is Groq's tokens-a-minute limit, and Gemini Flash takes the full request.
+    """One model's call, on the model's own Groq key (entry.key_env - 19-Nov: the second key for groq-main-2).
+    A model with full_request=False (the Groq backup) gets the request cut to its size (lc.calls.for_backup) and,
+    when that is still too large, once the smallest one. The main Groq model's 413 (on either key) goes straight to
+    the next model: it is that Groq account's tokens-a-minute limit, and the other key takes the full request.
     18-Nov (question 118): the backup's request must fit its smaller free tier - see test_backup_model.py."""
     from ..lc import calls  # imported here: portal/lc/ imports this module
 
@@ -3107,72 +3110,54 @@ def _ask_one(request, max_tokens, effort, entry, streamed):
         max_tokens = min(max_tokens, FALLBACK_MAX_TOKENS)
     first = request if entry.full_request else calls.for_backup(request)
     try:
-        return calls.chat(first, max_tokens, effort, entry.model, **streamed)
+        return calls.chat(first, max_tokens, effort, entry.model, key_env=entry.key_env, **streamed)
     except RequestTooLarge:
-        if entry.id == "groq-main":
+        if entry.full_request:
             raise
-        smaller = calls.for_backup(request, smallest=not entry.full_request)
+        smaller = calls.for_backup(request, smallest=True)
         if smaller.inputs() == first.inputs():
             raise
         log.warning("Request too large for %s (%s) - sent again smaller", entry.model, request.chain)
-        return calls.chat(smaller, max_tokens, effort, entry.model, **streamed)
+        return calls.chat(smaller, max_tokens, effort, entry.model, key_env=entry.key_env, **streamed)
 
 
 def chosen_failed(chosen, kind):
     """The error card's message when the model an admin chose (lc.llm.MODEL_IDS) cannot answer - 18-Nov: a chosen
     model is the only one asked, so the admin is told plainly why instead of another model answering quietly.
-    kind = _failure's kind ('busy', 'daily', 'down', 'key', 'error'), 'small_only' (a model that only does the small
-    calls was chosen for the SQL or an answer: lc.llm.ALLOWED_CALLS) or 'missing' (not set up / not in the chain)."""
+    kind = _failure's kind ('busy', 'daily', 'down', 'key', 'error') or 'missing' (not set up / not in the chain)."""
     from ..lc import llm  # imported here: portal/lc/ imports this module
 
     name = llm.SHORT_NAMES.get(chosen, chosen)
     name = name[:1].upper() + name[1:]          # "the Groq backup model" -> "The Groq backup model"
-    tier = "Google" if chosen.startswith("gemini") else "Groq"
-    setting = {"gemini-flash": "GEMINI_API_KEY", "gemini-flash-lite": "GEMINI_API_KEY",
-               "groq-backup": "GROQ_FALLBACK_MODEL"}.get(chosen, "GROQ_API_KEY")
+    setting = {"groq-main-2": llm.KEY_2, "groq-backup": "GROQ_FALLBACK_MODEL"}.get(chosen, llm.KEY)
     if kind == "missing" and chosen in llm.known_models():
         return f"{name} is not in AI_MODEL_CHAIN (.env). Choose another model, or Auto."
     messages = {
-        "busy": f"{name} is busy right now ({tier} free tier). Try again in a minute, or choose Auto.",
-        "daily": f"{name} has reached its daily limit ({tier} free tier). Choose another model, or Auto.",
+        "busy": f"{name} is busy right now (Groq free tier). Try again in a minute, or choose Auto.",
+        "daily": f"{name} has reached its daily limit (Groq free tier). Choose another model, or Auto.",
         "down": f"{name} could not be reached right now. Try again in a minute, or choose Auto.",
         "key": f"{name} is not set up ({setting} missing). Choose another model, or Auto.",
         "missing": f"{name} is not set up ({setting} missing). Choose another model, or Auto.",
-        "small_only": (f"{name} only does the small steps (rewriting a follow-up, choosing the route), not the SQL "
-                       f"or the answers. Choose another model, or Auto."),
     }
     return messages.get(kind, f"{name} returned an error. Try again, or choose Auto.")
 
 
-def _ask_models(request, max_tokens, effort, order, reasons=None, on_token=None, timed=None, chosen="",
-                skipped=None):
+def _ask_models(request, max_tokens, effort, order, reasons=None, on_token=None, timed=None, chosen=""):
     """Try the models of `order` (models_in_order) in turn until one answers -> (reply, tokens, cut_off, the
     ChainModel that answered). request is an lc.calls.LcRequest, or a function ChainModel -> LcRequest.
-    A model that may not do this call (lc.llm.may_do: Gemini Flash-Lite writes no SQL and no answer) is passed
-    over without a call (its id goes to `skipped`, a set). A failed model is passed over (its reason goes to
-    `reasons`, {id: why}) and may rest a while (_failure); a streamed reply that broke after its first piece is not
-    tried again (StreamBroken). No model answered -> _all_failed's error.
+    A failed model is passed over (its reason goes to `reasons`, {id: why}) and may rest a while (_failure - by its
+    chain id: 19-Nov, the first Groq key resting leaves the second one asked); a streamed reply that broke after its
+    first piece is not tried again (StreamBroken). No model answered -> _all_failed's error.
     chosen = an admin's chosen model id ('' = auto): it is the only model of `order`, and when it cannot answer the
     error says so plainly (chosen_failed) - no other model is asked.
     timed(secs, waited) gets each model's call time and the part spent waiting."""
-    from ..lc import llm  # imported here: portal/lc/ imports this module
-
     streamed = {"on_token": on_token} if on_token else {}  # only then: calls.chat stays as it was for the rest
     reasons = {} if reasons is None else reasons
-    skipped = set() if skipped is None else skipped
     kinds, messages = [], []
     if chosen and not order:  # the chosen model is not set up (no key) or not in AI_MODEL_CHAIN
         raise AIUnavailable(chosen_failed(chosen, "missing"))
     for entry in order:
         asked = request(entry) if callable(request) else request
-        call = getattr(asked, "chain", "")
-        # every model of the chain that may not do this call (also one resting now): model_note leaves it out
-        skipped.update(other.id for other in llm.chain_models() if not llm.may_do(other, call))
-        if not llm.may_do(entry, call):
-            if chosen:
-                raise AIUnavailable(chosen_failed(chosen, "small_only"))
-            log.info("%s (%s) does not do the %s call - the next model is tried", entry.id, entry.model, call)
-            continue
         _waited.secs = 0.0
         started = time.perf_counter()
         try:
@@ -3201,12 +3186,13 @@ def _ask_models(request, max_tokens, effort, order, reasons=None, on_token=None,
     raise _all_failed(kinds, messages)
 
 
-def model_note(chosen, answered, reasons, skipped=()):
+def model_note(chosen, answered, reasons):
     """Why `answered` (a ChainModel) answered and not the chain's first model: '' when it is the first, "chosen by
     you" for an admin's choice, else the reasons of the models before it ("Groq's daily limit was reached").
-    skipped = the ids of the models that may not do this call (lc.llm.may_do): they are not named.
-    18-Nov: when the Groq backup answered, the note says it plainly ("the backup model qwen answered - Groq and Gemini
-    Flash were not available (...); answers may be less exact"). At most 200 letters (Question.model_note)."""
+    18-Nov: when the Groq backup answered, the note says it plainly ("the backup model qwen answered - Groq and the
+    second Groq key were not available (...); answers may be less exact"). 19-Nov: when the second Groq key answered,
+    the note names it ("Groq's daily limit was reached - the second Groq key answered"): the saved model name is the
+    same for both keys. At most 200 letters (Question.model_note)."""
     from ..lc import llm  # imported here: portal/lc/ imports this module
 
     if chosen and answered.id == chosen:
@@ -3218,8 +3204,6 @@ def model_note(chosen, answered, reasons, skipped=()):
     for entry in base:
         if entry.id == answered.id:
             break
-        if entry.id in skipped:
-            continue
         rest = resting(entry.id)
         whys.append(reasons.get(entry.id) or (rest[1] if rest else "") or f"{entry.short} was not used")
         names.append(entry.short)
@@ -3235,6 +3219,9 @@ def model_note(chosen, answered, reasons, skipped=()):
         if len(note) > 200:  # many reasons: the plain part stays
             note = f"the backup model {family} answered - {who} {were} not available; answers may be less exact"
         return note[:200]
+    if answered.id == "groq-main-2":
+        note = (f"{why} - " if why else "") + "the second Groq key answered"
+        return note if len(note) <= 200 else "the second Groq key answered"
     return why[:200]
 
 
@@ -3256,11 +3243,10 @@ def _ask_ai(request, max_tokens, effort, result, step="sql", timed_as=None, on_t
         result.add_secs("wait", waited)
 
     order = models_in_order(result.chosen_model, result.model)
-    skipped = set()  # the models that may not do this call (Gemini Flash-Lite: no SQL, no answer)
     reply, tokens, cut_off, entry = _ask_models(request, max_tokens, effort, order, result.model_reasons,
-                                                on_token, timed, chosen=result.chosen_model, skipped=skipped)
+                                                on_token, timed, chosen=result.chosen_model)
     result.model = entry.model
-    result.model_note = model_note(result.chosen_model, entry, result.model_reasons, skipped)
+    result.model_note = model_note(result.chosen_model, entry, result.model_reasons)
     result.add_tokens(step, tokens)
     if cut_off and reply and step == "sql":  # half a query: a retry would stop at the same limit
         log.warning("AI reply cut off at %s tokens (%s)", max_tokens, entry.model)

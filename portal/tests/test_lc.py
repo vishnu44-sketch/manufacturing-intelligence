@@ -272,7 +272,8 @@ def lc_app(monkeypatch):
     monkeypatch.setattr(agent, "invoice_data_dates", lambda: None)
     db.chains = []
     real_chat = calls.chat
-    monkeypatch.setattr(calls, "chat", lambda request, *args: db.chains.append(request.chain) or real_chat(request, *args))
+    monkeypatch.setattr(calls, "chat", lambda request, *args, **kwargs: db.chains.append(request.chain)
+                        or real_chat(request, *args, **kwargs))
     return db
 
 
@@ -616,7 +617,7 @@ def test_the_rewrite_reads_the_chat_memory_without_runnable_with_message_history
 
     seen = []
     model = RunnableLambda(lambda prompt: seen.append(prompt.to_messages()) or AIMessage("Top customer in Sep 2026?"))
-    monkeypatch.setattr(llm, "make_llm", lambda name, max_tokens, effort: model)
+    monkeypatch.setattr(llm, "make_llm", lambda name, max_tokens, effort, key_env=llm.KEY: model)
     history = SpyHistory(EARLIER, session_id="42")
     result = agent.AskResult(text="and for sep 2026?")
 

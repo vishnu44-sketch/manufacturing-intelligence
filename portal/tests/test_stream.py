@@ -64,7 +64,8 @@ class StreamingFakeAI(FakeAI):
         self.streamed = []
         self.last_text = None
 
-    def make_llm(self, model, max_tokens, effort):
+    def make_llm(self, model, max_tokens, effort, key_env=llm.KEY):
+        self.keys.append(key_env)
         return StreamingFakeChatModel(ai=self, model=model, max_tokens=max_tokens)
 
     def reply(self, messages, model, max_tokens):
@@ -160,7 +161,7 @@ class UsageTwiceChatModel(StreamingFakeChatModel):
 def test_a_token_count_sent_twice_is_counted_once(monkeypatch, mysql, signed_in):
     mysql.results = [ROWS]
     fake = fake_ai(monkeypatch, [(GOOD_SQL, 3000), (ANSWER, 800)])
-    monkeypatch.setattr(llm, "make_llm", lambda model, max_tokens, effort: UsageTwiceChatModel(
+    monkeypatch.setattr(llm, "make_llm", lambda model, max_tokens, effort, key_env=llm.KEY: UsageTwiceChatModel(
         ai=fake, model=model, max_tokens=max_tokens))
 
     _, events = stream(signed_in)

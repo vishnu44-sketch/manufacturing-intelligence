@@ -20,26 +20,26 @@ The data database and its read-only user are always `AI_GOLD_DATABASE=ss_gold` a
 (see section 6).
 
 The AI model chain (18-Nov): every AI call (rewrite, route, SQL, answer, documents, general answer, AI chart)
-tries these models in turn until one answers - 1) Groq main `GROQ_MODEL`, 2) Gemini Flash `GEMINI_MODEL`
-(default gemini-flash-latest), 3) Gemini Flash-Lite `GEMINI_LITE_MODEL` (default gemini-flash-lite-latest),
-4) the Groq backup `GROQ_FALLBACK_MODEL`. Groq main and Gemini Flash get the full request, Flash-Lite and the
-backup a smaller one.
+tries these models in turn until one answers - 1) Groq main `GROQ_MODEL` on `GROQ_API_KEY` (id `groq-main`),
+2) the same Groq model on a second Groq account's key `GROQ_API_KEY_2` (id `groq-main-2`), 3) the Groq backup
+`GROQ_FALLBACK_MODEL` (qwen, id `groq-backup`). The two Groq main keys get the full request, the backup a
+smaller one.
 
-- `GEMINI_API_KEY` - needed on the office PC too (copy it into its .env); without it the Gemini models are
-  simply left out and the chain is Groq main + the backup, as before.
-- `AI_MODEL_CHAIN` (optional) - the order as ids, e.g. `groq-main,gemini-flash,gemini-flash-lite,groq-backup`
-  (an id left out is not used).
-- A model moves on after: its daily limit (it then rests 10 minutes), busy / unreachable / a 45 s Gemini
-  timeout (rests 2 minutes), a request too large even when made smaller, or any other error (a wrong key or
-  model name is logged as a warning, never the key). Only Groq main still waits after a per-minute limit.
-- The answer card names the model that answered and why it was not the first (e.g. "Groq's daily limit was
-  reached"). Admins can choose one model on the Ask page (`GET /api/models`, "model" on `/api/ask`): only that
-  model is asked (no fallback) - when it is busy or used up the card says so ("Gemini Flash is busy right now ...
-  choose Auto"). Auto keeps the whole chain. Gemini Flash-Lite only does the small steps (rewrite, route), never
-  the SQL or the answers. Other users always get Auto.
-- Privacy: on Google's free tier, Google may use the prompts (the question, the notes, the rows sent for the
-  answer) to improve its products. Fine for the demo data - not for a client's real data: use a paid Gemini
-  key, or leave `GEMINI_API_KEY` out, before real client data goes in.
+- `GROQ_API_KEY_2` (optional) - the API key of a second Groq account. When it is set and the first key's daily
+  limit (or its per-minute limit) is reached, the same strong Groq model is asked on this key before the qwen
+  backup. Without it the chain is Groq main + the backup, as before.
+- Office PC: put `GROQ_API_KEY_2` in the office .env by hand (never in chat or git). An old `GEMINI_API_KEY`
+  line in .env is simply not used any more and may be deleted.
+- `AI_MODEL_CHAIN` (optional) - the order as ids, e.g. `groq-main,groq-main-2,groq-backup` (an id left out is
+  not used).
+- A model moves on after: its daily limit (it then rests 10 minutes), busy / unreachable (rests 2 minutes), a
+  request too large even when made smaller, or any other error (a wrong key or model name is logged as a
+  warning, never the key).
+- The answer card names the model that answered and why it was not the first (e.g. "Groq gpt-oss-120b (2nd
+  key) - Groq's daily limit on the first key was reached"). Admins can still choose one model in the chat's
+  model dropdown (`GET /api/models`, "model" on `/api/ask`): then only that model is asked (no fallback) - when
+  it is busy or used up the card says so and suggests Auto. Auto keeps the whole chain. `groq-main-2` is only
+  listed when `GROQ_API_KEY_2` is set. Other users always get Auto.
 
 For the website in production:
 
@@ -187,16 +187,15 @@ choice, so no other model answers - graded against our own SQL and scored in `ev
 Nothing goes into History. On the laptop (Qdrant running; add `--memory-store` when it is not):
 
     venv\Scripts\python.exe manage.py run_eval quick --model groq-main      (15 questions, the Assistant)
-    venv\Scripts\python.exe manage.py run_eval ml --model gemini-flash      (10 ML Insights questions)
+    venv\Scripts\python.exe manage.py run_eval ml --model groq-main-2       (10 ML Insights questions)
     venv\Scripts\python.exe manage.py run_eval ml --model groq-backup --ids N32 N33   (only these + their chat)
 
-- `--model`: `groq-main` (= `main`, the default), `gemini-flash`, `groq-backup` (= `backup`). Gemini Flash-Lite
-  only does the small steps (rewrite, route), so it cannot be tested alone. A model not set up in .env (or not
-  in `AI_MODEL_CHAIN`) is refused before anything is asked.
+- `--model`: `groq-main` (= `main`, the default), `groq-main-2` (needs `GROQ_API_KEY_2`), `groq-backup`
+  (= `backup`). A model not set up in .env (or not in `AI_MODEL_CHAIN`) is refused before anything is asked.
 - Token cost (estimate): about 7,000 tokens a question, 11,000 a follow-up - `quick` about 105,000, `ml` about
   85,000. A run stops before 70 % of a model's daily 200,000 Groq tokens (minus what the app used in the last
-  24 hours), so a Groq model gets ONE set a day - run it the day before the demo, not on the day. For Gemini
-  the same cap is only a safety stop: its free tier counts requests a day (about 4 calls a question).
+  24 hours), so a Groq model gets ONE set a day - run it the day before the demo, not on the day. Each Groq
+  key has its own daily tokens, so `groq-main-2` can get its own set on the same day.
 - Read the result lines: FAIL / PARTIAL with the reason (e.g. `missing 53.7`, `says 'you can ask me'`); the
   answers are in `eval_results/<set>_<model>_<date>.json`. A model with FAILs in `ml` should not be the one
   chosen for an ML Insights demo.

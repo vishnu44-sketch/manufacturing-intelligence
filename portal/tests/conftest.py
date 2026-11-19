@@ -34,11 +34,10 @@ def fast_passwords(settings):
 
 @pytest.fixture(autouse=True)
 def no_groq_key(monkeypatch):
-    """Runs for every test: no Groq key (a real chat model cannot even be made), and no Gemini key - so the
-    model chain is the Groq main model and the backup, as before Gemini (18-Nov); a test of the chain sets its own
-    (test_model_chain.py). The chain's order and the Gemini model names come from the test, never from .env."""
-    monkeypatch.delenv("GROQ_API_KEY", raising=False)
-    for name in ("GEMINI_API_KEY", "AI_MODEL_CHAIN", "GEMINI_MODEL", "GEMINI_LITE_MODEL"):
+    """Runs for every test: no Groq key (a real chat model cannot even be made), and no second Groq key - so the
+    model chain is the Groq main model and the backup; a test of the chain sets its own (test_model_chain.py,
+    19-Nov). The chain's order comes from the test, never from .env."""
+    for name in ("GROQ_API_KEY", "GROQ_API_KEY_2", "AI_MODEL_CHAIN"):
         monkeypatch.delenv(name, raising=False)
 
 
