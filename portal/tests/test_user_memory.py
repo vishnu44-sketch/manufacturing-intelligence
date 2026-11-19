@@ -60,7 +60,8 @@ def test_memory_instructions_are_found_and_cleaned(text, fact):
 
 def test_none_of_the_golden_questions_is_a_memory_instruction():
     questions = [item["question"] for item in ITEMS]
-    assert len(questions) == 61  # 17-Nov: + 8 ML questions (N21..N28); 18-Nov: + N29 (total sales in 2027)
+    assert len(questions) == 69  # 17-Nov: + 8 ML questions (N21..N28); 18-Nov: + N29 (total sales in 2027),
+    # + N30..N37 (ML Insights questions a weaker model got wrong)
     assert [q for q in questions if user_memory.memory_fact(q) is not None] == []
 
 

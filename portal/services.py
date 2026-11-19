@@ -71,21 +71,24 @@ def chat_mode(chat, mode=""):
     return chat.mode if chat is not None else (mode or "")
 
 
-def answer_in_chat(user, chat, question, mode=""):
+def answer_in_chat(user, chat, question, mode="", model=""):
     """Ask one checked question in this chat (None = start a new chat with it) and save it there.
     mode = 'ml' starts an ML Insights chat (ignored for an existing chat: chat_mode).
+    model = the AI model to try first (an admin's choice, checked by the API; '' = the chain's own order).
     Returns (the saved Question, the chat)."""
     context = ChatHistory.for_chat(chat) if chat else None  # follow-ups ("and for Sep?") see the chat so far
     mode = chat_mode(chat, mode)
-    return _put_in_chat(user, chat, agent.ask(question, user, context=context, mode=mode).question, mode)
+    chosen = {"model": model} if model else {}  # only when chosen: auto is ask()'s own default
+    return _put_in_chat(user, chat, agent.ask(question, user, context=context, mode=mode, **chosen).question, mode)
 
 
-def answer_in_chat_streamed(user, chat, question, mode=""):
+def answer_in_chat_streamed(user, chat, question, mode="", model=""):
     """answer_in_chat() for the streamed Ask page: a generator that yields the question's progress events
     (agent.ask_events: steps, pieces of the answer) and returns (the saved Question, the chat) - saved the same."""
     context = ChatHistory.for_chat(chat) if chat else None
     mode = chat_mode(chat, mode)
-    result = yield from agent.ask_events(question, user, context=context, mode=mode)
+    chosen = {"model": model} if model else {}  # only when chosen: auto is ask_events()'s own default
+    result = yield from agent.ask_events(question, user, context=context, mode=mode, **chosen)
     return _put_in_chat(user, chat, result.question, mode)
 
 

@@ -195,7 +195,9 @@ def test_it_is_sent_back_only_once(monkeypatch, forecast_db, user):
                "rows": [[Decimal("546371110.54"), Decimal("501753327.90"), Decimal("590988893.18"), Decimal("4.16"),
                          datetime.date(2026, 10, 31)]], "truncated": False}
     forecast_db.results = [one_row]
-    fake = use_fake_ai(monkeypatch, [(f"```sql\n{SUMMED_SQL}\n```", 3000)] * 2 + [(YEAR_ANSWER, 800)])
+    # an answer of this one row (the 10-month YEAR_ANSWER's amounts are not in it: answer_verify would send it back)
+    one_row_answer = "The forecast is about INR 54.6 Cr (range 50.2 - 59.1 Cr), average error 4.16 %."
+    fake = use_fake_ai(monkeypatch, [(f"```sql\n{SUMMED_SQL}\n```", 3000)] * 2 + [(one_row_answer, 800)])
 
     result = agent.ask(QUESTION, user)
 

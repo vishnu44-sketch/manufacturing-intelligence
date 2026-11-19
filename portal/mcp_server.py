@@ -364,6 +364,11 @@ def looks_wrong(sql):
             problems.append(problem.format(column=column))
     if agent.summed_forecast_months(sql):  # 18-Nov: forecast months added into one "2027 total"
         problems.append(agent.FORECAST_SUM_PROBLEM)
+    # 18-Nov 17:07: level 'PRODUCT' rows (no product named) of a month only the TOTAL forecast has (Aug 2027). There is
+    # no question here, so the SQL-only form of the app's check; the forecast months are read only for such a query
+    product_months = agent.product_forecast_months(sql)
+    if product_months:
+        problems.append(product_months)
     if flips_credit_notes(sql):
         problems.append(CREDIT_SIGN_PROBLEM)
     if counts_invoice_lines(sql):

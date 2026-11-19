@@ -8,6 +8,7 @@ mistake" (the general answer saw the earlier answers without their SQL).
 Any other question gets nothing more (no extra tokens). The AI is always the fake one of test_agent.py; MySQL and the
 notes search are faked. Run with:  python -m pytest -q portal/tests/test_previous_answer_columns.py
 """
+import datetime
 import json
 
 import pytest
@@ -194,6 +195,7 @@ def history(*answers):
 ])
 def test_questions_about_the_previous_answer(text):
     found = memory.previous_query(history((FORECAST_SQL, FORECAST_ANSWER), ("", NODATA_ANSWER)), text)
+    found.pop("facts", None)  # horizon_months is a stored column: its data dictionary line (tested below)
     assert found == {"n": 1, "sql": FORECAST_SQL, "columns": ["horizon_months", "forecast_count"]}
 
 
@@ -223,3 +225,128 @@ def test_a_long_query_is_cut_for_the_requests():
     text = memory.previous_query_text({"n": 1, "sql": long_sql, "columns": ["horizon_months", "forecast_count"]})
     sql_line = text.splitlines()[1]
     assert sql_line.endswith(" ...") and len(sql_line) == agent.PREVIOUS_QUERY_CHARS + 4
+
+
+# ---------- 18-Nov: a stored column of an answer older than the questions the memory keeps ----------
+# An ML Insights chat of 14 questions: the forecast answers showed low_inr; many questions later, after a few general
+# answers, "what does low_inr mean?" got "The meaning of low_inr is not in the SS Manufacturing data".
+
+LOW_SQL = ("SELECT\n  sales_month,\n  forecast_inr,\n  low_inr,\n  high_inr\nFROM ml_sales_forecast\n"
+           "WHERE\n  level = 'TOTAL'\nORDER BY\n  horizon_months\nLIMIT 500")
+LOW_ONE_LINE_SQL = ("SELECT sales_month, forecast_inr, low_inr, high_inr FROM ml_sales_forecast WHERE level = 'TOTAL' "
+                    "ORDER BY horizon_months LIMIT 500")
+LOW_FACT = ("low_inr (ml_sales_forecast): Low end of the 80 % range in INR: the actual is expected to be above this "
+            "9 times in 10.")
+LOW_QUESTION = "what does low_inr mean?"
+LOW_MEANING = ("low_inr is the low end of the forecast's likely (80 %) range for that month: actual sales are "
+               "expected to be above it 9 times in 10.")
+
+
+def long_chat(user):
+    """Question 1 general, question 2 the forecast answer with low_inr, questions 3-8 general (no SQL)."""
+    chat = make_chat(user, "hi, what can you do?", sql="", answer="I answer questions about the data.",
+                     status="general", rows_count=None)
+    start = timezone.now() - datetime.timedelta(minutes=30)
+    texts = ["sales forecast for the next 12 months"] + [f"general question {n}" for n in range(3, 9)]
+    for n, text in enumerate(texts):
+        data = n == 0
+        question = saved_question(user, text=text, conversation=chat, status="ok" if data else "general",
+                                  sql=LOW_SQL if data else "", answer="The forecast ..." if data else f"Answer {n}.",
+                                  rows_count=12 if data else None)
+        question.created_at = start + datetime.timedelta(minutes=n)
+        question.save(update_fields=["created_at"])
+    return chat
+
+
+def test_a_stored_column_of_an_older_answer_gets_its_query_and_the_data_dictionary_line(monkeypatch, mysql, user):
+    chat = long_chat(user)
+    context = ChatHistory.for_chat(chat)
+    assert [q.text for q in context] == ["general question 6", "general question 7", "general question 8"]
+    fake = use_fake_ai(monkeypatch, ["What does low_inr in the earlier forecast answer mean?", "GENERAL", LOW_MEANING])
+
+    result = agent.ask(LOW_QUESTION, user, context=context)
+
+    assert result.status == "general" and result.answer == LOW_MEANING and mysql.calls == []
+    rewrite, sql, general = fake.calls
+    for call in (rewrite, sql, general):
+        asked = user_text(call)
+        assert LOW_ONE_LINE_SQL in asked and LOW_FACT in asked                # question 2's query + the dictionary
+        assert "columns: sales_month, forecast_inr, low_inr, high_inr" in asked
+    # the SQL request writes that query out: 'Earlier in this chat' has only questions 6-8 (no SQL)
+    assert "the SQL of earlier question" not in user_text(sql)
+    assert "never say such a column was added by mistake".lower() in user_text(general).lower()
+
+
+def test_the_older_answers_are_read_once_and_only_from_this_chat(user, django_assert_num_queries):
+    chat = long_chat(user)
+    make_chat(user, "another chat", sql="SELECT low_inr FROM ml_sales_forecast")
+    context = ChatHistory.for_chat(chat)
+    with django_assert_num_queries(1):
+        assert context.older_answers() == [LOW_SQL]
+        assert context.older_answers() == [LOW_SQL]                           # read once per question
+
+
+def test_a_name_the_query_made_with_as_is_still_explained_from_the_query():
+    found = memory.previous_query(history((FORECAST_SQL, FORECAST_ANSWER)), COLUMN_QUESTION)
+    assert "facts" not in found                                              # forecast_count is in no table
+    assert "data dictionary" not in memory.previous_query_text(found)
+    # also from an older answer: the query, no dictionary line
+    older = type("History", (), {"older_answers": lambda self: [FORECAST_SQL]})()
+    found = memory.previous_query(history(("", "GST is a tax.")), COLUMN_QUESTION, older)
+    assert found == {"n": None, "sql": FORECAST_SQL, "columns": ["horizon_months", "forecast_count"]}
+    assert ONE_LINE_SQL in memory.previous_query_text(found, shown=True)     # not in 'Earlier in this chat'
+
+
+def test_an_older_answer_is_found_and_the_latest_with_the_column_wins():
+    other = "SELECT sales_month, forecast_inr FROM ml_sales_forecast"
+    older = type("History", (), {"older_answers": lambda self: [LOW_SQL, other]})()
+    found = memory.previous_query(history(("", "GST is a tax."), ("", "Hello.")), LOW_QUESTION, older)
+    assert found == {"n": None, "sql": LOW_SQL, "columns": ["sales_month", "forecast_inr", "low_inr", "high_inr"],
+                     "facts": [LOW_FACT]}
+    assert LOW_FACT in memory.previous_query_text(found)
+    # an answer the memory keeps comes first
+    found = memory.previous_query(history((LOW_SQL, "The forecast ...")), LOW_QUESTION, older)
+    assert found["n"] == 1 and found["facts"] == [LOW_FACT]
+    assert memory.previous_query_text(found, shown=True).endswith(LOW_FACT)
+
+
+@pytest.mark.parametrize("text", ["Top customers in Aug 2026?", "what does GST mean?", "and for Sep 2026?",
+                                  "explain the previous result", "show above as line chart"])
+def test_a_question_that_names_no_column_reads_no_older_answers(text):
+    def no_reading(self):
+        raise AssertionError("older answers read")
+    older = type("History", (), {"older_answers": no_reading})()
+    assert not memory.may_name_column(text)
+    assert memory.previous_query(history(("", "GST is a tax.")), text, older) is None
+
+
+def test_an_unrelated_question_in_the_long_chat_is_unchanged(monkeypatch, mysql, user):
+    chat = long_chat(user)
+    read = []
+    monkeypatch.setattr(ChatHistory, "older_answers", lambda self: read.append(1) or [])
+    mysql.results = [ROWS]
+    fake = use_fake_ai(monkeypatch, ["NEW", GOOD_SQL, ANSWER])
+
+    result = agent.ask("Top customers in Aug 2026?", user, context=ChatHistory.for_chat(chat))
+
+    assert result.status == "ok" and read == []                               # no extra query
+    assert "Previous answer's query" not in json.dumps(fake.calls)            # no extra tokens
+    assert "data dictionary" not in json.dumps(fake.calls)
+
+
+def test_the_data_dictionary_is_read_from_the_real_docs():
+    dictionary = memory.data_dictionary()
+    assert dictionary["ml_sales_forecast"]["low_inr"] == (
+        "Low end of the 80 % range in INR: the actual is expected to be above this 9 times in 10.")
+    assert dictionary["ml_sales_forecast"]["horizon_months"].startswith("How far ahead")
+    assert "forecast_id" in dictionary["ml_sales_forecast"] and "full_date" in dictionary["dim_calendar"]
+    assert "load_log" not in dictionary.get("ss_gold", {})                    # the overview's table list is no column
+    assert memory.data_dictionary() is dictionary                              # parsed once per process
+
+
+def test_the_dictionary_line_is_for_the_column_s_own_table():
+    sql = ("SELECT f.sales_month, f.low_inr, c.customer_name AS low_inr_name, SUM(f.forecast_inr) AS total "
+           "FROM ml_sales_forecast f JOIN dim_customers c ON 1 = 1 GROUP BY f.sales_month, f.low_inr, c.customer_name")
+    assert memory.column_facts(sql, ["low_inr"]) == [LOW_FACT]
+    assert memory.column_facts(sql, ["low_inr_name", "total"]) == []           # made by the query
+    assert memory.column_facts(sql, ["no_such_column"]) == [] and memory.column_facts("not sql (", ["low_inr"]) == []

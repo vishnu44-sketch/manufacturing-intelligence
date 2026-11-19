@@ -264,7 +264,7 @@ def test_the_ml_note_has_the_word_rules():
                   "as the date itself", "never \"the latest report date\""):
         assert words in note, words
     assert "call them a forecast / estimate" not in note                             # risk / pairs are not estimates
-    assert len(note) < 1600                                                          # about 380 tokens
+    assert len(note) < 1750   # about 410 tokens (18-Nov: + "no forecast per customer", about 26 tokens)
 
 
 def test_the_word_rules_reach_the_answer_of_a_forecast(monkeypatch):

@@ -1143,6 +1143,78 @@ ORDER BY f.period_start;
 Why: there are no actual sales after data_to (31-Oct-2026), and the forecast covers only the next 12 sales months (Nov 2026 to Oct 2027) - so a year (or quarter) question gets the forecast months INSIDE the period, one row per month, with range, accuracy and data_to, and forecast_months_in_period says how many. The answer names those months with their amounts and says the rest of the period is not forecast; never add the months up into the year's total, and the data date is data_to, never a period end.
 Expected: (run of 18-Nov-2026, data to 31-Oct-2026) 10 rows, mape_pct 4.16, data_to 2026-10-31 - sales months Jan 2027 to Oct 2027 (21-Dec-2026 to 20-Oct-2027) are forecast in 2027: Jan 2027 about 54.6 Cr (range 50.2 - 59.1 Cr), Feb 2027 54.0 Cr (49.2 - 58.7), Mar 2027 62.8 Cr (56.8 - 68.8), Apr 2027 57.6 Cr (51.7 - 63.4), May 2027 54.6 Cr (48.7 - 60.6), Jun 2027 56.3 Cr (49.8 - 62.9), Jul 2027 50.0 Cr (43.9 - 56.1), Aug 2027 53.7 Cr (46.8 - 60.7), Sep 2027 56.3 Cr (48.6 - 64.0), Oct 2027 58.3 Cr (50.0 - 66.7); Nov and Dec 2027 are not forecast and have no actual sales yet.
 
+## Q: What is the sales forecast for August 2027?
+
+Also asked as: predict sales for Aug 2027; expected sales in Sep 2027; how much will we sell in August 2027; sales of a future month; forecast for one month; and for Sep 2027? (change the sales_month).
+
+```sql
+SELECT f.sales_month,
+       f.period_start,
+       f.period_end,
+       ROUND(f.forecast_inr, 2) AS forecast_inr,
+       ROUND(f.low_inr, 2) AS low_inr,
+       ROUND(f.high_inr, 2) AS high_inr,
+       f.mape_pct,
+       f.horizon_months,
+       f.data_to
+FROM ml_sales_forecast f
+WHERE f.level = 'TOTAL' AND f.sales_month = 'Aug 2027'
+ORDER BY f.period_start;
+```
+
+Why: a month after data_to (31-Oct-2026) has no actual sales - it is in the future, so it is answered from the forecast, never "no data". A month name is its sales month, written like 'Aug 2027' ('August 2027' = sales_month 'Aug 2027', 21-Jul-2027 to 20-Aug-2027). Company sales = the 'TOTAL' rows (never 'PRODUCT': those are only the top 10 products for Nov 2026 to Jan 2027). One row per month asked (several months: sales_month IN (...)), with the range, mape_pct and data_to. No row = that month is not forecast (only Nov 2026 to Oct 2027 are) - say so.
+Expected: (run of 18-Nov-2026, data to 31-Oct-2026) 1 row: Aug 2027 (21-Jul-2027 to 20-Aug-2027) forecast 537,112,731.17 = about 53.7 Cr (range 467,665,000.80 to 606,560,461.54 = 46.8 - 60.7 Cr), mape_pct 4.16, horizon 10 months; Sep 2027 gives 562,931,379.32 = about 56.3 Cr (48.6 - 64.0 Cr).
+
+## Q: Who will our top customer be in Aug 2027?
+
+Also asked as: my top customer in Aug 2027; predict sales for Aug 2027 and give me the top 5 customers; which customers will buy the most next year; forecast per customer; how much will customer X buy in a future month.
+
+```sql
+WITH f AS (
+  SELECT sales_month, period_start, period_end, forecast_inr, low_inr, high_inr, mape_pct, data_to
+  FROM ml_sales_forecast
+  WHERE level = 'TOTAL' AND sales_month = 'Aug 2027'
+),
+past_month AS (
+  SELECT c.sales_month, c.sales_period_start, c.sales_period_end
+  FROM dim_calendar c
+  WHERE c.sales_period_end <= (SELECT MAX(data_to) FROM ml_sales_forecast)
+  ORDER BY c.full_date DESC
+  LIMIT 1
+),
+past_top AS (
+  SELECT cu.customer_name, ROUND(SUM(il.net_taxable_value), 2) AS past_sales_inr
+  FROM fact_invoice_lines il
+  JOIN past_month pm ON il.invoice_date BETWEEN pm.sales_period_start AND pm.sales_period_end
+  JOIN dim_customers cu ON cu.customer_id = il.customer_id
+  WHERE il.customer_id <> -1
+  GROUP BY cu.customer_id, cu.customer_name
+  ORDER BY past_sales_inr DESC
+  LIMIT 5
+)
+SELECT f.sales_month AS forecast_month,
+       f.period_start,
+       f.period_end,
+       ROUND(f.forecast_inr, 2) AS total_forecast_inr,
+       ROUND(f.low_inr, 2) AS low_inr,
+       ROUND(f.high_inr, 2) AS high_inr,
+       f.mape_pct,
+       f.data_to,
+       'none - only the company total is forecast' AS customer_forecast,
+       pm.sales_month AS past_month,
+       pm.sales_period_start AS past_from,
+       pm.sales_period_end AS past_to,
+       pt.customer_name AS past_top_customer,
+       pt.past_sales_inr
+FROM past_top pt
+CROSS JOIN past_month pm
+LEFT JOIN f ON TRUE
+ORDER BY pt.past_sales_inr DESC;
+```
+
+Why: there is NO forecast per customer - ml_sales_forecast has only the company 'TOTAL' (12 months) and the top 10 products (3 months). So the answer says plainly the data ends on data_to (31-Oct-2026) and no customer is forecast, gives the month's TOTAL forecast with its range, and the top customers of the newest complete sales month (the last one ending on or before data_to) as PAST actuals, labelled as past - never as next year's customers, never "no data" alone and never a "you can ask me" reply. The forecast is joined with LEFT JOIN: a month that is not forecast still gives the past customers (forecast columns empty - say that month is not forecast).
+Expected: (run of 18-Nov-2026, data to 31-Oct-2026) 5 rows: Aug 2027 (21-Jul-2027 to 20-Aug-2027) total forecast 537,112,731.17 = about 53.7 Cr (46.8 - 60.7 Cr), mape_pct 4.16, no customer forecast; past top customers of Oct 2026 (21-Sep-2026 to 20-Oct-2026): Sakura Pump Japan Co., Ltd. 28,239,876.00; Crescent Tech Industries Limited 18,474,783.00; Lotus Hydraulics Limited 15,124,495.50; Southern Machine Tools Limited 12,407,843.00; Tejas Metal Works Private Limited 10,439,525.00.
+
 ## Q: What is the sales forecast for GCI TX-675 next month?
 
 Also asked as: forecast for product FG01484; how much of this product will we sell next month; which products will sell the most next month; product-wise sales forecast.

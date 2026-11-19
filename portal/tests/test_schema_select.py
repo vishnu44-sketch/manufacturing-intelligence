@@ -3,11 +3,15 @@
 No Groq, no MySQL: the schema text and the document pieces are made up here (the AI is test_agent's fake).
 The full check against every docs example and eval question is done offline with the real docs.
 """
+import re
+
 import pytest
 
+from portal.lc.docs import load_docs
 from portal.models import Question
 from portal.rag import agent, warehouse
 from portal.tests.test_agent import use_fake_ai
+from portal.tests.test_ml_questions import ALLOWED, DOCS, ML_TABLES
 
 pytestmark = pytest.mark.django_db  # agent.ask() saves a Question
 
@@ -118,3 +122,100 @@ def test_the_retry_after_a_failed_try_shows_every_table(monkeypatch, schema, use
     retry_message = fake.calls[1][-1]["content"]
     assert "The rest of the ss_gold schema" in retry_message and "fact_stock_ledger: " in retry_message
     assert Question.objects.count() == 1
+
+
+# ---------- the words that pick each ml_ table (18-Nov: "which products customers buy together?") ----------
+# On ML Insights the backup model answered "which products customers buy together?" with the top customers by
+# orders. The words of each ml_ table now cover more ways (and typos) of asking, and stay narrow enough that a
+# normal question picks no ml_ table.
+
+def ml_picked(question):
+    """The ml_ tables the question's words alone pick (ml_run_log left out: 'model' and 'ML' pick it)."""
+    return (agent.tables_for_question(question, [], ALLOWED) or set()) & (ML_TABLES - {"ml_run_log"})
+
+
+ML_VARIANTS = {
+    "ml_product_pairs": [
+        "which products customers buy together?", "what do customers usually buy together", "products bought together",
+        "items purchased together", "what is ordered together most", "products sold together",
+        "what goes together with FG00040", "products often bought with TX-675", "frequently bought items",
+        "top product pairs", "which items are paired", "product combinations", "bundles we could offer",
+        "cross-sell ideas for coolant pumps", "cross sell suggestions", "market basket analysis",
+        "what do customers buy along with GCI pumps", "which products buy togather", "what sells togther",
+        # 18-Nov: the names of the method
+        "association rules of our products", "associative rule mining on the orders", "association mining",
+        "rule mining for products", "run apriori on the sales orders", "fp-growth results", "FP growth itemsets",
+        "frequent itemsets", "order baskets", "basket analysis", "frequently bought products",
+        "items bought together"],
+    "ml_customer_risk": [
+        "which customers might stop buying", "customers likely to leave", "who will stop ordering from us",
+        "churn risk", "customers at risk", "risk score of Allied Castings", "are we losing customers",
+        "customers going inactive soon", "which clients may stop purchasing", "customer attrition",
+        "customers about to leave", "chrun list"],
+    "ml_customer_segments": [
+        "what customer groups do we have", "customer segments", "customer segmentation", "types of customers",
+        "kinds of customers we have", "customer clusters", "RFM groups", "segment our customers",
+        "which customers are occasional buyers", "groups of customers by buying"],
+    "ml_invoice_alerts": [
+        "any unusual invoices", "suspicious invoices", "odd prices last month", "strange invoices", "invoice outliers",
+        "anomalies in invoices", "anomalous prices", "invoice alerts", "which invoices to check",
+        "invoices that need review", "abnormal credit notes", "unusal invoices", "suspicous invoice lines",
+        "any red flags in billing"],
+    "ml_stock_runout": [
+        "which items will run out of stock soon", "items running out", "stock out soon", "stockouts next month",
+        "what will be out of stock soon", "days of stock left", "items to reorder", "what should we reorder",
+        "when should we reorder FG00040", "how long will the stock last", "items runing out", "parts running low"],
+    "ml_sales_forecast": [
+        "sales forecast", "forcast for next month", "predict sales", "sales prediction", "sales projection",
+        "next 6 months sales", "next year sales", "future sales", "estimate next quarter",
+        "what will we sell next month", "expected sales in Dec 2026", "sales outlook", "coming months sales"],
+}
+
+
+RULE_MINING_QUESTION = "which products in the order basket CSV dataset can be used for associative rule mining?"
+
+
+def test_the_18_nov_questions_pick_the_product_pairs():
+    assert ml_picked("which products customers buy together?") == {"ml_product_pairs"}
+    assert ml_picked(RULE_MINING_QUESTION) == {"ml_product_pairs"}
+    assert ml_picked("so what are the products whcih can get this type of associative") == {"ml_product_pairs"}
+
+
+@pytest.mark.parametrize("table, question", [(table, question) for table, questions in ML_VARIANTS.items()
+                                             for question in questions])
+def test_each_way_of_asking_picks_its_ml_table(table, question):
+    assert table in ml_picked(question)
+
+
+@pytest.mark.parametrize("question", [
+    "top customers last month", "sales by product", "stock value", "What is our stock value now?",
+    "Top 5 products by sales value in Nov 2026?", "which customers stopped buying from us",
+    "which customers did we lose last year", "sales by customer group", "net sales per customer group in FY 2026-27",
+    "sales by customer type", "net sales by country segment", "How much did OEM and after-market customers buy?",
+    "open sales orders", "which items have zero stock", "which items are below minimum inventory level",
+    "sales along with freight", "invoices with GST in Aug 2026", "how many orders did we get last month",
+    "credit notes this year", "what did Allied Castings buy in Aug 2026", "sales this month so far",
+    "who bought the most last month", "stock movement in Oct 2026", "price of FG00040",
+    "which customers bought from us in Jan 2026", "monthly sales trend", "how much did sales grow this year",
+    "customers with orders overdue", "which products did customers order last month", "top items by quantity sold",
+    "orders booked with delivery overdue", "which products are associated with Allied Castings",
+    "rules for net sales", "how often did Allied Castings order in 2026",
+])
+def test_a_normal_question_picks_no_ml_table(question):
+    assert ml_picked(question) == set()
+
+
+EXAMPLES = [c for c in load_docs(DOCS) if c["kind"] == "example" and c["heading"].startswith("Q: ")]
+
+
+@pytest.mark.parametrize("example", EXAMPLES, ids=lambda example: example["heading"][3:60])
+def test_every_docs_example_question_picks_the_ml_tables_of_its_sql(example):
+    """docs/sql_examples.md: an ML example's question picks the ml_ tables its SQL uses; a normal example's
+    question picks none (its words alone, without the notes)."""
+    sql = example["text"].split("```sql", 1)[1].split("```", 1)[0]
+    assert ml_picked(example["heading"][3:]) == set(re.findall(r"\bml_[a-z_]+", sql)) - {"ml_run_log"}
+
+
+def test_the_docs_have_ml_and_normal_examples():
+    with_ml = [e for e in EXAMPLES if "ml_" in e["text"].split("```sql", 1)[1].split("```", 1)[0]]
+    assert len(with_ml) >= 9 and len(EXAMPLES) - len(with_ml) >= 30

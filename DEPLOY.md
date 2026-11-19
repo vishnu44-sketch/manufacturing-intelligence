@@ -19,6 +19,28 @@ Already used on the laptop (see .env): `GROQ_API_KEY`, `GROQ_MODEL`, `GROQ_FALLB
 The data database and its read-only user are always `AI_GOLD_DATABASE=ss_gold` and `AI_DB_USER=ss_ai_reader`
 (see section 6).
 
+The AI model chain (18-Nov): every AI call (rewrite, route, SQL, answer, documents, general answer, AI chart)
+tries these models in turn until one answers - 1) Groq main `GROQ_MODEL`, 2) Gemini Flash `GEMINI_MODEL`
+(default gemini-flash-latest), 3) Gemini Flash-Lite `GEMINI_LITE_MODEL` (default gemini-flash-lite-latest),
+4) the Groq backup `GROQ_FALLBACK_MODEL`. Groq main and Gemini Flash get the full request, Flash-Lite and the
+backup a smaller one.
+
+- `GEMINI_API_KEY` - needed on the office PC too (copy it into its .env); without it the Gemini models are
+  simply left out and the chain is Groq main + the backup, as before.
+- `AI_MODEL_CHAIN` (optional) - the order as ids, e.g. `groq-main,gemini-flash,gemini-flash-lite,groq-backup`
+  (an id left out is not used).
+- A model moves on after: its daily limit (it then rests 10 minutes), busy / unreachable / a 45 s Gemini
+  timeout (rests 2 minutes), a request too large even when made smaller, or any other error (a wrong key or
+  model name is logged as a warning, never the key). Only Groq main still waits after a per-minute limit.
+- The answer card names the model that answered and why it was not the first (e.g. "Groq's daily limit was
+  reached"). Admins can choose one model on the Ask page (`GET /api/models`, "model" on `/api/ask`): only that
+  model is asked (no fallback) - when it is busy or used up the card says so ("Gemini Flash is busy right now ...
+  choose Auto"). Auto keeps the whole chain. Gemini Flash-Lite only does the small steps (rewrite, route), never
+  the SQL or the answers. Other users always get Auto.
+- Privacy: on Google's free tier, Google may use the prompts (the question, the notes, the rows sent for the
+  answer) to improve its products. Fine for the demo data - not for a client's real data: use a paid Gemini
+  key, or leave `GEMINI_API_KEY` out, before real client data goes in.
+
 For the website in production:
 
 - `DJANGO_SECRET_KEY` - a long random value; the site does not start without it when DEBUG is off.
@@ -192,3 +214,24 @@ In the office Docker (branch docker-mysql), after the data load, with the loader
 - The CSV files land in `ml_inputdata/` on this PC (the loader service mounts it), next to `inputdata/`.
 - The restart only after the FIRST run (when the ml_* tables are new): the AI's list of allowed tables is
   read once per process. The Insights page reads the tables fresh and needs no restart.
+
+## 8. Before a demo: test each model
+
+The golden questions (`portal/evals/questions.py`) are asked with ONE model of the chain - as an admin's model
+choice, so no other model answers - graded against our own SQL and scored in `eval_results/scores.csv`.
+Nothing goes into History. On the laptop (Qdrant running; add `--memory-store` when it is not):
+
+    venv\Scripts\python.exe manage.py run_eval quick --model groq-main      (15 questions, the Assistant)
+    venv\Scripts\python.exe manage.py run_eval ml --model gemini-flash      (10 ML Insights questions)
+    venv\Scripts\python.exe manage.py run_eval ml --model groq-backup --ids N32 N33   (only these + their chat)
+
+- `--model`: `groq-main` (= `main`, the default), `gemini-flash`, `groq-backup` (= `backup`). Gemini Flash-Lite
+  only does the small steps (rewrite, route), so it cannot be tested alone. A model not set up in .env (or not
+  in `AI_MODEL_CHAIN`) is refused before anything is asked.
+- Token cost (estimate): about 7,000 tokens a question, 11,000 a follow-up - `quick` about 105,000, `ml` about
+  85,000. A run stops before 70 % of a model's daily 200,000 Groq tokens (minus what the app used in the last
+  24 hours), so a Groq model gets ONE set a day - run it the day before the demo, not on the day. For Gemini
+  the same cap is only a safety stop: its free tier counts requests a day (about 4 calls a question).
+- Read the result lines: FAIL / PARTIAL with the reason (e.g. `missing 53.7`, `says 'you can ask me'`); the
+  answers are in `eval_results/<set>_<model>_<date>.json`. A model with FAILs in `ml` should not be the one
+  chosen for an ML Insights demo.

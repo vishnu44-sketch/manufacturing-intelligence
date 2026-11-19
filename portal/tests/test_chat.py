@@ -327,13 +327,14 @@ def test_refused_and_failed_questions_have_their_message_and_run_nothing(client,
 
 def test_chat_answers_keep_the_backup_note_but_no_token_line(client, user, mysql, monkeypatch):
     monkeypatch.setenv("GROQ_MODEL", "openai/gpt-oss-120b")
+    monkeypatch.setenv("GROQ_FALLBACK_MODEL", "qwen/qwen3.8-27b")
     chat = make_chat(user, "Answered by the backup", model="qwen/qwen3.8-27b",
                      sql_tokens=3_000, answer_tokens=700, total_tokens=3_700)
     client.force_login(user)
 
     card = open_chat(client, chat)["cards"][0]
 
-    assert card["backup_model"] == "qwen/qwen3.8-27b"
+    assert card["backup_model"] == "groq-backup"                         # 18-Nov: the model's id in the chain
     assert card["token_notice"] == ""                                     # only once, right after asking
 
 

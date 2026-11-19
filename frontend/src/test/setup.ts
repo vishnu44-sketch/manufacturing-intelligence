@@ -3,6 +3,7 @@
 import '@testing-library/jest-dom/vitest'
 import { cleanup, configure } from '@testing-library/react'
 import { afterEach, vi } from 'vitest'
+import { forgetModels } from '../components/AskThread'
 import { forgetGraphPage } from '../components/graphData'
 
 window.scrollTo = () => {}
@@ -16,5 +17,6 @@ afterEach(() => {
   window.history.replaceState(null, '', '/')
   document.body.className = ''
   forgetGraphPage() // each test starts with an empty Knowledge graph page
+  forgetModels() // and asks for the models list again (the administrators' model pill)
   window.localStorage.clear() // the small menu, the hidden details panel
 })

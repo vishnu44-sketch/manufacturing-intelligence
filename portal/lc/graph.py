@@ -57,7 +57,7 @@ from .. import ai_hints, user_memory
 from ..rag import agent, store, warehouse
 from ..rag.sql_guard import GuardError
 from .calls import LcRequest
-from .memory import latest_question, messages_of, previous_query, previous_query_text, sql_earlier
+from .memory import latest_question, messages_of, previous_names, previous_query, previous_query_text, sql_earlier
 
 log = agent.log  # the same log lines as before the graph
 
@@ -103,8 +103,12 @@ class AskState(TypedDict, total=False):
     memories: list            # the user's saved memories as texts, oldest first ([] = none)
     memory: list              # the chat's earlier questions as LangChain messages ([] = none, or a new question)
     chat: list                # the same messages, kept also for a new question (the general answer follows the chat)
+    history: object           # the lc.memory.ChatHistory of a saved chat (None = none): previous_query reads its
+                              # older answers only for a question that may name a column ("what does low_inr mean?")
     previous_query: dict      # the earlier answer this question is about ("what does forecast_count mean?"): its
                               # number, SQL and columns (lc.memory.previous_query; {} = not about one)
+    previous_names: str       # the fact lines for a follow-up word that is part of a name in an earlier answer's rows
+                              # ("aurora" = Aurora Fluid Power Limited; lc.memory.previous_names; '' = none)
     asked: str                # the question the router and the SQL step answer (a follow-up written out in full)
     route: str                # 'data' | 'documents' | 'both' | 'general' (the router's choice)
     pdf_hits: list            # the PDF pieces to answer from ([] = the data path)
@@ -136,6 +140,9 @@ class AskState(TypedDict, total=False):
     year_check_used: bool     # a quarter / month number grouped over all years is sent back once
     today_check_used: bool    # a period not over yet, counted past today, is sent back once
     forecast_check_used: bool  # forecast months added into one number (a "2027 total") are sent back once
+    forecast_level_check_used: bool  # product forecast rows read for a question that names no product: sent back once
+                                     # (before running, or after 0 rows for a TOTAL forecast month)
+    forecast_levels: dict     # agent.forecast_levels(), read once per question when one of those checks needs it
     one_row_retry_used: bool  # a line chart / trend question with only 1 row is sent back once
     entity_check_used: bool   # a ranking of customers / products ... whose rows name none of them is sent back once
     first_answer: dict        # the answer kept while one of those two retries runs ({} = none): its try, SQL, data,
@@ -159,17 +166,22 @@ def rewrite(state):
     japan" after two Sep 2026 questions -> no data).
     18-Nov: a question about an earlier answer's own result ("forecast_count what it mean this coloums") also gets
     that answer's query and columns (lc.memory.previous_query) - here, and later in the SQL and general requests,
-    also when the rewrite says NEW. Any other question gets nothing more."""
+    also when the rewrite says NEW. Any other question gets nothing more.
+    18-Nov: a follow-up word that is part of a name in an earlier answer's rows ("why is aurora on top?" after a list
+    led by Aurora Fluid Power Limited) gets a fact line with that full name (lc.memory.previous_names) - here and in
+    the SQL request. No such word: nothing is added and no query runs."""
     result = state["result"]
-    found = previous_query(state["chat"], result.text)
+    found = previous_query(state["chat"], result.text, state.get("history"))
+    names = previous_names(state["chat"], result.text, result)
     understood = agent.rewrite_follow_up(
         result, state["memory"],
-        previous=agent.PREVIOUS_QUERY_REWRITE.format(query=previous_query_text(found)) if found else "")
+        previous=(agent.PREVIOUS_QUERY_REWRITE.format(query=previous_query_text(found)) if found else "")
+        + (agent.FOLLOW_UP_NAMES_REWRITE.format(facts=names) if names else ""))
     if understood is None:
-        return {"memory": [], "previous_query": found or {}}
+        return {"memory": [], "previous_query": found or {}, "previous_names": names}
     result.understood_as = understood
-    found = found or previous_query(state["chat"], understood)  # "Why did you add ... in the previous answer?"
-    return {"asked": result.understood_as or result.text, "previous_query": found or {}}
+    found = found or previous_query(state["chat"], understood, state.get("history"))  # "Why did you add ... ?"
+    return {"asked": result.understood_as or result.text, "previous_query": found or {}, "previous_names": names}
 
 
 def route(state):
@@ -241,6 +253,8 @@ def pick_schema(state):
     found = state.get("previous_query")
     previous = (agent.PREVIOUS_QUERY_SQL.format(query=previous_query_text(found, shown=bool(state["memory"])))
                 if found else "")
+    if state.get("previous_names"):  # "aurora" = Aurora Fluid Power Limited (lc.memory.previous_names)
+        previous += agent.FOLLOW_UP_NAMES_SQL.format(facts=state["previous_names"])
     with agent._timed(result, "schema"):
         allowed = warehouse.allowed_tables()
         schema, full_schema_shown = agent.schema_for_prompt(state["asked"], hits, ml_mode)
@@ -257,7 +271,7 @@ def pick_schema(state):
     )
     backup_values = {}
     if ml_mode:  # 18-Nov (question 124): the backup model gets one ML note and only the ml_ tables the question picks
-        note = agent.backup_ml_hits(hits)
+        note = agent.backup_ml_hits(hits, state["asked"])
         with agent._timed(result, "schema"):
             backup_values = dict(documents="\n\n---\n\n".join(agent.compact_notes(h["text"]) for h in note),
                                  count=len(note), schema=agent.backup_ml_schema(state["asked"], note),
@@ -269,7 +283,8 @@ def pick_schema(state):
 def write_sql(state):
     """The AI writes the SQL: LangChain's SQL chain with the prompt values and the failed tries so far.
     NO_SQL -> refused (a chart question of SS Manufacturing data: first sent back once); GENERAL -> general_answer;
-    NO_DATA -> nodata (or, once, the revenue growth for a profit % between two periods);
+    NO_DATA -> nodata (or, once, the revenue growth for a profit % between two periods; a NO_DATA about how the
+    app's own ML works -> general_answer, agent.no_data_about_app_ml);
     a reply without SQL -> a retry."""
     result, attempt = state["result"], state["attempt"] + 1
     result.tries = attempt
@@ -330,6 +345,15 @@ def write_sql(state):
         log.info("MISSING line dropped - the question did not ask for it: %s", missing)
         missing = ""
     update["missing"] = missing
+    if (kind in ("no_data", "empty") and state["route"] != "both"
+            and agent.no_data_about_app_ml(f"{result.text} {result.understood_as or ''}",
+                                           no_data if kind == "no_data" else missing)):
+        # 18-Nov safety net: "which model you used for forecast and how accurate it is?" got NO_DATA "How the forecast
+        # model works ... is not in the SS Manufacturing data". How the app's own ML works is not missing data: the
+        # question goes to the general answer with the ML facts, like a GENERAL reply (one more AI call, counted)
+        log.info("NO_DATA about the app's own ML - answered as a general question: %s", no_data or missing)
+        update.update(kind="general", missing="")
+        return update
     if kind == "no_data":  # an SS Manufacturing business question, but nothing in it is in ss_gold (e.g. profit)
         if (try_question and not state["profit_switched"] and attempt < agent.MAX_TRIES
                 and agent.profit_comparison(state["asked"])):
@@ -386,6 +410,13 @@ def check_sql(state):
         if not state["forecast_check_used"] and agent.summed_forecast_months(cleaned):
             # 18-Nov: "what is my 2027 total sales" got SUM(forecast_inr) of the 2027 rows (only Jan 2027) as the year
             return {"forecast_check_used": True, "schema_not_needed": True, "problem": agent.FORECAST_SUM_PROBLEM}
+        if not state.get("forecast_level_check_used"):
+            # 18-Nov 17:07: "sales forecast for August 2027?" read the level 'PRODUCT' rows (only Nov 2026 - Jan 2027)
+            problem, levels = agent.forecast_level_problem(f"{result.text} {result.understood_as or ''}", cleaned,
+                                                           state.get("forecast_levels"))
+            if problem:
+                return {"forecast_level_check_used": True, "schema_not_needed": True, "problem": problem,
+                        "forecast_levels": levels}
         if not state["today_check_used"]:
             # 03-Nov: "FY 2026-27 so far" was summed with the invoices dated up to 20-Mar-2027
             labels = agent.periods_not_over(cleaned)
@@ -437,6 +468,14 @@ def run_sql(state):
             return {**update, "entity_check_used": True,
                     "problem": agent.entity_problem(missing[0], missing[1], data["columns"]),
                     "first_answer": {**first, "entity": missing[0]}}
+    if (not state.get("forecast_level_check_used") and not state["first_answer"]
+            and state["attempt"] < agent.MAX_TRIES and agent.found_nothing(data["rows"])):
+        # 18-Nov 17:07: 0 forecast rows for Aug 2027, while its TOTAL row is there - sent back once; the 0-row
+        # answer is kept in case that try finds no rows either (keep_first_answer)
+        problem, levels = agent.forecast_level_problem(question, cleaned, state.get("forecast_levels"), data["rows"])
+        if problem:
+            return {**update, "forecast_level_check_used": True, "schema_not_needed": True, "problem": problem,
+                    "forecast_levels": levels, "first_answer": {**first, "forecast": True}}
     _keep_rows(result, cleaned, data, state["missing"])
     return update
 
@@ -459,7 +498,7 @@ def keep_first_answer(state):
     Its tries and tokens still count both SQL calls."""
     result, first = state["result"], state["first_answer"]
     log.info("%s retry gave no better rows - the first answer is kept",
-             "Ranking" if first.get("entity") else "Line chart")
+             "Ranking" if first.get("entity") else "Forecast level" if first.get("forecast") else "Line chart")
     result.answer, result.notes = "", list(first["notes"])
     result.chart_kind = first.get("chart_kind", "")  # the chart of the try whose rows are kept
     _keep_rows(result, first["sql"], first["data"], first["missing"])
@@ -515,8 +554,8 @@ def explain(state):
     if both:
         result.sources = result.sources + agent.pdf_sources(both)
     try:
-        result.answer = agent.explain(result, state["memories"], both, on_token=_token_sender(state)) \
-            or agent.ROWS_ONLY_ANSWER
+        result.answer = agent.explain(result, state["memories"], both, on_token=_token_sender(state),
+                                      on_rewrite=_rewrite_sender(state)) or agent.ROWS_ONLY_ANSWER
     except agent.AIUnavailable as exc:  # the rows are still worth showing
         result.answer = agent.ROWS_ONLY_ANSWER
         result.error = f"Answer not written: {exc}"
@@ -559,6 +598,20 @@ def _announced(node):
 
 
 NOT_IN_DOCUMENTS = "NOT_IN_DOCUMENTS"
+
+
+def _rewrite_sender(state):
+    """18-Nov: the on_rewrite of the answer step (None when not streamed). The app's answer check (answer_verify.py)
+    found the streamed answer wrong and the AI rewrites it once: the page is told to clear the first text
+    ({"type": "reset"}) and shows the rewrite as a step; the rewritten answer then streams in its place."""
+    if not state.get("streaming"):
+        return None
+    writer = get_stream_writer()
+
+    def rewrite():
+        writer({"type": "step", "label": _LABELS["answer_fix"]})
+        writer({"type": "reset"})
+    return rewrite
 
 
 def _token_sender(state, documents=False):
@@ -618,8 +671,10 @@ def _first_kept(state):
 
 def _no_better_rows(state):
     """The retry's rows are no better than the first answer: for the ranking check, no rows or still no column
-    of the thing ranked; for the line chart, fewer than 2 rows."""
+    of the thing ranked; for the forecast level check, again no rows; for the line chart, fewer than 2 rows."""
     result, entity = state["result"], state["first_answer"].get("entity")
+    if state["first_answer"].get("forecast"):
+        return agent.found_nothing(result.rows)
     if entity:
         return agent.found_nothing(result.rows) or not agent.shows_entity(entity, result.columns)
     return len(result.rows) < 2
@@ -705,7 +760,7 @@ def start_state(result, context=(), user=None):
     saved memories)."""
     return {
         "result": result, "user": user, "memories": [], "memory": messages_of(context), "chat": messages_of(context),
-        "previous_query": {},
+        "previous_query": {}, "previous_names": "", "history": context if hasattr(context, "older_answers") else None,
         "asked": result.text,
         "route": "data", "pdf_hits": [], "hits": [],
         "retries": [], "attempt": 0, "problem": "", "missing": "", "asks_for": "", "periods": None,

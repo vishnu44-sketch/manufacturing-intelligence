@@ -34,8 +34,12 @@ def fast_passwords(settings):
 
 @pytest.fixture(autouse=True)
 def no_groq_key(monkeypatch):
-    """Runs for every test: no Groq key (a real chat model cannot even be made)."""
+    """Runs for every test: no Groq key (a real chat model cannot even be made), and no Gemini key - so the
+    model chain is the Groq main model and the backup, as before Gemini (18-Nov); a test of the chain sets its own
+    (test_model_chain.py). The chain's order and the Gemini model names come from the test, never from .env."""
     monkeypatch.delenv("GROQ_API_KEY", raising=False)
+    for name in ("GEMINI_API_KEY", "AI_MODEL_CHAIN", "GEMINI_MODEL", "GEMINI_LITE_MODEL"):
+        monkeypatch.delenv(name, raising=False)
 
 
 def _no_real_openai_call(*args, **kwargs):
@@ -51,10 +55,10 @@ def no_real_langchain_llm(monkeypatch):
 
 @pytest.fixture(autouse=True)
 def main_model_not_resting(monkeypatch):
-    """Every test starts with the main model available (a daily limit in one test must not
+    """Every test starts with every model available (a daily limit in one test must not
     send the next test to the backup model)."""
     from portal.rag import agent
-    monkeypatch.setattr(agent, "_main_resting_until", 0.0)
+    monkeypatch.setattr(agent, "_resting", {})
 
 
 @pytest.fixture(autouse=True)

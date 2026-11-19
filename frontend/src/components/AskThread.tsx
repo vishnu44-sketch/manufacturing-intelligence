@@ -4,16 +4,17 @@
 //   the answer's text as it grows, or the message when it failed;
 // - QuestionBubble / Bubble / QuestionTime: a question on the right (the copy button, the pencil to edit it);
 // - PendingQuestion: the question being asked with "Thinking…", the live steps or the growing answer;
-// - QuestionBox: the rounded (pill) question box with the round send button inside (Enter sends, Shift+Enter a new line).
+// - QuestionBox: the rounded (pill) question box with the round send button inside (Enter sends, Shift+Enter a new line);
+// - useModelChoice / ModelPicker (18-Nov, administrators only): the small "which AI model answers" pill in the box.
 // The finished answer is AnswerCard (AnswerCard.tsx). Colours are Tailwind token classes only (light and dark theme).
 import { type KeyboardEvent, type ReactNode, type RefObject, useEffect, useRef, useState } from 'react'
-import { ArrowUp, Check, Copy, Pencil } from 'lucide-react'
+import { ArrowUp, Check, ChevronDown, Copy, Cpu, Pencil } from 'lucide-react'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import { copyText } from '../lib/clipboard'
 import { AuthError, StreamUnavailable, api, problemText } from '../api'
 import { Link } from '../router'
-import type { AskMode, AskResponse, Card, ChatSummary, Me } from '../types'
+import type { AskMode, AskResponse, Card, ChatSummary, Me, ModelOption } from '../types'
 import { Button } from './ui/button'
 import { Card as Box } from './ui/card'
 import { Dots } from './ui/dots'
@@ -240,10 +241,104 @@ export function chatsOf(chats: ChatSummary[], mode: AskMode): ChatSummary[] {
   return chats.filter((chat) => (chat.mode === 'ml') === (mode === 'ml'))
 }
 
+// ------------------------------------------------------------------------ the model choice (administrators)
+
+/** Where the administrator's last model choice is kept in this browser. */
+const MODEL_KEY = 'askModel'
+
+/** The models list, asked for once per page load and then kept (null = it could not be read: no picker). */
+let modelsLoad: Promise<ModelOption[] | null> | null = null
+
+function loadModels(): Promise<ModelOption[] | null> {
+  modelsLoad ??= api.models().then((reply) => {
+    const list = Array.isArray(reply?.models) ? reply.models.filter((m) => m && typeof m.id === 'string') : []
+    if (!list.length) return null
+    // "Auto" is always there and first, even if the server's list left it out
+    const auto = list.find((m) => m.id === 'auto') ?? { id: 'auto', label: 'Auto (recommended)', available: true }
+    return [{ ...auto, available: true }, ...list.filter((m) => m.id !== 'auto')]
+  }).catch(() => null)
+  return modelsLoad
+}
+
+/** Forgets the kept models list (the tests start each test without it). */
+export function forgetModels() {
+  modelsLoad = null
+}
+
+function readModel(): string {
+  try {
+    return window.localStorage.getItem(MODEL_KEY) || 'auto'
+  } catch {
+    return 'auto' // no storage in this browser (private window ...): Auto
+  }
+}
+
+function keepModel(id: string) {
+  try {
+    if (id === 'auto') window.localStorage.removeItem(MODEL_KEY)
+    else window.localStorage.setItem(MODEL_KEY, id)
+  } catch {
+    // not kept - the choice still works until the page is left
+  }
+}
+
+/** The model choice of the question box: `models` null = no picker (not an administrator, or the list could not
+ *  be read); `model` the id to ask with ("auto" unless an administrator chose an available model). */
+export type ModelChoice = { models: ModelOption[] | null; model: string; choose: (id: string) => void }
+
+/** The model choice for an administrator (`staff`); for everyone else no picker, no /api/models call, always Auto. */
+export function useModelChoice(staff: boolean): ModelChoice {
+  const [models, setModels] = useState<ModelOption[] | null>(null)
+  const [chosen, setChosen] = useState(readModel)
+  useEffect(() => {
+    if (!staff) return
+    let live = true
+    loadModels().then((list) => { if (live) setModels(list) })
+    return () => { live = false }
+  }, [staff])
+  const shown = staff ? models : null
+  // a kept choice that is not in the list now, or not available today, asks with Auto
+  const model = shown?.some((m) => m.id === chosen && m.available) ? chosen : 'auto'
+  const choose = (id: string) => { setChosen(id); keepModel(id) }
+  return { models: shown, model, choose }
+}
+
+/** The small model pill in the question box (administrators only): a quiet "Auto" with a chip icon; a model
+ *  chosen by hand shows its name in the brand colour, so it is not forgotten. It is a real <select> (keyboard,
+ *  screen reader) laid invisibly over the pill; models that cannot be used today are greyed out with the reason. */
+function ModelPicker({ choice, big }: { choice: ModelChoice; big: boolean }) {
+  const models = choice.models ?? []
+  const forced = choice.model !== 'auto'
+  const name = forced ? (models.find((m) => m.id === choice.model)?.label ?? choice.model) : 'Auto'
+  return (
+    <label data-model-picker="" title="Which AI model answers (administrators only)"
+           className={cn('relative inline-flex shrink-0 cursor-pointer items-center gap-1 rounded-full px-2.5 text-xs font-medium',
+             'transition-colors focus-within:ring-2 focus-within:ring-primary/30',
+             forced ? 'bg-primary-soft text-primary' : 'text-muted-foreground hover:bg-secondary hover:text-foreground',
+             big ? 'h-10' : 'h-9')}>
+      <Cpu aria-hidden="true" className="size-3.5 shrink-0" />
+      <span className="max-w-[9rem] truncate max-[700px]:max-w-[5.5rem]">{name}</span>
+      <ChevronDown aria-hidden="true" className="size-3 shrink-0 opacity-70" />
+      <select aria-label="AI model" value={choice.model} onChange={(e) => choice.choose(e.target.value)}
+              className="absolute! inset-0 m-0! h-full! w-full! cursor-pointer appearance-none p-0! opacity-0">
+        {models.map((m) => (
+          <option key={m.id} value={m.id} disabled={!m.available} title={m.note || undefined}>
+            {m.label}{!m.available && m.note ? ` - ${m.note}` : ''}
+          </option>
+        ))}
+      </select>
+    </label>
+  )
+}
+
+// ------------------------------------------------------------------------------------------- asking
+
 /** Asking with the streamed answer. `mode` "ml" asks as an ML Insights chat (it matters for a new chat only:
- *  the server keeps an existing chat's own mode). run() shows the question as pending until the answer (or
- *  the problem) is there; askLive() is the call that streams. */
-export function useAsk(mode?: AskMode) {
+ *  the server keeps an existing chat's own mode). `staff`: an administrator, who can choose the model
+ *  (`choice`, for the QuestionBox; it goes with every question asked here). run() shows the question as
+ *  pending until the answer (or the problem) is there; askLive() is the call that streams. */
+export function useAsk(mode?: AskMode, staff = false) {
+  const choice = useModelChoice(staff)
   const [pending, setPending] = useState<string | null>(null)
   const [live, setLive] = useState<Live | null>(null) // the streamed progress of the pending question
   const [error, setError] = useState('')
@@ -258,12 +353,15 @@ export function useAsk(mode?: AskMode) {
             : { ...old, steps: [...old.steps, event.label] }))
         } else if (event.type === 'token') {
           setLive((old) => old && { ...old, text: old.text + event.text })
+        } else if (event.type === 'reset') {
+          // the app's answer check sends the answer back once: the first text goes, the steps show the rewrite
+          setLive((old) => old && { ...old, text: '' })
         }
-      }, mode)
+      }, mode, choice.model)
     } catch (failure) {
       if (!(failure instanceof StreamUnavailable)) throw failure
       setLive(null) // "Thinking…" while the plain call runs
-      return api.ask(text, target, mode)
+      return api.ask(text, target, mode, choice.model)
     }
   }
 
@@ -286,7 +384,7 @@ export function useAsk(mode?: AskMode) {
     }
   }
 
-  return { pending, live, error, setError, run, askLive }
+  return { pending, live, error, setError, run, askLive, choice }
 }
 
 /** The question box, like ChatGPT's (17-Nov): one rounded pill (a rounded box once it grows to more lines)
@@ -296,12 +394,13 @@ export function useAsk(mode?: AskMode) {
  *  text, the spinner while the answer comes (there is no "stop" for a running question). The text and the
  *  button are lined up at the bottom: centred on one row, the button stays at the bottom when the box grows.
  *  Focus: a soft glow in the brand colour around the pill. `big` (the Assistant's start screen): the same
- *  pill a little bigger. */
+ *  pill a little bigger. `choice` (from useAsk): for an administrator the small model pill sits just left of
+ *  the send button; nothing for everyone else. */
 export function QuestionBox({ boxRef, value, onChange, onSend, pending, big = false, maxLength, error = '',
-  formId = 'composer', boxId = 'q', label = 'Your question', placeholder }:
+  formId = 'composer', boxId = 'q', label = 'Your question', placeholder, choice }:
   { boxRef: RefObject<HTMLTextAreaElement | null>; value: string; onChange: (text: string) => void; onSend: () => void
     pending: boolean; big?: boolean; maxLength: number; error?: string; formId?: string; boxId?: string; label?: string
-    placeholder: string }) {
+    placeholder: string; choice?: ModelChoice }) {
   const filled = value.trim() !== ''
   // the box grows with the text: big up to 220 px, small up to 6 rows
   useEffect(() => { grow(boxRef.current, 0, big ? 220 : SMALL_BOX_MOST) }, [value, big, boxRef])
@@ -330,6 +429,7 @@ export function QuestionBox({ boxRef, value, onChange, onSend, pending, big = fa
                     big ? 'max-h-[220px]! min-h-10! py-2! text-[15px]!' : 'max-h-[156px]! min-h-9! py-1.5!')}
                   value={value} readOnly={pending} onChange={(e) => onChange(e.target.value)}
                   onKeyDown={onKey} placeholder={placeholder} />
+        {choice?.models && <ModelPicker choice={choice} big={big} />}
         <Button type="submit" size="icon" aria-label="Ask" title="Ask (Enter)" disabled={pending || !filled}
                 className={cn('shrink-0 rounded-full', big ? 'size-10' : 'size-9',
                   // empty (or waiting for the answer): grey and off; with text: the brand colour (the Button's own)

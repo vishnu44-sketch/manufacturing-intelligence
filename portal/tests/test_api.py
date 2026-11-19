@@ -235,6 +235,7 @@ def test_the_token_notice_comes_only_with_the_answer_just_asked(client, user, mo
 
 def test_an_answered_card_has_what_the_page_shows(client, user, monkeypatch, mysql):
     monkeypatch.setenv("GROQ_MODEL", "openai/gpt-oss-120b")
+    monkeypatch.setenv("GROQ_FALLBACK_MODEL", "qwen/qwen3.8-27b")
     chat = make_chat(user, QUESTION, model="qwen/qwen3.8-27b", understood_as="Top 5 customers in Aug 2026",
                      step_secs={"sql_ai": 1.2, "mysql": 0.05, "answer_ai": 0.2})
     client.force_login(user)
@@ -243,7 +244,9 @@ def test_an_answered_card_has_what_the_page_shows(client, user, monkeypatch, mys
 
     assert card["status"] == "ok" and card["row_count"] == 2 and card["secs"] == 1.5 and card["tries"] == 1
     assert card["understood_as"] == "Top 5 customers in Aug 2026"
-    assert card["backup_model"] == "qwen/qwen3.8-27b"
+    # 18-Nov, the model chain: the answering model's id, its name, and why (said from the saved model name)
+    assert card["backup_model"] == "groq-backup" and card["model_label"] == "Groq qwen (qwen/qwen3.8-27b)"
+    assert card["model_note"] == "used instead of Groq"
     assert card["sql"] == SQL and card["has_rows"] is True
     assert card["sources"] == [{"kind": "example", "heading": "Q: Who were the top 5 customers by invoice value in Aug 2026?"},
                                {"kind": "rule", "heading": "sales month"}]

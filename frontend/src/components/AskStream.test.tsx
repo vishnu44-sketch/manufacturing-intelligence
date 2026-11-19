@@ -76,6 +76,31 @@ describe('AskPage streamed answer', () => {
     expect(callsTo(fetch, '/api/ask')).toHaveLength(0)
   })
 
+  it('clears the first answer on a reset (the answer check sends it back once) and shows only the rewrite', async () => {
+    const live = liveStream()
+    fakeFetch(replies({ '/api/ask/stream': live.reply }))
+
+    renderAt('/new', <AskPage me={ASHA} />)
+    await ask()
+
+    live.send({ type: 'step', label: 'Write the answer (AI)' })
+    live.send({ type: 'token', text: 'There was no forecast.' })
+    await waitFor(() => expect(document.querySelector('.live-answer .answer')).toHaveTextContent('There was no forecast.'))
+
+    live.send({ type: 'step', label: 'Rewrite the answer to match the data (AI)' })
+    live.send({ type: 'reset' })
+    expect(await screen.findByText(/Rewrite the answer to match the data/)).toBeInTheDocument()   // the steps again
+    expect(document.querySelector('.live-answer')).toBeNull()                         // the first text is gone
+
+    live.send({ type: 'token', text: 'Neptune Tech Industries Ltd' })
+    await waitFor(() => expect(document.querySelector('.live-answer .answer')).toHaveTextContent(/^Neptune Tech Industries Ltd$/))
+
+    live.send({ type: 'done', chat: CHAT, card: CARD })
+    live.end()
+    expect(await screen.findByText(CARD.answer)).toBeInTheDocument()
+    expect(screen.queryByText(/There was no forecast/)).not.toBeInTheDocument()
+  })
+
   it('asks the plain way when the stream cannot be used (e.g. a proxy page instead)', async () => {
     const fetch = fakeFetch(replies({
       '/api/ask/stream': { body: new Blob(['<html>Bad gateway</html>']), headers: { 'Content-Type': 'text/html' } },

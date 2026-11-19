@@ -343,6 +343,7 @@ def test_the_daily_limit_moves_to_the_backup_model(monkeypatch, lc_app, user):
 
 @pytest.mark.django_db
 def test_an_unreachable_ai_gives_the_friendly_message(monkeypatch, lc_app, user):
+    monkeypatch.setenv("GROQ_FALLBACK_MODEL", "")  # one model (18-Nov: with more, the next model is asked)
     waits = []
     monkeypatch.setattr(agent.time, "sleep", waits.append)
     use_fake_ai(monkeypatch, [connection_error()] * 2)

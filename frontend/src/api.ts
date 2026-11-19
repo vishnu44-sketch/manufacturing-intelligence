@@ -3,7 +3,7 @@
 // the app then shows its Login page. A 403 on a staff page means "no access".
 import type {
   AiChartReply, AskMode, AskResponse, AuditData, AuditFilters, ChatDetail, ChatList, ChatSummary, DataTables, DocumentsData, EditResponse,
-  GraphNodeReply, GraphSearchReply, GraphSimilarReply, HistoryMode, HistoryPage, HomeData, InsightsData, Me, MemoryList, MemoryReply, PeopleList, PersonReply, Rows, SavedAnswer, SqlResult, SqlSavedList, SqlSavedQuery, SqlSchema,
+  GraphNodeReply, GraphSearchReply, GraphSimilarReply, HistoryMode, HistoryPage, HomeData, InsightsData, Me, MemoryList, ModelList, MemoryReply, PeopleList, PersonReply, Rows, SavedAnswer, SqlResult, SqlSavedList, SqlSavedQuery, SqlSchema,
   StreamEvent,
 } from './types'
 
@@ -143,19 +143,23 @@ const STREAM_TYPE = 'application/x-ndjson'
 const STREAM_LOST = 'The connection was lost while the answer was being written. It is saved - you can find it in History.'
 
 /** The body of a question: with "mode" only when one is given ('ml' = an ML Insights chat; it matters for a new
- *  chat only - the server keeps an existing chat's own mode). */
-function askBody(question: string, chatId: number | null, mode?: AskMode) {
-  return mode ? { question, chat_id: chatId, mode } : { question, chat_id: chatId }
+ *  chat only - the server keeps an existing chat's own mode), and with "model" only when an administrator
+ *  chose one (none or "auto" = the server picks; the server ignores it for other users). */
+export function askBody(question: string, chatId: number | null, mode?: AskMode, model?: string) {
+  const body: { question: string; chat_id: number | null; mode?: AskMode; model?: string } = { question, chat_id: chatId }
+  if (mode) body.mode = mode
+  if (model && model !== 'auto') body.model = model
+  return body
 }
 
 /** Asks with the answer streamed (/api/ask/stream): onEvent gets each step and each piece of the answer as it
  *  comes, and the promise gives the same reply as api.ask. A refused question (400, 404 ...) and a sign-in
  *  problem fail as api.ask does; StreamUnavailable when no event came back at all. */
 export async function askStream(question: string, chatId: number | null,
-  onEvent: (event: StreamEvent) => void, mode?: AskMode): Promise<AskResponse> {
+  onEvent: (event: StreamEvent) => void, mode?: AskMode, model?: string): Promise<AskResponse> {
   let response: Response
   try {
-    response = await send('POST', '/api/ask/stream', askBody(question, chatId, mode), STREAM_TYPE)
+    response = await send('POST', '/api/ask/stream', askBody(question, chatId, mode, model), STREAM_TYPE)
   } catch {
     throw new StreamUnavailable('The stream could not be opened.')
   }
@@ -229,9 +233,11 @@ export const api = {
   restoreChat: (id: number) => request<{ chat: ChatSummary }>('POST', `/api/chats/${id}/restore`, {}),
   deleteChat: (id: number) => request<{ deleted: number; message: string }>('POST', `/api/chats/${id}/delete`, {}),
   // questions
-  ask: (question: string, chatId: number | null, mode?: AskMode) =>
-    request<AskResponse>('POST', '/api/ask', askBody(question, chatId, mode)),
+  ask: (question: string, chatId: number | null, mode?: AskMode, model?: string) =>
+    request<AskResponse>('POST', '/api/ask', askBody(question, chatId, mode, model)),
   askStream,
+  // the AI models an administrator can choose for a question (staff only)
+  models: () => request<ModelList>('GET', '/api/models'),
   askAgain: (id: number) => request<AskResponse>('POST', `/api/questions/${id}/again`, {}),
   edit: (id: number, question: string) => request<EditResponse>('POST', `/api/questions/${id}/edit`, { question }),
   question: (id: number) => request<SavedAnswer>('GET', `/api/questions/${id}`),

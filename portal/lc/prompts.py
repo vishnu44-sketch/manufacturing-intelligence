@@ -26,10 +26,12 @@ REWRITE_PROMPT = ChatPromptTemplate.from_messages([
     ("human", agent.REWRITE_REQUEST),
 ])
 
-# the rows -> a short plain-English answer
+# the rows -> a short plain-English answer. "retries" = only when the app's answer check (answer_verify.py) sends
+# the answer back once: the AI's first answer, then the correction
 EXPLAIN_PROMPT = ChatPromptTemplate.from_messages([
     ("system", agent.EXPLAIN_SYSTEM_PROMPT),
     ("human", agent.EXPLAIN_REQUEST),
+    MessagesPlaceholder("retries", optional=True),
 ])
 
 # step H, the router: the question + the closest PDF pieces -> one word, data or documents

@@ -35,7 +35,7 @@ function useMlChat(me: Me) {
   const [question, setQuestion] = useState('')
   const [justAsked, setJustAsked] = useState<number | null>(null)
   const [notices, setNotices] = useState<Record<number, string>>({}) // one-time token notices, by card id
-  const asking = useAsk('ml')
+  const asking = useAsk('ml', me.is_staff)
   const box = useRef<HTMLTextAreaElement>(null)
   const asked = useRef(0) // questions asked on this page: a chat list that comes later must not open another chat
   const openChat = useRef(chatId) // the chat of the address now (an answer can come after "New chat")
@@ -170,7 +170,7 @@ function MlChat({ me, chat }: { me: Me; chat: ReturnType<typeof useMlChat> }) {
       )}
 
       <QuestionBox boxRef={box} value={question} onChange={setQuestion} onSend={() => ask(question)} pending={busy}
-                   maxLength={me.max_question_chars} error={asking.error} formId="ml-composer" boxId="ml-q"
+                   maxLength={me.max_question_chars} error={asking.error} formId="ml-composer" boxId="ml-q" choice={asking.choice}
                    label="Your question about forecasts and insights" placeholder="Ask about forecasts and insights…" />
       <ul aria-label="Ready questions" className="flex flex-wrap gap-2">
         {READY.map((text) => (

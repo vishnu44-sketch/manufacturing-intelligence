@@ -298,7 +298,14 @@ export default function AnswerCard({ card, autoRows = false, staff = false }:
           {card.status === 'memory' && (
             <div className="text-[12.5px]"><Link to="/memory">Open the Memory page</Link></div>
           )}
-          {card.backup_model && (
+          {/* 18-Nov: which model answered and why, when it was not the first model of the chain (a limit, a busy
+              model, an administrator's choice); older answers only know the backup model's name */}
+          {card.model_note ? (
+            <div className="flex items-start gap-1.5 text-[12.5px] text-muted-foreground" data-model-line="">
+              <Info aria-hidden="true" className="mt-[3px] size-3.5 flex-none" />
+              <span>Answered by {card.model_label || 'another model'} - {card.model_note.replace(/[.\s]+$/, '')}.</span>
+            </div>
+          ) : card.backup_model && (
             <div className="text-[12.5px] text-muted-foreground italic">
               Answered by the backup model ({card.backup_model}) - the main model's daily limit was reached.
             </div>
