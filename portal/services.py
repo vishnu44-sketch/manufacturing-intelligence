@@ -214,7 +214,7 @@ def saved_result(saved, load_rows):
                              sources=saved.sources, question=saved, model=saved.model,
                              sql_tokens=saved.sql_tokens, answer_tokens=saved.answer_tokens,
                              understood_as=saved.understood_as, step_secs=saved.step_secs or {},
-                             chart_kind=saved.chart_kind or "")
+                             chart_kind=saved.chart_kind or "", chart_columns=saved.chart_columns or {})
     rows_error = ""
     if load_rows and saved.status == "ok" and saved.sql:
         try:

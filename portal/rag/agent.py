@@ -46,7 +46,8 @@ only, so tests can swap in a fake one. The API key is read from .env and is neve
 Backup model: every Groq model has its own free DAILY token limit. When the main model
 (GROQ_MODEL) says its daily limit is used up, the same call goes to the backup model
 (GROQ_FALLBACK_MODEL, empty = no backup) with the backup's smaller limits, and for the next
-MAIN_RESTING_SECS new questions start with the backup. A per-MINUTE limit still just waits.
+MAIN_RESTING_SECS new questions start with the backup. A per-MINUTE limit still just waits (19-Nov: unless the
+other Groq key can take the call at once - _ask_models).
 18-Nov, the model chain (19-Nov: Groq only, with a second Groq key): Groq main -> the same model on the second
 Groq key (GROQ_API_KEY_2, only when set) -> the Groq backup (lc/llm.py, AI_MODEL_CHAIN sets the order).
 _ask_models() tries them in turn: a daily limit, a busy or unreachable model, a request too large even when cut, or
@@ -101,6 +102,7 @@ BACKUP_SMALLEST_ANSWER_CHARS = 10000
 MAIN_RESTING_SECS = 600   # after the main model's daily limit: new questions use the backup for 10 min
 BUSY_RESTING_SECS = 120   # a busy / unreachable model (5xx, timeout, network): tried last for 2 minutes
 MINUTE_RESTING_SECS = 60  # a model at its per-minute limit (not the main Groq model, which waits): 1 minute
+# (19-Nov: also the longest rest of a Groq key whose per-minute limit moved the call to the other key - MinuteLimit)
 DAILY_TOKEN_LIMIT = 200_000  # Groq free tier: tokens per model per day (shown on History)
 # a daily (not per-minute) limit: Groq's "tokens per day (TPD)" / "requests per day (RPD)"
 DAILY_LIMIT = re.compile(r"per day|\((?:TPD|RPD)\)", re.I)
@@ -285,7 +287,7 @@ NOT in ss_gold (no data for these): profit, margin or the cost of the items sold
 A "profit %" or "profit growth" BETWEEN two periods (e.g. this year vs last year): answer with the revenue of both periods and the revenue growth % (column revenue_growth_pct, calculated in SQL, same dates in both years) and write the MISSING line for true profit - the user gets a useful number instead of only "not available". A profit % of ONE period (no comparison) stays NO_DATA, with a TRY line for the revenue growth vs last year.
 
 Reply in exactly one of these four ways, with nothing else (no explanation):
-A) one SQL query inside a ```sql code block. If ONE PART of the question needs data that is not in ss_gold, write first one line "MISSING: <that part> - <why, in plain words>", then the ```sql block for the parts that can be answered. Write a MISSING line ONLY for something the question itself asks for - never for things it does not mention. With every SQL block, always write first one line "CHART: <kind>", kind one of: bar, column (upright bars), horizontal bar, line, area, stacked area, stacked bar, grouped bar, pie, scatter, heatmap, treemap, waterfall, funnel, radar, or none. When the question (or "Written out in full") asks for a chart / graph / plot / diagram of any kind, in any words or with typos ("bar chat", "barchrt", "show as columns", "pie"), write the kind it asks for. When it asks for no chart, you decide whether a chart makes the answer clearer and write "CHART: <kind> (suggested)" - e.g. a trend over months or periods: line (or column); a ranking or comparison of about 3-15 names: bar; a few parts of one whole: pie - else "CHART: none" (one number, one row, long detail lists such as invoices, alerts or items with many columns, text-heavy rows). Also first, only when they apply: "ASKS_FOR: <customers / products / sales people / states / countries>" when it asks for a ranking or list of those (not a name filter, not a count), and "PERIODS: <n>" when it asks for several periods ("last 6 months" = 6);
+A) one SQL query inside a ```sql code block. If ONE PART of the question needs data that is not in ss_gold, write first one line "MISSING: <that part> - <why, in plain words>", then the ```sql block for the parts that can be answered. Write a MISSING line ONLY for something the question itself asks for - never for things it does not mention. With every SQL block, always write first one line "CHART: <kind> | value: <column> | label: <column>", kind one of: bar, column (upright bars), horizontal bar, line, area, stacked area, stacked bar, grouped bar, pie, scatter, heatmap, treemap, waterfall, funnel, radar, or none. value = the result column of the number asked about ("most stock" -> stock quantity, not value); label = the column of short readable names (codes when names are long and alike); "| series: <column>" only for a grouped / stacked / multi-line split. When the question (or "Written out in full") asks for a chart / graph / plot / diagram of any kind, in any words or with typos ("bar chat", "barchrt", "show as columns", "pie"), write the kind it asks for. When it asks for no chart, you decide whether a chart makes the answer clearer and write "CHART: <kind> (suggested) | ..." - e.g. a trend over months or periods: line (or column); a ranking or comparison of about 3-15 names: bar; a few parts of one whole: pie - else "CHART: none" (one number, one row, long detail lists such as invoices, alerts or items with many columns, text-heavy rows, pairs of items such as products bought together). Also first, only when they apply: "ASKS_FOR: <customers / products / sales people / states / countries>" when it asks for a ranking or list of those (not a name filter, not a count), and "PERIODS: <n>" when it asks for several periods ("last 6 months" = 6);
 B) when the question is about SS Manufacturing's business but NOTHING in it can be answered from ss_gold (a profit % between two periods is NOT this case - use A with the revenue growth, as said above): one line "NO_DATA: <why, in plain words>", optionally followed by one line "TRY: <a similar question ss_gold can answer>";
 In MISSING / NO_DATA / TRY lines write for a business user: never mention table, column or database names (say "the SS Manufacturing data", not "ss_gold").
 Follow-up questions: when "Earlier in this chat" is given, the new question was already written out in full ("Written out in full: ..."). Answer that full question, and reuse the period, customer, product and filters of the earlier questions' SQL where it builds on them. In NO_DATA / MISSING reasons name that period / customer, so the user sees the chat was followed.
@@ -577,6 +579,15 @@ class ModelBusy(AIUnavailable):
         super().__init__(AI_BUSY)
 
 
+class MinuteLimit(ModelBusy):
+    """19-Nov: a Groq key's per-minute limit (429) while the other Groq key (the same model) can take the call at
+    once: not waited for. secs = until Groq's limit resets (lc.calls.minute_reset) - the key rests that long."""
+
+    def __init__(self, secs):
+        super().__init__()
+        self.secs = secs
+
+
 class ModelDown(AIUnavailable):
     """A model could not be reached: network, timeout or a server error (busy=True: 503, e.g. Groq's "over
     capacity"). The next model of the chain is tried."""
@@ -625,7 +636,9 @@ class AskResult:
     step_secs: dict = field(default_factory=dict)  # seconds per step of STEP_NAMES (empty = not measured)
     chart_kind: str = ""                         # the chart the SQL call named, asked or suggested (CHART_KINDS key;
                                                  # 'none' = no chart helps, table first; '' = no CHART line)
-    mode: str = ""                               # 'ml' = asked in an ML Insights chat (ML_MODE_NOTE); '' = the Assistant
+    chart_columns: dict = field(default_factory=dict)  # the columns the CHART line names to draw (chart_columns_line:
+                                                 # {"value", "label", "series"}, only the parts named; {} = none)
+    mode: str = ""                            # 'ml' = asked in an ML Insights chat (ML_MODE_NOTE); '' = the Assistant
     chosen_model: str = ""                       # staff's choice of the model to try first (lc.llm.MODEL_IDS; '' = auto)
     model_reasons: dict = field(default_factory=dict)  # {model id: why it did not answer} for this question
     model_note: str = ""                         # why the answering model was not the chain's first ('' = it was)
@@ -763,7 +776,7 @@ def ask_events(question, user, context=None, use_memories=True, streaming=True, 
             result.answer = UNEXPECTED
     if result.status != "ok":  # rows are only kept for a full answer
         result.sql, result.columns, result.rows, result.truncated = "", [], [], False
-        result.chart_kind = ""  # no rows, no chart
+        result.chart_kind, result.chart_columns = "", {}  # no rows, no chart
     result.secs = round(time.perf_counter() - started, 2)
     if result.step_secs:  # the rest of the total, e.g. the notes for the answer (saving the row is not in it)
         result.add_secs("other", result.secs - sum(result.step_secs.values()))
@@ -787,6 +800,7 @@ def ask_events(question, user, context=None, use_memories=True, streaming=True, 
         understood_as=result.understood_as,
         step_secs=result.step_secs or None,
         chart_kind=result.chart_kind,
+        chart_columns=result.chart_columns or None,
         # 18-Nov: why another model than the chain's first answered - saved, so a reopened card says the same
         model_note=(result.model_note if result.model else "")[:200],
     )
@@ -2213,7 +2227,8 @@ def chart_kind_line(reply):
     "waterfall", "funnel", "radar") - asked for by the user or suggested by the AI; 'none' for "CHART: none" (no chart
     helps: the table first); '' when there is no CHART line or words we do not know."""
     line = _chart_line(reply)
-    words = re.split(r"\s[-–]\s|[(,;:]", line)[0].lower()  # "bar - monthly sales", "line (suggested)" -> "bar", "line"
+    # "bar - monthly sales", "line (suggested)", "bar | value: stock_qty" -> "bar", "line", "bar"
+    words = re.split(r"(?i)\s[-–]\s|[(,;:|]|\b(?:value|label|series)\b", line)[0].lower()
     words = [w for w in re.sub(r"[^a-z]+", " ", words).split() if not w.startswith("suggest")]  # "suggested line"
     while words and words[-1] in ("chart", "charts", "graph", "graphs", "plot", "plots", "diagram", "diagrams"):
         words.pop()  # "bar chart" -> "bar"
@@ -2226,7 +2241,28 @@ def chart_kind_line(reply):
 def chart_asked(reply):
     """True when the CHART line names a chart the user asked for: a kind not marked "(suggested)". A suggested kind,
     "CHART: none" or no CHART line is not a chart request (the one-row chart retry is only for asked charts)."""
-    return chart_kind_line(reply) not in ("", "none") and not re.search(r"(?i)suggest", _chart_line(reply))
+    kind_part = _chart_line(reply).split("|")[0]  # a column name after "| value:" is not the kind
+    return chart_kind_line(reply) not in ("", "none") and not re.search(r"(?i)suggest", kind_part)
+
+
+# 19-Nov: "Which products have the most stock right now?" drew the stock VALUE with long, alike descriptions as the
+# bar names - the page chose the columns by fixed rules. The CHART line now names them too: "CHART: bar | value:
+# stock_qty | label: product_code" (+ "| series: <column>" for a grouped / stacked / multi-line chart). Our code only
+# reads the names; the Ask page draws with them when the rows have those columns (frontend pickChart), else as before.
+CHART_COLUMN_PARTS = ("value", "label", "series")
+_CHART_COLUMN = re.compile(r"(?i)\b(value|label|series)s?\W{0,3}\s*[:=]\s*[`'\"*\[\s]*([A-Za-z_][\w$]*(?:\.[A-Za-z_][\w$]*)?)")
+
+
+def chart_columns_line(reply):
+    """The result columns the CHART line names to draw: {"value": .., "label": .., "series": ..} with only the parts
+    it names ({} when none / no CHART line). Tolerant of spacing, case, backticks and a "table." prefix; "none" is
+    no column. The names are not checked here - the page uses them only when the rows have those columns."""
+    found = {}
+    for part, name in _CHART_COLUMN.findall(_chart_line(reply)):
+        part, name = part.lower(), name.rsplit(".", 1)[-1][:64]
+        if part not in found and name.lower() not in ("none", "null", "na", "nothing"):
+            found[part] = name
+    return {part: found[part] for part in CHART_COLUMN_PARTS if part in found}
 
 
 def order_months_by_date(sql):
@@ -3059,14 +3095,23 @@ def fallback_model_name():
     return "" if backup == model_name() else backup
 
 
-# {model id: (time.monotonic() until which it rests, why)} - new calls pass a resting model over. 19-Nov: by the
-# chain's id, not the model name - groq-main and groq-main-2 send the same name, and each Groq key has its own limits
+# {model id: (time.monotonic() until which it rests, why, True for a per-minute rest)} - new calls pass a resting
+# model over. 19-Nov: by the chain's id, not the model name - groq-main and groq-main-2 send the same name, and each
+# Groq key has its own limits
 _resting = {}
 
 
-def model_rests(model_id, secs, why):
-    """This model is passed over for the next `secs` seconds (its daily limit, or it was busy)."""
-    _resting[model_id] = (time.monotonic() + secs, why)
+def model_rests(model_id, secs, why, minute=False):
+    """This model is passed over for the next `secs` seconds (its daily limit, or it was busy). minute=True (19-Nov):
+    only until a Groq key's per-minute limit resets (MinuteLimit) - models_in_order still asks it rather than the
+    backup when no other strong key is free."""
+    _resting[model_id] = (time.monotonic() + secs, why, minute)
+
+
+def minute_resting(model_id):
+    """True while this model rests only for its per-minute limit (model_rests minute=True)."""
+    rest = _resting.get(model_id, ())
+    return len(rest) > 2 and bool(rest[2]) and resting(model_id) is not None
 
 
 def main_model_rests():
@@ -3076,7 +3121,7 @@ def main_model_rests():
 
 def resting(model_id):
     """(seconds left, why) while this model rests; None when it does not."""
-    until, why = _resting.get(model_id, (0.0, ""))
+    until, why = _resting.get(model_id, (0.0, ""))[:2]
     left = until - time.monotonic()
     return (left, why) if left > 0 else None
 
@@ -3092,13 +3137,18 @@ def models_in_order(chosen="", answered_by=""):
     so). Auto: the chain without the resting models - all of them when every model rests (as before: after the
     backup's daily limit too, the main model is asked again). answered_by = the model name that answered this
     question's earlier call: it goes first, so one question stays with one model (19-Nov: both Groq keys have the
-    main model's name - they keep their own order, and a resting key stays left out)."""
+    main model's name - they keep their own order, and a resting key stays left out). 19-Nov: a Groq key resting
+    only for its per-minute limit comes back first when no other full-request model is free - waiting for a strong
+    key is better than the weaker backup."""
     from ..lc import llm  # imported here: portal/lc/ imports this module
 
     if chosen:
         return [entry for entry in llm.chain_models() if entry.id == chosen]
     base = llm.chain_models()
     order = [entry for entry in base if entry.id == chosen or not resting(entry.id)] or base
+    if not any(entry.full_request for entry in order):
+        waiting = [entry for entry in base if entry.full_request and minute_resting(entry.id)]
+        order = waiting + [entry for entry in order if entry not in waiting]
     first = [entry for entry in order if answered_by and entry.model == answered_by]
     return first + [entry for entry in order if entry not in first]
 
@@ -3113,6 +3163,8 @@ def _failure(entry, exc):
         return "daily", f"{name}'s daily limit was reached", MAIN_RESTING_SECS
     if isinstance(exc, RequestTooLarge):
         return "too_large", f"the question was too large for {name}", 0
+    if isinstance(exc, MinuteLimit):  # 19-Nov: rests only until Groq's per-minute limit resets
+        return "busy", f"{name} was at its per-minute limit", exc.secs
     if isinstance(exc, ModelBusy):
         return "busy", f"{name} was busy", MINUTE_RESTING_SECS
     if isinstance(exc, ModelDown):
@@ -3143,19 +3195,22 @@ def _all_failed(kinds, messages):
     return AIUnavailable(AI_ERROR)
 
 
-def _ask_one(request, max_tokens, effort, entry, streamed):
+def _ask_one(request, max_tokens, effort, entry, streamed, switch=False):
     """One model's call, on the model's own Groq key (entry.key_env - 19-Nov: the second key for groq-main-2).
     A model with full_request=False (the Groq backup) gets the request cut to its size (lc.calls.for_backup) and,
     when that is still too large, once the smallest one. The main Groq model's 413 (on either key) goes straight to
     the next model: it is that Groq account's tokens-a-minute limit, and the other key takes the full request.
+    switch=True (19-Nov): the other Groq key can take this call now - a per-minute limit is not waited for
+    (lc.calls.chat raises MinuteLimit).
     18-Nov (question 118): the backup's request must fit its smaller free tier - see test_backup_model.py."""
     from ..lc import calls  # imported here: portal/lc/ imports this module
 
     if entry.id == "groq-backup":
         max_tokens = min(max_tokens, FALLBACK_MAX_TOKENS)
     first = request if entry.full_request else calls.for_backup(request)
+    options = {**streamed, "switch": True} if switch else streamed  # only then: calls.chat is called as before
     try:
-        return calls.chat(first, max_tokens, effort, entry.model, key_env=entry.key_env, **streamed)
+        return calls.chat(first, max_tokens, effort, entry.model, key_env=entry.key_env, **options)
     except RequestTooLarge:
         if entry.full_request:
             raise
@@ -3195,18 +3250,28 @@ def _ask_models(request, max_tokens, effort, order, reasons=None, on_token=None,
     first piece is not tried again (StreamBroken). No model answered -> _all_failed's error.
     chosen = an admin's chosen model id ('' = auto): it is the only model of `order`, and when it cannot answer the
     error says so plainly (chosen_failed) - no other model is asked.
+    19-Nov, a per-minute limit: when the other Groq key (the same model, later in `order`, not resting) can take the
+    call, a key at its per-minute limit does not wait - the other key is asked at once, and the key rests until
+    Groq's limit resets (MinuteLimit, so the question's next call starts on the other key). It is put back in line
+    after the other key, so when that key fails too it is asked again and waits - before the weaker backup.
+    Without such a key (only one key set up, it rests, an admin's choice) the key waits as before (lc.calls.chat).
     timed(secs, waited) gets each model's call time and the part spent waiting."""
     streamed = {"on_token": on_token} if on_token else {}  # only then: calls.chat stays as it was for the rest
     reasons = {} if reasons is None else reasons
     kinds, messages = [], []
     if chosen and not order:  # the chosen model is not set up (no key) or not in AI_MODEL_CHAIN
         raise AIUnavailable(chosen_failed(chosen, "missing"))
-    for entry in order:
+    queue, put_back = list(order), set()  # put_back: keys asked again (they wait) after their per-minute limit
+    while queue:
+        entry = queue.pop(0)
+        switch = (not chosen and entry.full_request and entry.id not in put_back
+                  and any(other.full_request and other.model == entry.model and not resting(other.id)
+                          for other in queue))
         asked = request(entry) if callable(request) else request
         _waited.secs = 0.0
         started = time.perf_counter()
         try:
-            reply, tokens, cut_off = _ask_one(asked, max_tokens, effort, entry, streamed)
+            reply, tokens, cut_off = _ask_one(asked, max_tokens, effort, entry, streamed, switch)
         except StreamBroken:
             raise
         except (DailyLimitReached, AIUnavailable) as exc:
@@ -3215,7 +3280,11 @@ def _ask_models(request, max_tokens, effort, order, reasons=None, on_token=None,
             messages.append(str(exc))
             reasons[entry.id] = why
             if rest_secs:
-                model_rests(entry.id, rest_secs, why)
+                model_rests(entry.id, rest_secs, why, minute=isinstance(exc, MinuteLimit))
+            if isinstance(exc, MinuteLimit):  # back in line after the other strong key(s), before the backup
+                last = max((index for index, other in enumerate(queue) if other.full_request), default=-1)
+                queue.insert(last + 1, entry)
+                put_back.add(entry.id)
             if chosen:  # an admin's choice: no other model - the error card says why (a request too large keeps
                 # RequestTooLarge: graph.write_sql may still send it smaller)
                 log.warning("%s (%s), chosen by an admin, did not answer: %s", entry.id, entry.model, why)

@@ -151,12 +151,22 @@ def _card(saved, token_notice=""):
         # the chart the AI named ("bar", "hbar", "pie" ...; agent.CHART_KINDS); 'none' = the table first; '' = the
         # page picks it
         "chart_kind": (saved.chart_kind or "") if has_rows else "",
+        # 19-Nov: the columns the AI named to draw ({"value", "label", "series"}; agent.chart_columns_line) - the page
+        # uses them when the rows have them; {} = the page picks the columns itself
+        "chart_columns": _chart_columns(saved) if has_rows else {},
         "rows_url": reverse("api_rows", args=[saved.pk]) if has_rows else "",
         "excel_url": reverse("api_excel", args=[saved.pk]) if has_rows else "",
         "created_at": timezone.localtime(saved.created_at).isoformat(),
         "created_text": _when(saved.created_at),
         "edited": saved.chat_order is not None,
     }
+
+
+def _chart_columns(saved):
+    """The saved {"value", "label", "series"} column names (strings only) - {} for none or anything else saved."""
+    columns = saved.chart_columns if isinstance(saved.chart_columns, dict) else {}
+    return {part: name for part, name in columns.items()
+            if part in agent.CHART_COLUMN_PARTS and isinstance(name, str) and name}
 
 
 def _model_fields(saved, result):

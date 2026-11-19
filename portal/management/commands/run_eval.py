@@ -251,11 +251,13 @@ class OneModel:
         else:
             os.environ["GROQ_FALLBACK_MODEL"] = ""                   # no backup during a main-model run
 
-        def one_model_chat(request, max_tokens, effort, model=None, on_token=None, key_env=llm.KEY):
+        def one_model_chat(request, max_tokens, effort, model=None, on_token=None, key_env=llm.KEY, **options):
+            # **options: later settings of calls.chat (e.g. switch, 19-Nov) are passed on as they are
             model = model or agent.model_name()
             if model != only or key_env != only_key:
                 raise agent.DailyLimitReached(model)                 # never spend the other model's (key's) tokens
-            text, tokens, cut_off = original_chat(request, max_tokens, effort, model, on_token, key_env=key_env)
+            text, tokens, cut_off = original_chat(request, max_tokens, effort, model, on_token, key_env=key_env,
+                                                  **options)
             calls.append({"model": model, "total": tokens, "finish": "length" if cut_off else "stop"})
             return text, tokens, cut_off
 
