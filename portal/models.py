@@ -111,6 +111,10 @@ class Question(models.Model):
     # agent.CHART_KINDS); 'none' = the AI said no chart helps (19-Nov: the Ask page shows the table first);
     # '' = no CHART line, or saved before 17-Nov - the Ask page then picks the chart itself
     chart_kind = models.CharField(max_length=20, blank=True, default="")
+    # 19-Nov: the result columns the CHART line names to draw, e.g. {"value": "stock_qty", "label": "product_code"}
+    # (+ "series"; agent.chart_columns_line). The Ask page uses them when the rows have those columns, else picks the
+    # columns itself; empty = none named, or saved before 19-Nov
+    chart_columns = models.JSONField(null=True, blank=True)
     # 18-Nov: why another AI model than the chain's first answered ("chosen by you", "Groq's daily limit was reached",
     # the backup model's plain note) - saved so a reopened card says the same; '' = the first model answered, or the
     # question was saved before this field (the card then says it from the model name: api._model_fields)

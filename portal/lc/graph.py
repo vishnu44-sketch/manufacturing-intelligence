@@ -334,6 +334,7 @@ def write_sql(state):
     chart_kind = agent.chart_kind_line(reply)
     if chart_kind:
         result.chart_kind = chart_kind
+        result.chart_columns = agent.chart_columns_line(reply)  # 19-Nov: "| value: .. | label: .." (the same line)
         update["chart_asked"] = agent.chart_asked(reply)
     # 17-Nov: what the AI said the question ranks or lists ("ASKS_FOR: customers") and how many periods it asks
     # for ("PERIODS: 6") - read by run_sql's checks before their word rules (portal/ai_hints.py). Like CHART, a
@@ -467,7 +468,8 @@ def run_sql(state):
         return {**update, "problem": f"MySQL returned an error: {exc}"}
     question = f"{result.text} {result.understood_as}"
     first = {"attempt": state["attempt"], "sql": cleaned, "data": data, "missing": state["missing"],
-             "notes": list(result.notes), "chart_kind": result.chart_kind}
+             "notes": list(result.notes), "chart_kind": result.chart_kind,
+             "chart_columns": dict(result.chart_columns)}
     if (not state["one_row_retry_used"] and not state["first_answer"] and state["attempt"] < agent.MAX_TRIES
             and len(data["rows"]) == 1
             and (ai_hints.several_periods_chart(question, state.get("periods"),
@@ -522,6 +524,7 @@ def keep_first_answer(state):
              "Ranking" if first.get("entity") else "Forecast level" if first.get("forecast") else "Line chart")
     result.answer, result.notes = "", list(first["notes"])
     result.chart_kind = first.get("chart_kind", "")  # the chart of the try whose rows are kept
+    result.chart_columns = dict(first.get("chart_columns") or {})
     _keep_rows(result, first["sql"], first["data"], first["missing"])
     return {"problem": ""}
 

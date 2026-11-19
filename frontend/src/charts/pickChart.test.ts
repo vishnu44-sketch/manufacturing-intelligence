@@ -623,3 +623,75 @@ describe('a column chart (bars standing upright)', () => {
     expect(pickChart(TOP5.headers, TOP5.rows, 'bar')?.horizontal).toBe(true)
   })
 })
+
+// 19-Nov: "Which products have the most stock right now?" drew the stock VALUE (lakhs) with the long, alike
+// descriptions as the bar names. The AI now names the columns ("CHART: bar | value: stock_qty | label:
+// product_code" -> card.chart_columns); pickChart draws exactly those when the rows have them, else as before.
+const STOCK = table(
+  [['report_date', false], ['product_code', false], ['description', false], ['item_group', false],
+    ['stock_qty', true], ['stock_value_inr', true]],
+  [
+    ['31-Oct-2026', 'CIH-2040', 'Cast iron housing for coolant pump 2040 series', 'Castings', '1,250', '4,812,500.00'],
+    ['31-Oct-2026', 'CIH-2060', 'Cast iron housing for coolant pump 2060 series', 'Castings', '980', '5,096,000.00'],
+    ['31-Oct-2026', 'CIH-3080', 'Cast iron housing for coolant pump 3080 series', 'Castings', '760', '6,080,000.00'],
+    ['31-Oct-2026', 'TRP-110', 'Trochoid pump 110 with motor flange', 'Pumps', '540', '8,100,000.00'],
+    ['31-Oct-2026', 'TRP-220', 'Trochoid pump 220 with motor flange', 'Pumps', '310', '7,750,000.00'],
+  ],
+)
+
+describe('the columns the AI names (chart_columns)', () => {
+  it('draws the named value with the named labels: stock_qty by product_code', () => {
+    const pick = pickChart(STOCK.headers, STOCK.rows, 'bar', null, false, { value: 'stock_qty', label: 'product_code' })
+    expect(pick).toMatchObject({ kind: 'bar', x: 'product_code', ys: ['stock_qty'], amount: 'stock_qty', group: '' })
+    expect(pick?.data.map((p) => p.label)).toEqual(['CIH-2040', 'CIH-2060', 'CIH-3080', 'TRP-110', 'TRP-220'])
+    expect(pick?.data.map((p) => p.values)).toEqual([[1250], [980], [760], [540], [310]])
+    expect(pick?.horizontal).toBe(false) // short codes: the bars stand upright
+  })
+
+  it('without names it is the old choice (the value in rupees by the long descriptions)', () => {
+    const pick = pickChart(STOCK.headers, STOCK.rows, 'bar')
+    expect(pick).toMatchObject({ x: 'description', ys: ['stock_value_inr'] })
+  })
+
+  it('matches the names in any case, with backticks or a table prefix', () => {
+    const pick = pickChart(STOCK.headers, STOCK.rows, null, null, false, { value: 'STOCK_QTY', label: '`p.Product_Code`' })
+    expect(pick).toMatchObject({ x: 'product_code', ys: ['stock_qty'] })
+  })
+
+  it('falls back to the old rules when a name is not in the rows or does not fit', () => {
+    const old = pickChart(STOCK.headers, STOCK.rows, 'bar')
+    for (const columns of [
+      { value: 'stock_quantity', label: 'product_code' }, // a column the rows do not have
+      { value: 'stock_qty', label: 'product_name' },
+      { value: 'stock_qty' }, { label: 'product_code' }, {}, // a part missing
+      { value: 'description', label: 'product_code' }, // the value is no number
+      { value: 'stock_qty', label: 'stock_qty' }, // the same column twice
+      { value: 'stock_qty', label: 'item_group' }, // a label repeated on several rows (no series)
+    ]) {
+      expect(pickChart(STOCK.headers, STOCK.rows, 'bar', null, false, columns)).toEqual(old)
+    }
+    expect(pickChart(STOCK.headers, STOCK.rows, 'bar', null, false, null)).toEqual(old)
+  })
+
+  it('ignores a series that is not in the rows, and draws the value and the label', () => {
+    const pick = pickChart(STOCK.headers, STOCK.rows, null, null, false,
+      { value: 'stock_qty', label: 'product_code', series: 'warehouse' })
+    expect(pick).toMatchObject({ x: 'product_code', ys: ['stock_qty'], group: '' })
+  })
+
+  it('splits by the named series, the label along the axis as named', () => {
+    // the rules would put product_category along the axis; the AI names sale_type there, the categories as the series
+    const pick = pickChart(CATEGORY_SALE_TYPE.headers, CATEGORY_SALE_TYPE.rows, 'grouped', false, false,
+      { value: 'net_sales_inr', label: 'sale_type', series: 'product_category' })
+    expect(pick).toMatchObject({ kind: 'grouped', x: 'sale_type', group: 'product_category', amount: 'net_sales_inr' })
+    expect(pick?.data.map((p) => p.label)).toEqual(['Domestic', 'Export', 'Service'])
+    expect(pick?.ys).toHaveLength(8)
+  })
+
+  it('still draws when the rules alone find no chart (the value is a count-like name)', () => {
+    const rows = table([['product_code', false], ['order_no', true]], [['A-1', '5'], ['A-2', '7'], ['A-3', '2']])
+    expect(pickChart(rows.headers, rows.rows)).toBeNull() // order_no reads as a number of a document
+    expect(pickChart(rows.headers, rows.rows, null, null, false, { value: 'order_no', label: 'product_code' }))
+      .toMatchObject({ x: 'product_code', ys: ['order_no'] })
+  })
+})

@@ -175,22 +175,86 @@ def test_a_busy_second_key_goes_to_the_backup(monkeypatch, five_notes, user, cha
     assert agent.resting("groq-main-2")[0] <= agent.BUSY_RESTING_SECS
 
 
-def test_the_first_keys_per_minute_limit_waits_then_the_second_key_answers(monkeypatch, five_notes, user, chain):
+# ---------- a per-minute limit: the other Groq key at once (19-Nov) ----------
+
+MINUTE_NOTE = "Groq was at its per-minute limit - the second Groq key answered"
+
+
+def rest_ends(model_id):
+    """The model's short rest is over (as if its seconds had passed)."""
+    until, why, minute = agent._resting[model_id]
+    agent._resting[model_id] = (agent.time.monotonic() - 1, why, minute)
+
+
+def test_the_first_keys_per_minute_limit_asks_the_second_key_at_once(monkeypatch, five_notes, user, chain):
     waits = []
     monkeypatch.setattr(agent.time, "sleep", waits.append)
     five_notes.results = [ROWS]
-    limits = [rate_limit_error(retry_after=2) for _ in range(agent.RATE_LIMIT_RETRIES + 1)]
-    fake = use_fake_ai(monkeypatch, limits + [GOOD_SQL, ANSWER])
+    fake = use_fake_ai(monkeypatch, [rate_limit_error(retry_after=7), GOOD_SQL, ANSWER])
+
+    result = agent.ask("Top customers in Aug 2026?", user)
+
+    assert result.status == "ok" and result.model == MAIN and waits == []  # no waiting at all
+    assert fake.keys == [KEY, KEY_2, KEY_2]                               # the answer starts on the second key too
+    assert fake.calls[1] == fake.calls[0]                                 # the full request, not the backup's cut one
+    assert BACKUP not in fake.models
+    assert result.model_note == MINUTE_NOTE
+    left, why = agent.resting("groq-main")                                # rests until Groq's reset (7 s + 0.5)
+    assert 6 < left <= 7.5 and why == "Groq was at its per-minute limit"
+    assert agent.minute_resting("groq-main") and agent.resting("groq-main-2") is None
+    card = api._card(result.question)
+    assert card["model_note"] == MINUTE_NOTE and card["model_label"] == "Groq gpt-oss-120b"
+
+
+def test_the_first_key_is_used_again_when_its_short_rest_ends(monkeypatch, five_notes, user, chain):
+    waits = []
+    monkeypatch.setattr(agent.time, "sleep", waits.append)
+    five_notes.results = [ROWS, ROWS, ROWS]
+    fake = use_fake_ai(monkeypatch, [rate_limit_error(retry_after=30), GOOD_SQL, ANSWER,
+                                     GOOD_SQL, ANSWER, GOOD_SQL, ANSWER])
+
+    agent.ask("Top customers in Aug 2026?", user)
+    second = agent.ask("Top customers in Jul 2026?", user)               # while the first key rests
+    assert fake.keys == [KEY, KEY_2, KEY_2, KEY_2, KEY_2]
+    assert second.model_note == MINUTE_NOTE
+
+    rest_ends("groq-main")
+    third = agent.ask("Top customers in Jun 2026?", user)
+
+    assert fake.keys[5:] == [KEY, KEY] and third.model_note == "" and waits == []
+
+
+def test_both_keys_at_their_per_minute_limit_wait_not_the_backup(monkeypatch, five_notes, user, chain):
+    waits = []
+    monkeypatch.setattr(agent.time, "sleep", waits.append)
+    five_notes.results = [ROWS]
+    fake = use_fake_ai(monkeypatch, [rate_limit_error(retry_after=7), rate_limit_error(retry_after=2), GOOD_SQL,
+                                     ANSWER])
 
     result = agent.ask("Top customers in Aug 2026?", user)
 
     assert result.status == "ok" and result.model == MAIN
-    assert waits == [2.5] * agent.RATE_LIMIT_RETRIES                      # the first key waited as Groq asked
-    assert fake.keys == [KEY] * len(limits) + [KEY_2, KEY_2]
-    assert result.model_note == "Groq was busy - the second Groq key answered"
+    assert fake.keys == [KEY, KEY_2, KEY_2, KEY_2] and BACKUP not in fake.models  # the second key waited
+    assert waits == [2.5] and result.model_note == MINUTE_NOTE
 
 
-def test_a_per_minute_limit_of_groq_main_still_waits(monkeypatch, five_notes, user, chain):
+def test_the_first_key_waits_when_the_second_key_fails_after_the_switch(monkeypatch, five_notes, user, chain):
+    waits = []
+    monkeypatch.setattr(agent.time, "sleep", waits.append)
+    five_notes.results = [ROWS]
+    fake = use_fake_ai(monkeypatch, [rate_limit_error(retry_after=7), daily_limit_error(),
+                                     rate_limit_error(retry_after=2), GOOD_SQL, ANSWER])
+
+    result = agent.ask("Top customers in Aug 2026?", user)
+
+    # the first key is asked again (and waits) before the weaker backup - for the answer too, while it rests
+    assert result.status == "ok" and result.model == MAIN and BACKUP not in fake.models
+    assert fake.keys == [KEY, KEY_2, KEY, KEY, KEY] and waits == [2.5]
+    assert result.model_note == ""
+
+
+def test_with_only_the_first_key_a_per_minute_limit_still_waits(monkeypatch, five_notes, user, chain):
+    monkeypatch.delenv(KEY_2)
     waits = []
     monkeypatch.setattr(agent.time, "sleep", waits.append)
     five_notes.results = [ROWS]
@@ -199,7 +263,67 @@ def test_a_per_minute_limit_of_groq_main_still_waits(monkeypatch, five_notes, us
     result = agent.ask("Top customers in Aug 2026?", user)
 
     assert result.status == "ok" and result.model == MAIN and result.model_note == ""
+    assert waits == [2.5] and fake.keys == [KEY, KEY, KEY]               # not the backup
+    assert agent.resting("groq-main") is None
+
+
+def test_a_resting_second_key_leaves_the_first_key_waiting(monkeypatch, five_notes, user, chain):
+    agent.model_rests("groq-main-2", 600, "the second Groq key's daily limit was reached")
+    waits = []
+    monkeypatch.setattr(agent.time, "sleep", waits.append)
+    five_notes.results = [ROWS]
+    fake = use_fake_ai(monkeypatch, [rate_limit_error(retry_after=2), GOOD_SQL, ANSWER])
+
+    result = agent.ask("Top customers in Aug 2026?", user)
+
+    assert waits == [2.5] and fake.keys == [KEY, KEY, KEY] and result.model_note == ""
+
+
+def test_a_chosen_key_at_its_per_minute_limit_still_waits(monkeypatch, five_notes, user, chain):
+    waits = []
+    monkeypatch.setattr(agent.time, "sleep", waits.append)
+    five_notes.results = [ROWS]
+    fake = use_fake_ai(monkeypatch, [rate_limit_error(retry_after=2), GOOD_SQL, ANSWER])
+
+    result = agent.ask("Top customers in Aug 2026?", user, model="groq-main")
+
+    assert result.status == "ok" and result.model_note == "chosen by you"
     assert waits == [2.5] and fake.keys == [KEY, KEY, KEY]               # the second key not asked
+
+
+def test_the_first_keys_per_minute_limit_on_the_streamed_ask(monkeypatch, client, mysql, user, chain):
+    waits = []
+    monkeypatch.setattr(agent.time, "sleep", waits.append)
+    mysql.results = [ROWS]
+    fake = use_fake_ai(monkeypatch, [GOOD_SQL, rate_limit_error(retry_after=7), ANSWER])
+    client.force_login(user)
+
+    r = client.post(reverse("api_ask_stream"), data=json.dumps({"question": "Top customers in Aug 2026?"}),
+                    content_type="application/json")
+    lines = [json.loads(line) for line in b"".join(r.streaming_content).decode().splitlines()]
+
+    assert lines[-1]["type"] == "done" and lines[-1]["card"]["model_note"] == MINUTE_NOTE
+    assert fake.keys == [KEY, KEY, KEY_2] and waits == []                 # the streamed answer moved at once
+
+
+@pytest.mark.parametrize("headers, text, secs", [
+    ({"retry-after": "7"}, "Rate limit reached", 7.5),
+    ({}, "Rate limit reached ... Please try again in 3.2s.", 3.7),
+    ({"x-ratelimit-reset-tokens": "7.66s"}, "Rate limit reached", 7.66),
+    ({"x-ratelimit-reset-tokens": "500ms"}, "Rate limit reached", 1.0),          # at least 1 s
+    ({"x-ratelimit-reset-tokens": "2m59.56s"}, "Rate limit reached", 60),        # at most a minute
+    ({"retry-after": "300"}, "Rate limit reached", 60),
+    ({}, "Rate limit reached", 60),                                              # nothing said: a minute
+], ids=["retry-after", "text", "reset-header", "ms", "minutes", "long", "none"])
+def test_the_short_rest_lasts_until_groqs_reset(headers, text, secs):
+    import httpx
+    import openai
+    from portal.lc import calls
+
+    response = httpx.Response(429, headers=headers, request=httpx.Request("POST", "https://api.groq.com/x"))
+    error = openai.RateLimitError(text, response=response, body=None)
+
+    assert calls.minute_reset(error) == pytest.approx(secs)
 
 
 def test_the_first_keys_413_gives_the_second_key_the_full_request(monkeypatch, five_notes, user, chain):

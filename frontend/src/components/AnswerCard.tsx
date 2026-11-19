@@ -249,8 +249,11 @@ export default function AnswerCard({ card, autoRows = false, staff = false }:
   // switch stays when the rows fit one; a kind -> that chart first; '' (older answers) -> a chart when the rows fit
   const [picked, setView] = useState<'chart' | 'table' | null>(null) // null = not switched by the user yet
   const view = picked ?? (card.chart_kind === 'none' ? 'table' : 'chart')
+  // 19-Nov: the columns the AI named to draw (card.chart_columns) - pickChart uses them when the rows have them
+  const chartColumns = card.chart_columns ?? null
   const hasChart = useMemo(
-    () => !!loaded && !loaded.rows_error && pickChart(loaded.headers, loaded.rows) !== null, [loaded])
+    () => !!loaded && !loaded.rows_error && pickChart(loaded.headers, loaded.rows, null, null, false, chartColumns) !== null,
+    [loaded, chartColumns])
   const wish = `${card.text} ${card.understood_as}`
   // the kind to draw: the one the AI named (card.chart_kind), else the one the words ask for, else pickChart's best
   const wishedKind = chartWish(card.chart_kind, wish)
@@ -367,7 +370,7 @@ export default function AnswerCard({ card, autoRows = false, staff = false }:
       ) : loaded.rows.length > 0 && hasChart && view === 'chart' ? (
         <Suspense fallback={<Wait>Drawing the chart…</Wait>}>
           <AnswerChart headers={loaded.headers} rows={loaded.rows} title={card.understood_as || card.text}
-            kind={wishedKind} upright={upright}
+            kind={wishedKind} upright={upright} columns={chartColumns}
             onShowTable={() => setView('table')} />
         </Suspense>
       ) : loaded.rows.length > 0 ? (

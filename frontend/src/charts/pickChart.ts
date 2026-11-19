@@ -2,7 +2,8 @@
 // a line for a time series, a donut for a few parts of a whole, stacked bars for 2 labels + an amount
 // (the rows are pivoted), bars for names + amounts - or the kind the question asks for when it fits.
 // Pure (no React, no ECharts): the rows are display strings, so the numbers are parsed back here. 0 AI tokens.
-import type { Cell, Header } from '../types'
+// 19-Nov: when the AI named the columns to draw (card.chart_columns) and the rows have them, those are drawn.
+import type { Cell, ChartColumns, Header } from '../types'
 
 export type ChartKind =
   | 'line' | 'area' | 'stackedArea'
@@ -274,89 +275,68 @@ interface Table {
   scatter: { ys: [string, string]; points: ChartPoint[]; best: boolean } | null // two amounts of each row
 }
 
-/** The rows read as a table of categories x series: one label with a different value on every row, else two
- *  labels whose pairs are all different (pivoted: rows = the first label, series = the second). null = no chart. */
-function readTable(headers: Header[], rows: Cell[][]): Table | null {
-  if (rows.length < 2 || headers.length < 2) return null
-  const column = (i: number) => rows.map((row) => row[i]?.text ?? '')
-  const cols: Col[] = headers
-    .map((h, i) => ({ i, name: h.name, num: h.num, texts: column(i) }))
-    .filter((c) => !HELPER.test(c.name) && filled(c.texts).length > 0)
+const unique = (c: Col) => new Set(c.texts.map((t) => t.trim())).size === c.texts.length
+const distinct = (c: Col) => new Set(c.texts.map((t) => t.trim())).size
+/** True when every pair of the two labels is on one row only (the rows can be pivoted). */
+const pairsUnique = (rows: Cell[][], one: Col, two: Col) =>
+  new Set(rows.map((_, r) => `${one.texts[r].trim()}\u0000${two.texts[r].trim()}`)).size === rows.length
 
-  const idLike = (c: Col) => PLAIN_INT.test(c.name) || NOT_AN_AMOUNT.test(c.name) || isYearColumn(filled(c.texts))
-  const amounts = cols.filter((c) => c.num && !idLike(c) && c.texts.some((t) => parseNumber(t) !== null))
-  if (amounts.length === 0) return null
-  const rank = (c: Col) => (MONEY.test(c.name) ? 2 : MEASURE.test(c.name) ? 1 : 0)
-  const ranked = [...amounts].sort((a, b) => rank(b) - rank(a))
-  const isTime = (c: Col) => isTimeColumn(c.name, c.num, c.texts)
+/** A column name as the AI may write it: any case, backticks / quotes, a "table." prefix. */
+const columnKey = (name: string) => name.trim().replace(/[`'"[\]]/g, '').replace(/^.*\./, '').toLowerCase()
 
-  // the label: a text column with a different value on every row (names before codes), else a
-  // number label such as the year
-  const unique = (c: Col) => new Set(c.texts.map((t) => t.trim())).size === c.texts.length
-  const texts = cols.filter((c) => !c.num)
-  const label =
-    texts.find((c) => !PLAIN_INT.test(c.name) && unique(c)) ??
-    texts.find(unique) ??
-    cols.find((c) => c.num && idLike(c) && unique(c))
+interface Named { value: Col; label: Col; series: Col | null }
 
-  if (label) {
-    // the y columns: amounts first, then only the ones of the same kind as the first (one axis), max 3
-    const first = unit(ranked[0].name)
-    const ys = ranked.filter((c) => unit(c.name) === first).slice(0, MAX_SERIES)
-    const points: ChartPoint[] = rows.map((row, r) => ({
+/** 19-Nov: the columns the AI named for its chart (card.chart_columns), found in the rows (case-insensitive):
+ *  value = a number column that has numbers, label = another column with values, series = a third column (or null).
+ *  null when the value or the label is missing or not in these rows (old answers, a name the SQL does not have):
+ *  then the fixed rules below choose the columns, as before. */
+function namedColumns(cols: Col[], columns: ChartColumns | null | undefined): Named | null {
+  if (!columns || typeof columns !== 'object') return null
+  const find = (name: unknown) => (typeof name === 'string' && name.trim()
+    ? cols.find((c) => columnKey(c.name) === columnKey(name)) : undefined)
+  const value = find(columns.value)
+  const label = find(columns.label)
+  if (!value || !label || value === label) return null
+  if (!value.num || !value.texts.some((t) => parseNumber(t) !== null) || filled(label.texts).length === 0) return null
+  const series = find(columns.series)
+  return { value, label, series: series && series !== value && series !== label ? series : null }
+}
+
+/** One label with a different value on every row: the categories, with the amounts ys (one axis) drawn for each.
+ *  ranked = the amount columns, ys[0] first (a second kind of amount makes the scatter). */
+function labelTable(rows: Cell[][], label: Col, ys: Col[], ranked: Col[], amountCount: number, time: boolean): Table {
+  const first = unit(ys[0].name)
+  const points: ChartPoint[] = rows.map((row, r) => ({
+    label: label.texts[r].trim(),
+    values: ys.map((c) => parseNumber(row[c.i]?.text ?? '')),
+    texts: ys.map((c) => row[c.i]?.text ?? ''),
+  }))
+  const additive = ys.every((c) => !NOT_ADDITIVE.test(c.name))
+  const positive = points.every((p) => p.values[0] !== null && p.values[0] > 0)
+  // two amounts of different kinds (value and quantity ...): one dot per row
+  const other = ranked.find((c) => unit(c.name) !== first)
+  const pair = other ? [ys[0], other] : null
+  const scatter = pair && {
+    ys: [pair[0].name, pair[1].name] as [string, string],
+    points: rows.map((row, r) => ({
       label: label.texts[r].trim(),
-      values: ys.map((c) => parseNumber(row[c.i]?.text ?? '')),
-      texts: ys.map((c) => row[c.i]?.text ?? ''),
-    }))
-    const additive = ys.every((c) => !NOT_ADDITIVE.test(c.name))
-    const time = isTime(label)
-    const positive = points.every((p) => p.values[0] !== null && p.values[0] > 0)
-    // two amounts of different kinds (value and quantity ...): one dot per row
-    const other = ranked.find((c) => unit(c.name) !== first)
-    const pair = other ? [ranked[0], other] : null
-    const scatter = pair && {
-      ys: [pair[0].name, pair[1].name] as [string, string],
-      points: rows.map((row, r) => ({
-        label: label.texts[r].trim(),
-        values: pair.map((c) => parseNumber(row[c.i]?.text ?? '')),
-        texts: pair.map((c) => row[c.i]?.text ?? ''),
-      })),
-      // the best chart only for exactly two amounts over 5+ rows that are not a ranking (a top-10 list reads
-      // better as bars)
-      best: amounts.length === 2 && rows.length >= 5 && !time &&
-        pair.every((c) => !isSortedDown(c.texts.map(parseNumber))),
-    }
-    return {
-      x: label.name, ys: ys.map((c) => c.name), amount: ys.map((c) => c.name).join(', '), group: '',
-      points, pivot: false, time, additive, seriesNote: '', scatter,
-      partsOfWhole: points.length <= 6 && amounts.length === 1 && CATEGORY.test(label.name) && additive && positive,
-    }
+      values: pair.map((c) => parseNumber(row[c.i]?.text ?? '')),
+      texts: pair.map((c) => row[c.i]?.text ?? ''),
+    })),
+    // the best chart only for exactly two amounts over 5+ rows that are not a ranking (a top-10 list reads
+    // better as bars)
+    best: amountCount === 2 && rows.length >= 5 && !time &&
+      pair.every((c) => !isSortedDown(c.texts.map(parseNumber))),
   }
+  return {
+    x: label.name, ys: ys.map((c) => c.name), amount: ys.map((c) => c.name).join(', '), group: '',
+    points, pivot: false, time, additive, seriesNote: '', scatter,
+    partsOfWhole: points.length <= 6 && amountCount === 1 && CATEGORY.test(label.name) && additive && positive,
+  }
+}
 
-  // two labels + an amount (month x customer, product_category x sale_type): pivot them. The labels: text
-  // columns and number labels (year, quarter), names before codes; every pair must be on one row only.
-  const labels = cols.filter((c) => !c.num || idLike(c))
-  const distinct = (c: Col) => new Set(c.texts.map((t) => t.trim())).size
-  const pairs: [Col, Col][] = []
-  for (const named of [true, false]) {
-    for (let a = 0; a < labels.length; a++) {
-      for (let b = a + 1; b < labels.length; b++) {
-        const [one, two] = [labels[a], labels[b]]
-        if (named && (PLAIN_INT.test(one.name) || PLAIN_INT.test(two.name))) continue
-        if (distinct(one) < 2 || distinct(two) < 2) continue
-        const keys = new Set(rows.map((_, r) => `${one.texts[r].trim()}\u0000${two.texts[r].trim()}`))
-        if (keys.size === rows.length) pairs.push([one, two])
-      }
-    }
-  }
-  if (pairs.length === 0) return null
-  let [rowsBy, seriesBy] = pairs[0]
-  // a time runs along the axis; and the label with fewer values makes the series (when the other has too many)
-  if (isTime(seriesBy) && !isTime(rowsBy)) [rowsBy, seriesBy] = [seriesBy, rowsBy]
-  else if (!isTime(rowsBy) && distinct(seriesBy) > MAX_PIVOT_SERIES && distinct(rowsBy) <= MAX_PIVOT_SERIES) {
-    [rowsBy, seriesBy] = [seriesBy, rowsBy]
-  }
-  const amount = ranked[0]
+/** Two labels + an amount, pivoted: rowsBy along the axis, seriesBy as the series (the biggest 10 drawn). */
+function pivotTable(rows: Cell[][], rowsBy: Col, seriesBy: Col, amount: Col, time: boolean): Table {
   const categories: string[] = []
   let names: string[] = []
   const cells = new Map<string, string>()
@@ -380,8 +360,79 @@ function readTable(headers: Header[], rows: Cell[][]): Table | null {
   })
   return {
     x: rowsBy.name, ys: names, amount: amount.name, group: seriesBy.name, points, pivot: true,
-    time: isTime(rowsBy), additive: !NOT_ADDITIVE.test(amount.name), partsOfWhole: false, seriesNote, scatter: null,
+    time, additive: !NOT_ADDITIVE.test(amount.name), partsOfWhole: false, seriesNote, scatter: null,
   }
+}
+
+/** The rows read as a table of categories x series: the columns the AI named (columns) when the rows have them,
+ *  else one label with a different value on every row, else two labels whose pairs are all different (pivoted:
+ *  rows = the first label, series = the second). null = no chart. */
+function readTable(headers: Header[], rows: Cell[][], columns: ChartColumns | null = null): Table | null {
+  if (rows.length < 2 || headers.length < 2) return null
+  const column = (i: number) => rows.map((row) => row[i]?.text ?? '')
+  const every: Col[] = headers.map((h, i) => ({ i, name: h.name, num: h.num, texts: column(i) }))
+  const cols = every.filter((c) => !HELPER.test(c.name) && filled(c.texts).length > 0)
+
+  const idLike = (c: Col) => PLAIN_INT.test(c.name) || NOT_AN_AMOUNT.test(c.name) || isYearColumn(filled(c.texts))
+  const amounts = cols.filter((c) => c.num && !idLike(c) && c.texts.some((t) => parseNumber(t) !== null))
+  const rank = (c: Col) => (MONEY.test(c.name) ? 2 : MEASURE.test(c.name) ? 1 : 0)
+  const ranked = [...amounts].sort((a, b) => rank(b) - rank(a))
+  const isTime = (c: Col) => isTimeColumn(c.name, c.num, c.texts)
+
+  // 19-Nov: the AI named the columns ("most stock" -> stock_qty by product_code): drawn with exactly those - split
+  // by its series when every label + series pair is on one row, else one bar / point per label (a label repeated
+  // on several rows cannot be drawn that way: the rules below choose)
+  const named = namedColumns(every, columns)
+  if (named) {
+    const { value, label, series } = named
+    if (series && distinct(series) >= 2 && pairsUnique(rows, label, series)) {
+      return pivotTable(rows, label, series, value, isTime(label))
+    }
+    if (unique(label)) {
+      const others = ranked.filter((c) => c !== value)
+      return labelTable(rows, label, [value], [value, ...others], new Set([value, ...amounts]).size, isTime(label))
+    }
+  }
+
+  if (amounts.length === 0) return null
+
+  // the label: a text column with a different value on every row (names before codes), else a
+  // number label such as the year
+  const texts = cols.filter((c) => !c.num)
+  const label =
+    texts.find((c) => !PLAIN_INT.test(c.name) && unique(c)) ??
+    texts.find(unique) ??
+    cols.find((c) => c.num && idLike(c) && unique(c))
+
+  if (label) {
+    // the y columns: amounts first, then only the ones of the same kind as the first (one axis), max 3
+    const first = unit(ranked[0].name)
+    const ys = ranked.filter((c) => unit(c.name) === first).slice(0, MAX_SERIES)
+    return labelTable(rows, label, ys, ranked, amounts.length, isTime(label))
+  }
+
+  // two labels + an amount (month x customer, product_category x sale_type): pivot them. The labels: text
+  // columns and number labels (year, quarter), names before codes; every pair must be on one row only.
+  const labels = cols.filter((c) => !c.num || idLike(c))
+  const pairs: [Col, Col][] = []
+  for (const named of [true, false]) {
+    for (let a = 0; a < labels.length; a++) {
+      for (let b = a + 1; b < labels.length; b++) {
+        const [one, two] = [labels[a], labels[b]]
+        if (named && (PLAIN_INT.test(one.name) || PLAIN_INT.test(two.name))) continue
+        if (distinct(one) < 2 || distinct(two) < 2) continue
+        if (pairsUnique(rows, one, two)) pairs.push([one, two])
+      }
+    }
+  }
+  if (pairs.length === 0) return null
+  let [rowsBy, seriesBy] = pairs[0]
+  // a time runs along the axis; and the label with fewer values makes the series (when the other has too many)
+  if (isTime(seriesBy) && !isTime(rowsBy)) [rowsBy, seriesBy] = [seriesBy, rowsBy]
+  else if (!isTime(rowsBy) && distinct(seriesBy) > MAX_PIVOT_SERIES && distinct(rowsBy) <= MAX_PIVOT_SERIES) {
+    [rowsBy, seriesBy] = [seriesBy, rowsBy]
+  }
+  return pivotTable(rows, rowsBy, seriesBy, ranked[0], isTime(rowsBy))
 }
 
 const BAR_LIKE: ChartKind[] = ['bar', 'hbar', 'stacked', 'grouped']
@@ -473,10 +524,12 @@ function topShare(t: Table): number {
 /** The chart for these rows, or null when a chart would not help (one row, no amounts, ids only ...).
  *  want = the kind the user asked for (words in the question, or a button): used when the rows can be drawn
  *  that way, else the best kind for the rows with a short note why. hide = the "Hide / Show" button for a
- *  catch-all group (null: hidden when it holds more than 70% of the total). Hiding changes only the chart. */
+ *  catch-all group (null: hidden when it holds more than 70% of the total). Hiding changes only the chart.
+ *  columns = the value / label / series columns the AI named (card.chart_columns): used when the rows have them,
+ *  else (or null) the columns are chosen by the rules of readTable. */
 export function pickChart(headers: Header[], rows: Cell[][], want: ChartKind | null = null,
-  hide: boolean | null = null, upright = false): ChartPick | null {
-  const all = readTable(headers, rows)
+  hide: boolean | null = null, upright = false, columns: ChartColumns | null = null): ChartPick | null {
+  const all = readTable(headers, rows, columns)
   if (!all) return null
   if (all.time && all.points.length > MAX_LINE_POINTS) return null // too many points for any chart
 

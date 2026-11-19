@@ -601,3 +601,48 @@ describe('AnswerCard SQL buttons', () => {
     expect(JSON.parse(window.localStorage.getItem('mi.sqlOpen') ?? '{}').sql).toBe(OK.sql)
   })
 })
+
+// 19-Nov: "Which products have the most stock right now?" drew stock_value_inr by the long descriptions - now the AI
+// names the columns (card.chart_columns) and the page draws exactly those when the rows have them
+const STOCK_ROWS = {
+  headers: [{ name: 'report_date', num: false }, { name: 'product_code', num: false }, { name: 'description', num: false },
+    { name: 'item_group', num: false }, { name: 'stock_qty', num: true }, { name: 'stock_value_inr', num: true }],
+  rows: [['CIH-2040', 'Cast iron housing for coolant pump 2040 series', '1,250', '4,812,500.00'],
+    ['CIH-2060', 'Cast iron housing for coolant pump 2060 series', '980', '5,096,000.00'],
+    ['TRP-110', 'Trochoid pump 110 with motor flange', '540', '8,100,000.00']]
+    .map(([code, name, qty, value]) => [{ text: '31-Oct-2026', num: false }, { text: code, num: false },
+      { text: name, num: false }, { text: 'Castings', num: false }, { text: qty, num: true }, { text: value, num: true }]),
+  row_count: 3, truncated: false, rows_error: '',
+}
+const STOCK_CARD: Card = { ...OK, text: 'Which products have the most stock right now?', chart_kind: 'bar' }
+
+describe('AnswerCard columns from the AI (chart_columns)', () => {
+  beforeAll(async () => { await import('../charts/AnswerChart') }, 30_000)
+
+  it('draws stock_qty with the product codes as the names', async () => {
+    fakeFetch({ '/api/questions/7/rows': { body: STOCK_ROWS } })
+
+    render(<AnswerCard card={{ ...STOCK_CARD, chart_columns: { value: 'stock_qty', label: 'product_code' } }} autoRows />)
+
+    expect(await screen.findByRole('img', { name: /stock_qty by product_code/ })).toBeInTheDocument()
+    await waitFor(() => expect(lastChart()?.types()).toEqual(['bar']))
+    const option = lastChart()?.option as { xAxis: { data: string[] }; series: { data: unknown[] }[] }
+    expect(option.xAxis.data).toEqual(['CIH-2040', 'CIH-2060', 'TRP-110'])
+  })
+
+  it('falls back to its own choice for names the rows do not have', async () => {
+    fakeFetch({ '/api/questions/7/rows': { body: STOCK_ROWS } })
+
+    render(<AnswerCard card={{ ...STOCK_CARD, chart_columns: { value: 'qty_on_hand', label: 'product_code' } }} autoRows />)
+
+    expect(await screen.findByRole('img', { name: /stock_value_inr by description/ })).toBeInTheDocument()
+  })
+
+  it('keeps the old choice for an answer without names (saved before 19-Nov)', async () => {
+    fakeFetch({ '/api/questions/7/rows': { body: STOCK_ROWS } })
+
+    render(<AnswerCard card={STOCK_CARD} autoRows />)
+
+    expect(await screen.findByRole('img', { name: /stock_value_inr by description/ })).toBeInTheDocument()
+  })
+})

@@ -7,7 +7,9 @@ the backup model after a daily limit, the token count and the time per step.
 The rules for the errors LangChain's ChatOpenAI raises (openai.*) (18-Nov: the model chain, agent._ask_models,
 moves on to the next model after each of these errors - 19-Nov: on either Groq key):
 - per-minute limit (429)        -> the main Groq model (on either key) waits as Groq asks and tries again (at most
-                                   RATE_LIMIT_RETRIES times), then ModelBusy; the backup model: ModelBusy at once
+                                   RATE_LIMIT_RETRIES times), then ModelBusy; the backup model: ModelBusy at once;
+                                   19-Nov: switch=True (the other Groq key can take this call now, agent._ask_models)
+                                   -> MinuteLimit at once, with the seconds until this key's limit resets (minute_reset)
 - daily limit (429 "tokens per day (TPD)") -> DailyLimitReached
 - request too large (413, or a context-length error) -> RequestTooLarge (a smaller request may still go)
 - network error                 -> try once more after 3 s, then ModelDown ("could not be reached")
@@ -90,14 +92,15 @@ def for_backup(request, smallest=False):
 TOO_LONG = re.compile(r"context.length|context window|maximum context", re.I)
 
 
-def chat(request, max_tokens, effort, model=None, on_token=None, key_env=llm.KEY):
+def chat(request, max_tokens, effort, model=None, on_token=None, key_env=llm.KEY, switch=False):
     """One AI call through the request's chain -> (reply text, total tokens or None, True when the reply
     stopped at max_tokens). The main Groq model waits and retries on a per-minute rate limit (429); every other
     error raises (the rules above) and agent._ask_models moves on to the next model of the chain.
     on_token = the reply is streamed (the streamed Ask page): each piece of text goes to on_token while it is
     written. Until the first piece the rules above apply as they are; a failure after it raises StreamBroken.
     key_env = the .env setting of the Groq key to use (19-Nov: GROQ_API_KEY_2 for the second key -
-    ChainModel.key_env)."""
+    ChainModel.key_env). switch=True (19-Nov): the other Groq key may take this call at once, so a per-minute limit
+    is not waited for - MinuteLimit (with minute_reset's seconds) is raised instead."""
     model = model or agent.model_name()
     waits = model == agent.model_name()  # only the main Groq model (either key) waits for a per-minute limit
     attempt = 0
@@ -114,6 +117,9 @@ def chat(request, max_tokens, effort, model=None, on_token=None, key_env=llm.KEY
             if agent.DAILY_LIMIT.search(str(exc)):  # e.g. "tokens per day (TPD): Limit 200000, Used ..."
                 log.warning("Daily limit reached for %s", model)
                 raise agent.DailyLimitReached(model) from None
+            if switch:  # the other Groq key is asked now: no waiting
+                log.warning("Per-minute limit of %s (%s) - the other Groq key is asked at once", model, key_env)
+                raise agent.MinuteLimit(minute_reset(exc)) from None
             if not waits:
                 log.warning("Per-minute limit of %s - the next model is tried", model)
                 raise agent.ModelBusy() from None
@@ -142,6 +148,29 @@ def chat(request, max_tokens, effort, model=None, on_token=None, key_env=llm.KEY
         except openai.OpenAIError as exc:
             log.warning("%s error: %s", model, str(exc)[:300])
             raise agent.ModelFailed() from None
+
+
+# Groq's x-ratelimit-reset-* headers: '7.66s', '2m59.56s', '500ms'
+_DURATION = re.compile(r"(?:(\d+)m(?!s))?(?:([\d.]+)(ms|s))?")
+
+
+def minute_reset(exc):
+    """Seconds until a Groq key's per-minute limit lets a call through again (19-Nov: how long that key rests after
+    the call moved to the other key): the retry-after header or "try again in 7.5s" (agent._retry_after), else the
+    x-ratelimit-reset-tokens header, else agent.MINUTE_RESTING_SECS - at least 1 s, at most MINUTE_RESTING_SECS."""
+    response = getattr(exc, "response", None)
+    headers = getattr(response, "headers", None) or {}
+    if headers.get("retry-after") or re.search(r"try again in", str(exc), re.I):
+        secs = agent._retry_after(exc)
+    else:
+        match = _DURATION.fullmatch(str(headers.get("x-ratelimit-reset-tokens") or "").strip())
+        try:
+            secs = (int(match.group(1) or 0) * 60 + float(match.group(2) or 0) / (1000 if match.group(3) == "ms" else 1)
+                    if match else 0.0)
+        except ValueError:  # e.g. '1.2.3s'
+            secs = 0.0
+        secs = secs or agent.MINUTE_RESTING_SECS
+    return min(max(secs, 1.0), agent.MINUTE_RESTING_SECS)
 
 
 def _streamed(chain, request, on_token):

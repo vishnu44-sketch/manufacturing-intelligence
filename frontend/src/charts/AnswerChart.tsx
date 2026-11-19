@@ -10,7 +10,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { ChartColumnBig, Download, Table2 } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import { Segmented, SegmentedItem } from '../components/ui/segmented'
-import type { Cell, Header } from '../types'
+import type { Cell, ChartColumns, Header } from '../types'
 import { ANIMATION_MS, buildOption, catchAllText, chartSubtitle, cutText, describe, downloadPng, NARROW, pngName, readColours } from './chartOption'
 import EChart from './EChart'
 import type { EChartsType } from './echarts'
@@ -27,11 +27,14 @@ export interface AnswerChartProps {
   onShowTable?: () => void // the "Table" button (the table itself stays in AnswerCard)
   kind?: ChartKind | null // the kind the question asked for ("as a treemap"); null = pickChart's best kind
   upright?: boolean // a column chart was asked for: bars stand upright even with long names
+  columns?: ChartColumns | null // the value / label / series columns the AI named (used when the rows have them)
 }
 
-export default function AnswerChart({ headers, rows, title = '', onShowTable, kind = null, upright = false }: AnswerChartProps) {
+export default function AnswerChart({ headers, rows, title = '', onShowTable, kind = null, upright = false,
+  columns = null }: AnswerChartProps) {
   const [hide, setHide] = useState<boolean | null>(null) // the catch-all group: null = hidden when it is over 70%
-  const pick = useMemo(() => pickChart(headers, rows, kind, hide, upright), [headers, rows, kind, hide, upright])
+  const pick = useMemo(() => pickChart(headers, rows, kind, hide, upright, columns),
+    [headers, rows, kind, hide, upright, columns])
   const theme = useThemeName()
   const colours = useMemo(() => readColours(theme), [theme])
   const [width, setWidth] = useState(0)

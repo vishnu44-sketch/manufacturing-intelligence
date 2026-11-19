@@ -79,6 +79,16 @@ export interface Card {
   // 'radar'; 'none' = the AI said no chart helps (the table first); '' = no line / unknown (an older answer, missing
   // on an older server). Read it with chartWish, which checks it and falls back to the question's words.
   chart_kind?: string
+  // 19-Nov: the result columns the AI named to draw ("CHART: bar | value: stock_qty | label: product_code"); only
+  // used when the rows have them (pickChart checks), else pickChart picks the columns itself. {} / missing = none.
+  chart_columns?: ChartColumns
+}
+
+/** The columns of the answer rows the AI named for its chart: the number, the names on the axis, the split. */
+export interface ChartColumns {
+  value?: string
+  label?: string
+  series?: string
 }
 
 export interface ChatDetail {
