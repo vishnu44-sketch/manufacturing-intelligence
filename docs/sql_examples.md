@@ -396,7 +396,8 @@ Expected: 1,176 invoices, 481,828,141.00 INR.
 Also asked as: top items by stock value; most valuable items in stock; biggest inventory items.
 
 ```sql
-SELECT p.product_code,
+SELECT sl.report_date,
+       p.product_code,
        p.product_description,
        sl.cumulative_qty AS stock_qty,
        sl.cumulative_value AS stock_value_inr
@@ -409,8 +410,31 @@ ORDER BY sl.cumulative_value DESC
 LIMIT 5;
 ```
 
-Why: the stock of each item on the report date is its 'Closing balance' row (cumulative_qty / cumulative_value).
+Why: the stock of each item on the report date is its 'Closing balance' row (cumulative_qty / cumulative_value). report_date is returned so the answer names the stock report ("as of the stock report 30-Sep-2026").
 Expected: FG01484 GCI TX-675-3A 0.4kW 7,696,934.93; FG00542 5,759,696.49; FG01116 5,652,256.17; RM0130 5,142,443.80; FG01656 4,878,600.34.
+
+## Q: Which products have the most stock right now?
+
+Also asked as: items with the highest stock quantity now; biggest stock today; what do we have most of in stock; current stock per item; top items in the latest stock report.
+
+```sql
+SELECT sl.report_date,
+       p.product_code,
+       p.product_description,
+       p.item_group,
+       sl.cumulative_qty AS stock_qty,
+       ROUND(sl.cumulative_value, 2) AS stock_value_inr
+FROM fact_stock_ledger sl
+JOIN dim_stock_movement_types t ON t.movement_type_id = sl.movement_type_id
+JOIN dim_products p ON p.product_id = sl.product_id
+WHERE t.movement_type = 'Closing balance'
+  AND sl.report_date = (SELECT MAX(report_date) FROM fact_stock_ledger)
+ORDER BY sl.cumulative_qty DESC
+LIMIT 10;
+```
+
+Why: "right now" / "current" stock = the newest stock report (MAX(report_date)), never today; each item's stock is its 'Closing balance' row. report_date is returned so the answer says "as of the stock report 31-Oct-2026". item_group shows raw materials and consumables apart from finished goods (for finished goods only add AND p.item_group = 'Finished goods'); for the most stock VALUE order by sl.cumulative_value DESC.
+Expected: stock report 31-Oct-2026: RM0128 Cast iron housing blank 128 800 units (104,389.35); RM0135 725; RM0233 719; CO00070 Packing tape 70 705; RM0001 Rotor FC200 type 1 698 ... (the top 10 are raw materials and consumables).
 
 ## Q: How did each customer's sales grow or drop this year compared with last year?
 
@@ -1329,7 +1353,7 @@ ORDER BY pp.orders_together DESC, pp.lift DESC
 LIMIT 10;
 ```
 
-Why: pairs of products on the same sales orders (ml_product_pairs, cancelled orders left out; each pair once, product A = the one with fewer orders): orders_together = sales orders with both, confidence_pct = of the orders with product A the % that also have B, lift above 1 = bought together more often than by chance. With one product X ("bought with X"): WHERE pp.product_a_description LIKE '%X%' OR pp.product_b_description LIKE '%X%' OR pp.product_a_code LIKE '%X%' OR pp.product_b_code LIKE '%X%', and name the other product of each pair.
+Why: pairs of products on the same sales orders (ml_product_pairs, cancelled orders left out; each pair once, product A = the one with fewer orders): orders_together = sales orders with both, support_pct = the % of all sales orders with both, confidence_pct = of the orders with product A the % that also have B (both are already percentages: support_pct 0.4816 = 0.48 %, never x 100), lift above 1 = bought together more often than by chance. With one product X ("bought with X"): WHERE pp.product_a_description LIKE '%X%' OR pp.product_b_description LIKE '%X%' OR pp.product_a_code LIKE '%X%' OR pp.product_b_code LIKE '%X%', and name the other product of each pair.
 Expected: (run of 17-Nov-2026, data to 31-Oct-2026) 242 pairs; top FG00580 Coolant Unit HM-132-3A + FG01116 Procon Pump PR-317-3A on 146 orders (confidence 27.92 %, lift 11.77), then FG00542 + FG01484 on 144 orders (lift 1.98).
 
 ## Q: Which items will run out of stock soon?

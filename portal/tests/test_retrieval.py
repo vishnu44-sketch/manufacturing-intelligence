@@ -15,7 +15,7 @@ from portal.rag import store
 
 DOCS_DIR = Path(__file__).resolve().parents[2] / "docs"
 
-# the 42 example chunks of docs/sql_examples.md (read once, no model needed)
+# the example chunks of docs/sql_examples.md (read once, no model needed)
 EXAMPLES = [c for c in load_docs(DOCS_DIR) if c["kind"] == "example"]
 
 
@@ -74,7 +74,8 @@ def test_docs_folder_gives_the_expected_chunks():
 
     # 50 examples (16-Nov: new customers this month so far and last month; 17-Nov: 8 on the ML results), each with
     # its SQL and its expected result
-    assert len(EXAMPLES) == 53  # 18-Nov: + "What will our total sales be in 2027?", + Aug 2027 forecast / top customer
+    assert len(EXAMPLES) == 54  # 18-Nov: + "What will our total sales be in 2027?", + Aug 2027 forecast / top customer;
+    # 19-Nov: + "Which products have the most stock right now?" (returns report_date)
     for c in EXAMPLES:
         assert c["heading"].startswith("Q: ")
         assert "```sql" in c["text"] and "\nExpected: " in c["text"]
@@ -86,6 +87,20 @@ def test_docs_folder_gives_the_expected_chunks():
     for c in table_sections:
         table = c["heading"].split(" - ")[0]
         assert f"Table `{table}`" in c["text"], c["heading"]
+
+
+def test_stock_examples_return_the_report_date_and_the_rule_says_to_name_it():
+    """19-Nov: "Which products have the most stock right now?" was answered without the stock report date: the stock
+    examples return sl.report_date and the stock rule tells the answer to say "as of the stock report ..."."""
+    chunks = load_docs(DOCS_DIR)
+    examples = {c["heading"]: c["text"] for c in EXAMPLES}
+    for heading in ("Q: Which products have the most stock right now?",
+                    "Q: Which 5 items had the highest stock value on 30-Sep-2026?",
+                    "Q: What is our current stock value (latest stock report)?"):
+        assert "SELECT sl.report_date," in examples[heading], heading
+    assert "(SELECT MAX(report_date) FROM fact_stock_ledger)" in examples["Q: Which products have the most stock right now?"]
+    rules = " ".join(c["text"] for c in chunks if c["kind"] == "rule")
+    assert 'SELECTs `sl.report_date`, and the answer says the report date: "as of the stock report 31-Oct-2026"' in rules
 
 
 def test_search_without_a_store_says_what_to_do(tmp_path):

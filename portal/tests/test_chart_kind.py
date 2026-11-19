@@ -49,6 +49,8 @@ KEYS = {"bar", "column", "hbar", "line", "area", "stackedArea", "stacked", "grou
     ("CHART: treemap", "treemap"), ("CHART: waterfall", "waterfall"), ("CHART: funnel", "funnel"),
     ("CHART: radar", "radar"), ("**CHART:** bar", "bar"), ("CHART: bar - net sales of the last 6 months", "bar"),
     ("CHART: pie (sales by state)", "pie"),
+    # 19-Nov: a kind the AI suggests itself (no chart asked) is the same key
+    ("CHART: line (suggested)", "line"), ("CHART: bar (Suggested)", "bar"), ("CHART: suggested line", "line"),
 ])
 def test_the_ai_words_become_the_chart_keys_of_the_page(line, key):
     assert agent.chart_kind_line(f"{line}\n{TREND_SQL}") == key
@@ -56,11 +58,31 @@ def test_the_ai_words_become_the_chart_keys_of_the_page(line, key):
 
 
 @pytest.mark.parametrize("reply", [
-    "CHART: none", "CHART: None.", "CHART: n/a", "CHART: sankey", "CHART: gauge", "CHART: banana", "CHART:", "",
+    "CHART: sankey", "CHART: gauge", "CHART: banana", "CHART:", "",
     None, TREND_SQL, "MISSING: profit - not in the data\n" + TREND_SQL,
 ])
-def test_no_chart_none_or_unknown_words_are_empty(reply):
+def test_no_chart_line_or_unknown_words_are_empty(reply):
     assert agent.chart_kind_line(reply) == ""
+    assert agent.chart_asked(reply) is False
+
+
+# 19-Nov: "CHART: none" = the AI decided no chart makes the answer clearer - kept apart from '' (no line)
+@pytest.mark.parametrize("line", [
+    "CHART: none", "CHART: None.", "CHART: n/a", "CHART: no chart", "**CHART:** none", "CHART: none (one number)",
+    "CHART: none - a list of invoices", "CHART: table",
+])
+def test_chart_none_is_none(line):
+    assert agent.chart_kind_line(f"{line}\n{TREND_SQL}") == "none"
+    assert agent.chart_asked(f"{line}\n{TREND_SQL}") is False
+
+
+@pytest.mark.parametrize("line, asked", [
+    ("CHART: bar", True), ("CHART: column graph", True), ("CHART: pie (sales by state)", True),
+    ("CHART: line (suggested)", False), ("CHART: bar (Suggested)", False), ("CHART: suggested line", False),
+    ("CHART: none", False),
+])
+def test_an_asked_chart_is_told_apart_from_a_suggested_one(line, asked):
+    assert agent.chart_asked(f"{line}\n{TREND_SQL}") is asked
 
 
 def test_the_chart_line_never_ends_up_in_the_sql():
@@ -81,6 +103,10 @@ def test_a_chart_line_with_no_data_or_no_sql_is_still_read_as_that():
 def test_the_prompt_asks_for_the_chart_line_but_the_mcp_rules_do_not():
     prompt = agent.SQL_SYSTEM_PROMPT
     assert 'write first one line "CHART: <kind>"' in prompt
+    # 19-Nov: always a CHART line - the AI decides whether a chart helps when none was asked
+    assert 'With every SQL block, always write first one line "CHART: <kind>"' in prompt
+    assert '"CHART: <kind> (suggested)"' in prompt and '"CHART: none"' in prompt
+    assert "waterfall, funnel, radar, or none" in prompt
     assert '"bar chat", "barchrt", "show as columns", "pie"' in prompt
     assert ("bar, column (upright bars), horizontal bar, line, area, stacked area, stacked bar, grouped bar, pie, scatter, heatmap, treemap, "
             "waterfall, funnel, radar") in prompt
@@ -110,6 +136,18 @@ def test_no_chart_line_is_empty(monkeypatch, mysql, user, steps):
 
     assert result.status == "ok" and result.chart_kind == ""
     assert Question.objects.get().chart_kind == ""
+
+
+@pytest.mark.parametrize("line, saved", [("CHART: none", "none"), ("CHART: line (suggested)", "line")])
+def test_the_ai_s_own_chart_choice_is_saved(monkeypatch, mysql, user, steps, line, saved):
+    mysql.results = [TREND_ROWS]
+    fake = use_fake_ai(monkeypatch, [f"{line}\n{TREND_SQL}", TREND_ANSWER])
+
+    result = agent.ask("net sales of the last 6 sales months", user)
+
+    assert result.status == "ok" and result.chart_kind == saved
+    assert Question.objects.get().chart_kind == saved
+    assert len(fake.calls) == 2                                              # no extra AI call
 
 
 def test_a_question_without_rows_saves_no_chart(monkeypatch, mysql, user, steps):
@@ -152,6 +190,14 @@ def test_a_kept_first_answer_keeps_the_chart_of_its_own_try(monkeypatch, mysql, 
 
 
 # ---------- sent in the answer card ----------
+
+def test_the_card_sends_chart_none(client, user, mysql):
+    chat = make_chat(user, QUESTION, chart_kind="none")
+    client.force_login(user)
+
+    card = client.get(reverse("api_chat", args=[chat.pk])).json()["cards"][0]
+    assert card["chart_kind"] == "none"                                      # the page shows the table first
+
 
 def test_the_card_has_the_chart_kind(client, user, mysql):
     chat = make_chat(user, QUESTION, chart_kind="hbar")

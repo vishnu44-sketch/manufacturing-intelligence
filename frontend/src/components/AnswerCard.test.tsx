@@ -378,6 +378,62 @@ describe('AnswerCard chart kind from the AI (chart_kind)', () => {
   })
 })
 
+// 19-Nov: the AI decides for every answer whether a chart helps ("CHART: none" -> chart_kind 'none')
+describe('AnswerCard chart or table first (the AI decides)', () => {
+  beforeAll(async () => { await import('../charts/AnswerChart') }, 30_000)
+
+  it("shows the table first for chart_kind 'none', with the Chart switch still there", async () => {
+    fakeFetch({ '/api/questions/7/rows': { body: SIX_MONTHS } })
+
+    render(<AnswerCard card={{ ...OK, text: 'net sales of the last 6 sales months', chart_kind: 'none' }} autoRows />)
+
+    expect(await screen.findByText('310,005,600.00')).toBeInTheDocument()      // the table
+    expect(screen.queryByRole('img', { name: /chart/i })).not.toBeInTheDocument()
+    expect(screen.queryByText(/no chart can be drawn|can't be drawn as a chart/)).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Show chart' }))         // the user can still switch
+    expect(await screen.findByRole('img', { name: /^Line chart/ })).toBeInTheDocument()
+  })
+
+  it("has no Chart switch and no note for chart_kind 'none' when the rows fit no chart", async () => {
+    fakeFetch({ '/api/questions/7/rows': { body: { ...ROWS, rows: ROWS.rows.slice(0, 1), row_count: 1 } } })
+
+    render(<AnswerCard card={{ ...OK, text: 'Invoice value of Aurora in Oct 2026', chart_kind: 'none' }} autoRows />)
+
+    expect(await screen.findByText('1,730,000.00')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Show chart' })).not.toBeInTheDocument()
+    expect(screen.queryByText(/no chart can be drawn|can't be drawn as a chart/)).not.toBeInTheDocument()
+  })
+
+  it('shows the chart first, of that kind, when the AI names one', async () => {
+    fakeFetch({ '/api/questions/7/rows': { body: SIX_MONTHS } })
+
+    render(<AnswerCard card={{ ...OK, text: 'net sales of the last 6 sales months', chart_kind: 'column' }} autoRows />)
+
+    expect(await screen.findByRole('img', { name: /^Bar chart/ })).toBeInTheDocument()
+    expect(screen.queryByText('310,005,600.00')).not.toBeInTheDocument()
+  })
+
+  it("keeps the old rules for '' (an older answer): a chart first when the rows fit one", async () => {
+    fakeFetch({ '/api/questions/7/rows': { body: SIX_MONTHS } })
+
+    render(<AnswerCard card={{ ...OK, text: 'net sales of the last 6 sales months', chart_kind: '' }} autoRows />)
+
+    expect(await screen.findByRole('img', { name: /^Line chart/ })).toBeInTheDocument()
+  })
+
+  it("follows a card that gets chart_kind 'none' after it was first shown (the streamed answer)", async () => {
+    fakeFetch({ '/api/questions/7/rows': { body: SIX_MONTHS } })
+    const card = { ...OK, text: 'net sales of the last 6 sales months' }
+
+    const { rerender } = render(<AnswerCard card={card} autoRows />)
+    expect(await screen.findByRole('img', { name: /^Line chart/ })).toBeInTheDocument()
+    rerender(<AnswerCard card={{ ...card, chart_kind: 'none' }} autoRows />)
+
+    expect(await screen.findByText('310,005,600.00')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Show chart' })).toBeInTheDocument()
+  })
+})
+
 // the real answer "net sales by product category and sale type": 2 labels + an amount
 const PIVOT_ROWS = { ...CATEGORY_SALE_TYPE, row_count: 17, truncated: false, rows_error: '' }
 const PIVOT: Card = { ...OK, text: 'Net sales by product category and sale type', understood_as: '' }

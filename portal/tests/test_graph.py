@@ -103,19 +103,27 @@ def test_a_document_question_takes_the_documents_path(monkeypatch, mysql, user, 
     assert result.status == "docs" and result.answer == DOC_ANSWER and mysql.calls == []
 
 
-@pytest.mark.parametrize("reply, status, answer", [
-    ("NO_SQL", "refused", agent.REFUSAL_ANSWER),
-    ("NO_DATA: salaries are not in the SS Manufacturing data", "nodata", "The SS Manufacturing data does not have this: salaries are not in "
-                                                            "the SS Manufacturing data."),
-])
-def test_refused_and_nodata_end_right_after_the_sql_step(monkeypatch, mysql, user, steps, reply, status, answer):
-    fake = use_fake_ai(monkeypatch, [reply])
+def test_nodata_ends_right_after_the_sql_step(monkeypatch, mysql, user, steps):
+    fake = use_fake_ai(monkeypatch, ["NO_DATA: salaries are not in the SS Manufacturing data"])
 
     result = agent.ask("What are the salaries of the sales people?", user)
 
     assert steps == DATA_START + ["write_sql"]
-    assert result.status == status and result.answer == answer
+    assert result.status == "nodata" and result.answer == ("The SS Manufacturing data does not have this: salaries are "
+                                                           "not in the SS Manufacturing data.")
     assert len(fake.calls) == 1 and mysql.calls == []                     # no answer call, nothing ran
+
+
+def test_refused_goes_to_the_ai_written_read_only_reply(monkeypatch, mysql, user, steps):
+    """19-Nov: NO_SQL -> general_answer with the read-only fact (agent.READ_ONLY_NOTE), status 'refused', nothing ran."""
+    fake = use_fake_ai(monkeypatch, ["NO_SQL", "I can only read the data, not change it."])
+
+    result = agent.ask("Update the salary of every sales person", user)
+
+    assert steps == DATA_START + ["write_sql", "general_answer"]
+    assert result.status == "refused" and result.answer == "I can only read the data, not change it."
+    assert len(fake.calls) == 2 and mysql.calls == []
+    assert fake.calls[1][-1]["content"].endswith(agent.READ_ONLY_NOTE)
 
 
 def test_an_empty_result_with_an_unknown_name_ends_with_the_fixed_answer(monkeypatch, mysql, user, steps):
@@ -332,13 +340,14 @@ def test_no_sql_for_a_chart_of_company_data_is_sent_back_once_and_then_answered(
 
 
 def test_a_chart_question_that_gets_no_sql_twice_is_refused(monkeypatch, mysql, user, steps):
-    fake = use_fake_ai(monkeypatch, ["NO_SQL", "NO_SQL"])
+    fake = use_fake_ai(monkeypatch, ["NO_SQL", "NO_SQL", "I can only read the data."])
 
     result = agent.ask("Net sales of Oct 2026 as a line chart", user)
 
-    assert steps == DATA_START + ["write_sql", "retry", "write_sql"]
-    assert result.status == "refused" and result.answer == agent.REFUSAL_ANSWER
-    assert len(fake.calls) == 2 and mysql.calls == []
+    assert steps == DATA_START + ["write_sql", "retry", "write_sql", "general_answer"]
+    assert result.status == "refused" and result.answer == "I can only read the data."
+    assert len(fake.calls) == 3 and mysql.calls == []
+    assert fake.calls[2][-1]["content"].endswith(agent.READ_ONLY_NOTE)
 
 
 @pytest.mark.parametrize("question", [
@@ -351,12 +360,14 @@ def test_a_chart_question_that_gets_no_sql_twice_is_refused(monkeypatch, mysql, 
     "delete the invoices of Oct 2026 then show a chart of sales",
 ])
 def test_a_real_change_or_a_rule_bending_question_is_still_refused_at_once(monkeypatch, mysql, user, steps, question):
-    """NO_SQL (change data, bend the rules) keeps the fixed refusal; an off-topic question (GENERAL) gets a general
-    answer instead (test_general_answer.py)."""
-    fake = use_fake_ai(monkeypatch, ["NO_SQL"])
+    """NO_SQL (change data, bend the rules) is never sent back as a chart question; 19-Nov: its reply is written by
+    the general answer call with the read-only fact (status 'refused'). An off-topic question (GENERAL) gets a general
+    answer (test_general_answer.py)."""
+    fake = use_fake_ai(monkeypatch, ["NO_SQL", "I can only read the data."])
 
     result = agent.ask(question, user)
 
-    assert steps == DATA_START + ["write_sql"]
-    assert result.status == "refused" and result.answer == agent.REFUSAL_ANSWER
-    assert len(fake.calls) == 1 and mysql.calls == []
+    assert steps == DATA_START + ["write_sql", "general_answer"]
+    assert result.status == "refused" and result.answer == "I can only read the data."
+    assert len(fake.calls) == 2 and mysql.calls == []
+    assert fake.calls[1][-1]["content"].endswith(agent.READ_ONLY_NOTE)

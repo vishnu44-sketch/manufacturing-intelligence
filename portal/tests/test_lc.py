@@ -584,6 +584,78 @@ def test_the_rewrite_list_is_numbered_with_the_latest_marked():
         "1. who is our top customer in japan\n2. Top customer for export sales in FY 2026-27? (latest)")
 
 
+NO_DATA_2030 = ("The SS Manufacturing data does not have this: the data runs only to Oct 2026 and the forecasts to "
+                "Oct 2027, so there are no sales for 2030.")
+
+
+def test_the_rewrite_list_marks_an_earlier_question_that_got_no_data():
+    """19-Nov (ML Insights chat): after "What were our sales in 2030?" (no data), "Give me the forecast as a chart,
+    month by month" was written out for 2030 - the rewrite now sees which earlier question got no data, and why."""
+    earlier = [SimpleNamespace(text="Top customers in Aug 2026", understood_as="", answer="Aurora led.", sql="SELECT 1",
+                               status="ok", rows_count=5),
+               SimpleNamespace(text="Sales of Zylo in Aug 2026", understood_as="", answer="No sales of Zylo.",
+                               sql="SELECT 2", status="ok", rows_count=0),
+               SimpleNamespace(text="What were our sales in 2030?", understood_as="", answer=NO_DATA_2030, sql="",
+                               status="nodata", rows_count=None)]
+    assert memory.rewrite_earlier(memory.ChatHistory(earlier).messages) == (
+        "1. Top customers in Aug 2026\n"
+        "2. Sales of Zylo in Aug 2026" + agent.REWRITE_NO_DATA.format(answer="No sales of Zylo.") + "\n"
+        "3. What were our sales in 2030? (latest)" + agent.REWRITE_NO_DATA.format(answer=NO_DATA_2030))
+    assert " - got no data: The SS Manufacturing data does not have this:" in memory.rewrite_earlier(
+        memory.ChatHistory(earlier).messages)
+    long = [SimpleNamespace(text="q", understood_as="", answer="x" * 500, sql="", status="nodata")]
+    assert ("x" * agent.REWRITE_NO_DATA_CHARS + " ...") in memory.rewrite_earlier(memory.ChatHistory(long).messages)
+    # a general answer, or an earlier question saved without a status (the eval's lists): no mark, as before
+    plain = [SimpleNamespace(text="what is GST?", understood_as="", answer="A tax.", sql="", status="general"),
+             SimpleNamespace(text="Top customers", understood_as="", answer="", sql="")]
+    assert memory.rewrite_earlier(memory.ChatHistory(plain).messages) == "1. what is GST?\n2. Top customers (latest)"
+
+
+def test_the_rewrite_rule_keeps_a_no_data_period_out_of_a_new_question():
+    prompt = agent.REWRITE_SYSTEM_PROMPT
+    assert 'An earlier question marked "got no data" was NOT answered' in prompt
+    assert "Take nothing from it (period, customer, product, filters) unless the new question clearly continues that same request" in prompt
+    assert '"give me the forecast as a chart, month by month" after "What were our sales in 2030?" (got no data)' in prompt
+    assert 'A chart that names data of its own ("the forecast as a chart, month by month") is not a chart of an earlier answer' in prompt
+    assert "got no data" in agent.REWRITE_NO_DATA
+
+
+@pytest.mark.django_db
+def test_the_rewrite_request_tells_the_ai_which_earlier_question_got_no_data(monkeypatch, user):
+    """The saved chat (History DB) -> the rewrite request: the no-data mark and its reason are sent, with the rule."""
+    chat = Conversation.objects.create(user=user, title="ML chat")
+    Question.objects.create(user=user, conversation=chat, text="What were our sales in 2030?", answer=NO_DATA_2030,
+                            status="nodata")
+    seen = []
+    model = RunnableLambda(lambda prompt: seen.append(prompt.to_messages()) or AIMessage("NEW"))
+    monkeypatch.setattr(llm, "make_llm", lambda name, max_tokens, effort, key_env=llm.KEY: model)
+    result = agent.AskResult(text="Give me the forecast as a chart, month by month")
+
+    assert agent.rewrite_follow_up(result, memory.ChatHistory.for_chat(chat)) is None  # NEW: answered on its own
+    system, request = seen[0][0].content, seen[0][-1].content
+    assert system == agent.REWRITE_SYSTEM_PROMPT and 'marked "got no data"' in system
+    assert ("1. What were our sales in 2030? (latest) - got no data: The SS Manufacturing data does not have this: "
+            "the data runs only to Oct 2026") in request
+    assert "New question: Give me the forecast as a chart, month by month" in request
+
+
+@pytest.mark.django_db
+def test_a_follow_up_after_an_answered_question_gets_no_mark(monkeypatch, user):
+    """"and for last year?" right after an answer with rows: the list is as before (no mark), so it still builds on it."""
+    chat = Conversation.objects.create(user=user, title="chat")
+    Question.objects.create(user=user, conversation=chat, text="Net sales in FY 2026-27", answer="INR 53 Cr.",
+                            sql="SELECT 1", status="ok", rows_count=1)
+    seen = []
+    model = RunnableLambda(lambda prompt: seen.append(prompt.to_messages()) or AIMessage("Net sales in FY 2025-26"))
+    monkeypatch.setattr(llm, "make_llm", lambda name, max_tokens, effort, key_env=llm.KEY: model)
+
+    understood = agent.rewrite_follow_up(agent.AskResult(text="and for last year?"), memory.ChatHistory.for_chat(chat))
+
+    assert understood == "Net sales in FY 2025-26"
+    assert "1. Net sales in FY 2026-27 (latest)\n\nNew question: and for last year?" in seen[0][-1].content
+    assert "got no data:" not in seen[0][-1].content
+
+
 def test_the_sql_request_shows_each_earlier_question_with_its_sql_and_answer():
     text = memory.sql_earlier(memory.ChatHistory(EARLIER).messages)
     assert text == (agent.EARLIER_HEAD + "\n"

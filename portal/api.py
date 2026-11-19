@@ -148,7 +148,8 @@ def _card(saved, token_notice=""):
         "tries": saved.tries,
         "row_count": saved.rows_count,
         "has_rows": has_rows,
-        # the chart the question asked for ("bar", "hbar", "pie" ...; agent.CHART_KINDS) - '' = the page picks it
+        # the chart the AI named ("bar", "hbar", "pie" ...; agent.CHART_KINDS); 'none' = the table first; '' = the
+        # page picks it
         "chart_kind": (saved.chart_kind or "") if has_rows else "",
         "rows_url": reverse("api_rows", args=[saved.pk]) if has_rows else "",
         "excel_url": reverse("api_excel", args=[saved.pk]) if has_rows else "",

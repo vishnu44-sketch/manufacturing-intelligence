@@ -107,8 +107,9 @@ class Question(models.Model):
     # seconds per step, e.g. {"embed": 0.05, "sql_ai": 6.5, "mysql": 0.8, "wait": 45.0} (agent.STEP_NAMES);
     # empty for questions saved before the steps were timed (02-Nov)
     step_secs = models.JSONField(null=True, blank=True)
-    # the chart the question asked for, as the SQL call's "CHART: <kind>" line named it ("bar", "hbar", "pie" ...
-    # agent.CHART_KINDS); '' = no chart named, or saved before 17-Nov - the Ask page then picks the chart itself
+    # the chart the SQL call's "CHART: <kind>" line named, asked for or suggested by the AI ("bar", "hbar", "pie" ...
+    # agent.CHART_KINDS); 'none' = the AI said no chart helps (19-Nov: the Ask page shows the table first);
+    # '' = no CHART line, or saved before 17-Nov - the Ask page then picks the chart itself
     chart_kind = models.CharField(max_length=20, blank=True, default="")
     # 18-Nov: why another AI model than the chain's first answered ("chosen by you", "Groq's daily limit was reached",
     # the backup model's plain note) - saved so a reopened card says the same; '' = the first model answered, or the

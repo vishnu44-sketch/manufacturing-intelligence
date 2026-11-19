@@ -76,6 +76,7 @@ def missing_entity(question, columns, ai_asks_for=""):
 def several_periods_chart(question, ai_periods=None, chart_kind=""):
     """True when the AI's lines say the question asks for a chart of several periods: its PERIODS line says 2 or
     more, and a chart was asked for (its CHART line, or the chart words of the question). lc/graph.run_sql also
-    keeps its old word rules (several_periods_chart_request) as the fallback."""
-    wants_chart = bool(chart_kind) or bool(agent.CHART_WORDS.search(question or ""))
+    keeps its old word rules (several_periods_chart_request) as the fallback. chart_kind is a chart the USER asked
+    for (agent.chart_asked) - 19-Nov: a kind the AI only suggested, or 'none', is not passed / not a chart wish."""
+    wants_chart = chart_kind not in ("", "none", None) or bool(agent.CHART_WORDS.search(question or ""))
     return bool(ai_periods and ai_periods >= 2 and wants_chart)

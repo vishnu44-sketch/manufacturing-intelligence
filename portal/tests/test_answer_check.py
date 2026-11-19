@@ -380,21 +380,21 @@ def test_a_check_after_a_check_still_checks_the_data_question(monkeypatch, mysql
 
 def test_with_no_chat_the_question_takes_the_normal_path(monkeypatch, mysql, user):
     """The MCP server asks with no context: "is that correct" goes to the AI as before."""
-    fake = use_fake_ai(monkeypatch, ["NO_SQL"])
+    fake = use_fake_ai(monkeypatch, ["NO_SQL", "I can only read the data."])  # 19-Nov: NO_SQL's reply is AI-written
 
     result = agent.ask("is that correct", user)
 
-    assert len(fake.calls) == 1 and result.status == "refused" and result.answer == agent.REFUSAL_ANSWER
+    assert len(fake.calls) == 2 and result.status == "refused" and result.answer == "I can only read the data."
 
 
 def test_the_eval_context_list_takes_the_normal_path(monkeypatch, mysql, user):
     """The eval gives its earlier questions as a plain list (no chat): the normal path, with the AI."""
-    fake = use_fake_ai(monkeypatch, ["NEW", "NO_SQL"])
+    fake = use_fake_ai(monkeypatch, ["NEW", "NO_SQL", "I can only read the data."])
     context = [SimpleNamespace(text=BAR_QUESTION, sql=BAR_SQL, answer=BAR_ANSWER, understood_as="")]
 
     result = agent.ask("is that correct", user, context=context, use_memories=False)
 
-    assert len(fake.calls) == 2 and result.status == "refused" and mysql.calls == []
+    assert len(fake.calls) == 3 and result.status == "refused" and mysql.calls == []
 
 
 def test_is_that_correct_after_a_general_answer_says_it_was_general(monkeypatch):
