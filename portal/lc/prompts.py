@@ -2,9 +2,7 @@
 
 The texts are read from agent.py (its prompt constants), never copied: they stay next to the rules
 and checks they belong to. The {fields} are what agent.py fills in, e.g. SQL_PROMPT needs schema,
-count, documents, today, preferences, earlier and question (the sql_values of graph.pick_schema).
-{preferences} = the user's saved memories (agent.preferences) in the SQL, answer and documents requests;
-'' when the user has none, so those requests are then exactly as before the memory.
+count, documents, today, earlier and question (the sql_values of graph.pick_schema).
 """
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder, PromptTemplate
 

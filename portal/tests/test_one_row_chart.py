@@ -84,7 +84,7 @@ def test_the_chat_follow_up_of_05_nov_gets_the_rows_of_its_second_try(monkeypatc
     result = agent.ask("for that above answer create one line chart", user,
                        context=ChatHistory.for_chat(sales_chat(user)))
 
-    assert steps == ["load_memories", "rewrite"] + DATA_START[1:] + [
+    assert steps == ["rewrite"] + DATA_START + [
         "write_sql", "check_sql", "run_sql", "retry", "write_sql", "check_sql", "run_sql", "explain"]
     assert result.status == "ok" and len(result.rows) == 6 and result.understood_as == understood
     assert fake.calls[2][-1]["content"].startswith(SENT_BACK)

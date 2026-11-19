@@ -3,7 +3,7 @@
 // the app then shows its Login page. A 403 on a staff page means "no access".
 import type {
   AiChartReply, AskMode, AskResponse, AuditData, AuditFilters, ChatDetail, ChatList, ChatSummary, DataTables, DocumentsData, EditResponse,
-  GraphNodeReply, GraphSearchReply, GraphSimilarReply, HistoryMode, HistoryPage, HomeData, InsightsData, Me, MemoryList, ModelList, MemoryReply, PeopleList, PersonReply, Rows, SavedAnswer, SqlResult, SqlSavedList, SqlSavedQuery, SqlSchema,
+  GraphNodeReply, GraphSearchReply, GraphSimilarReply, HistoryMode, HistoryPage, HomeData, InsightsData, Me, ModelList, PeopleList, PersonReply, Rows, SavedAnswer, SqlResult, SqlSavedList, SqlSavedQuery, SqlSchema,
   StreamEvent,
 } from './types'
 
@@ -253,11 +253,6 @@ export const api = {
   data: () => request<DataTables>('GET', '/api/data'),
   audit: (params: Partial<AuditFilters> & { page?: number }) =>
     request<AuditData>('GET', `/api/audit${query(params)}`),
-  // the user's own memories
-  memories: () => request<MemoryList>('GET', '/api/memories'),
-  addMemory: (text: string) => request<MemoryReply>('POST', '/api/memories', { text }),
-  deleteMemory: (id: number) => request<{ deleted: number; message: string }>('POST', `/api/memories/${id}/delete`, {}),
-  deleteAllMemories: () => request<{ deleted: number; message: string }>('POST', '/api/memories/delete-all', {}),
   // Insights: the saved results of the machine-learning models (read-only, no AI call)
   insights: () => request<InsightsData>('GET', '/api/insights'),
   // the Knowledge graph (read-only, no AI call)

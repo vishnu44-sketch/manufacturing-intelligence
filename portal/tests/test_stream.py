@@ -123,6 +123,9 @@ def test_the_stream_sends_the_steps_then_the_answer_word_by_word_then_the_card(m
     assert card["token_notice"].startswith("This question used 3,800 tokens (SQL 3,000 + answer 800)")
     assert events[-1]["chat"]["title"] == QUESTION
     assert fake.streamed == [2]                                              # only the answer call is streamed
+    # 19-Nov: the streamed answer has the chart rule (the chart is already shown below, never "can be plotted")
+    assert fake.calls[1][0]["content"] == agent.EXPLAIN_SYSTEM_PROMPT
+    assert "If you mention it at all, only as e.g. \"the chart below shows ...\"" in fake.calls[1][0]["content"]
 
 
 def test_the_streamed_question_is_saved_as_api_ask_saves_it(monkeypatch, mysql, signed_in):

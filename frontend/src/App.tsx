@@ -1,5 +1,5 @@
 // The website: the Login page until the API knows the user, then each page in the shell (dark menu on
-// the left, top bar) by its address - Home (at /, the first page), Assistant, History, Memory, Knowledge graph, ML Insights, ML Dashboard, and for staff Users, Documents,
+// the left, top bar) by its address - Home (at /, the first page), Assistant, History, Knowledge graph, ML Insights, ML Dashboard, and for staff Users, Documents,
 // Data, SQL and Audit (anyone else gets "no access"). Any 401 from the API brings the Login page back; signing out goes to /login.
 import { useCallback, useEffect, useState } from 'react'
 import { ApiError, api, setUnauthorizedHandler } from './api'
@@ -13,7 +13,6 @@ import HistoryPage from './components/HistoryPage'
 import HomePage from './components/HomePage'
 import InsightsPage from './components/InsightsPage'
 import Login from './components/Login'
-import MemoryPage from './components/MemoryPage'
 import MlDashboard from './components/MlDashboard'
 import Shell, { type MenuItem } from './components/Shell'
 import SqlPage from './components/SqlPage'
@@ -32,7 +31,6 @@ function pageOf(route: Route, me: Me): [string, MenuItem] {
   switch (route.kind) {
     case 'home': return ['Home', 'home']
     case 'history': return ['History', 'history']
-    case 'memory': return ['Memory', 'memory']
     case 'graph': return ['Knowledge graph', 'graph']
     case 'insights': return ['ML Insights', 'insights']
     case 'mldashboard': return ['ML Dashboard', 'mldashboard']
@@ -51,7 +49,6 @@ function Page({ route, me }: { route: Route; me: Me }) {
   switch (route.kind) {
     case 'home': return <HomePage me={me} />
     case 'history': return <HistoryPage page={route.page} />
-    case 'memory': return <MemoryPage />
     case 'graph': return <GraphPage />
     case 'insights': return <InsightsPage me={me} />
     case 'mldashboard': return <MlDashboard />

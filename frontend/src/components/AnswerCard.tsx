@@ -12,7 +12,6 @@ import { ChartColumnBig, Check, ChevronRight, Copy, ExternalLink, Info, Table2 }
 import { cn } from '@/lib/utils'
 import { ApiError, AuthError, api, problemText } from '../api'
 import { chartAskedFromText, chartWish, namesChartKind, pickChart, unusualChartFromText, uprightWish } from '../charts/pickChart'
-import { Link } from '../router'
 import type { AiChartReply, Card, Rows, Status } from '../types'
 import { copyText } from '../lib/clipboard'
 import { ExcelLink } from './common'
@@ -31,7 +30,7 @@ const CHIPS: Record<Status, [string, string]> = {
   nodata: ['info', 'DATA NOT AVAILABLE'],
   refused: ['skip', 'NOT A COMPANY DATA QUESTION'],
   error: ['fail', 'NOT ANSWERED'],
-  memory: ['ok', 'MEMORY UPDATED'], // "Remember that ..." - no SQL, rows or Excel
+  memory: ['ok', 'MEMORY UPDATED'], // old "Remember that ..." answers (the user memory was removed 19-Nov)
   general: ['info', 'GENERAL ANSWER'], // not about the company: the AI's own answer - no SQL, rows or Excel
 }
 
@@ -301,9 +300,6 @@ export default function AnswerCard({ card, autoRows = false, staff = false }:
               <span key={i}>{i > 0 && <br />}{line}</span>
             ))}
           </div>
-          {card.status === 'memory' && (
-            <div className="text-[12.5px]"><Link to="/memory">Open the Memory page</Link></div>
-          )}
           {/* 18-Nov: which model answered and why, when it was not the first model of the chain (a limit, a busy
               model, an administrator's choice); older answers only know the backup model's name */}
           {card.model_note ? (

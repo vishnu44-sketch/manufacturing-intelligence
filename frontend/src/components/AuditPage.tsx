@@ -1,4 +1,4 @@
-// Audit log (staff): who did what and when - sign-ins, people, chats, memories, Excel downloads and MCP
+// Audit log (staff): who did what and when - sign-ins, people, chats, Excel downloads and MCP
 // calls - newest first, 50 per page. The filters (user, action, dates, a word) live in the address
 // (/audit?user=..&action=..&from=..&to=..&q=..&page=2), so Back works. A click on a line shows all its
 // details and links to the questions it is about (staff open them, also those of a deleted chat).
@@ -106,7 +106,7 @@ export default function AuditPage({ page, user, action, from, to, q }: Props) {
       <div className="card">
         <div className="h2">Who did what and when</div>
         <div className="mut">
-          Sign-ins, changes to people, chat and memory actions, Excel downloads and MCP calls - newest first. The
+          Sign-ins, changes to people, chat actions, Excel downloads and MCP calls - newest first. The
           questions themselves are in each user's History. This log can only be read: nobody can change or delete
           a line. Never holds a password.
         </div>

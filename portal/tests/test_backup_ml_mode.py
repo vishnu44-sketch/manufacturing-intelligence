@@ -250,7 +250,7 @@ def test_the_backup_request_of_the_pairs_question(monkeypatch, ml_gold, user, wi
 
 def test_for_backup_swaps_in_the_ml_values():
     values = {"schema": "all", "count": 5, "documents": "a\n\n---\n\nb\n\n---\n\nc", "today": "t",
-              "preferences": "", "earlier": "E", "question": "q"}
+              "earlier": "E", "question": "q"}
     backup = {"documents": "ml note", "count": 1, "schema": "picked", "smallest_schema": "picked only"}
     request = LcRequest("sql", values, backup=backup)
 

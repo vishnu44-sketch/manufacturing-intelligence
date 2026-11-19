@@ -72,7 +72,8 @@ class Question(models.Model):
                                         # answered it itself - no SQL, no rows (17-Nov)
         ("refused", "Refused"),    # a request to change data or to bend the rules - no SQL was run
         ("error", "Failed"),       # no working SQL after 3 tries, or a service was down
-        ("memory", "Saved to memory"),  # "Remember that ..." - saved as a UserMemory, no SQL and no AI call
+        ("memory", "Saved to memory"),  # old "Remember that ..." rows only (user memory removed 19-Nov): kept so
+                                        # they still display; nothing new is saved with it
     ]
 
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE,
@@ -134,10 +135,11 @@ class Question(models.Model):
         return "-" if self.total_tokens is None else f"{self.total_tokens:,}"
 
 
+# 19-Nov: the user memory feature was removed (no code reads or writes this model any more); the model is kept
+# only so no data or table is dropped - removing it (and its table) is a separate later decision.
 class UserMemory(models.Model):
     """One fact a user asked the app to remember (like ChatGPT's "Memory"), e.g. "I only work with export
-    sales". It is used in ALL the user's later chats (portal/user_memory.py); the user sees and deletes
-    them on the Memory page. Saved only when the user says so ("Remember that ...") or adds one there."""
+    sales" - the old Memory page's rows (unused since 19-Nov)."""
 
     MAX_CHARS = 300  # one memory is a short sentence
 

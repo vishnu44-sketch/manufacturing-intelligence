@@ -90,6 +90,7 @@ def test_the_18_nov_no_forecast_answer_is_rewritten_once_with_the_total_forecast
     rewrite = fake.calls[2]
     # the rewrite is the same answer request + the first answer + the exact correction
     assert rewrite[0]["content"] == agent.EXPLAIN_SYSTEM_PROMPT
+    assert "The app already shows the chart or the table right below your answer" in rewrite[0]["content"]
     assert rewrite[1]["content"] == fake.calls[1][1]["content"]
     assert rewrite[2] == {"role": "assistant", "content": NO_FORECAST_ANSWER}
     correction = last_message(rewrite)

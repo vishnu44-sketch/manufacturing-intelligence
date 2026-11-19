@@ -3,7 +3,7 @@ answered by our own code: no AI call, no tokens.
 
 16-Nov: after a right answer (a bar chart of the last 5 months' sales, 5 rows) the user asked "is that above answer
 is correct". It went to the SQL step like every message, the AI replied NO_SQL and the user got "NOT A COMPANY DATA
-QUESTION" - for 6,735 tokens. Now such a message is found by rules (like user_memory.memory_fact) and answered here:
+QUESTION" - for 6,735 tokens. Now such a message is found by rules (no AI call) and answered here:
 - check ("is that correct", "are you sure", "double check", "can you confirm" ...): the earlier answer's saved SQL
   runs again, read-only (sql_guard.check_sql + warehouse.run_select - the same SQL the History page re-runs; no new
   SQL is ever written). The reply says whether the rows count is the same as before and whether every number of the

@@ -2,8 +2,8 @@
 
 Written: sign-in, failed sign-in (the name tried, never the password) and sign-out; people added or changed
 (which fields - never a password or its hash), switched on / off, their password reset (only the fact) and
-their admin rights; a chat renamed, removed, restored or deleted; a question edited or asked again; memories
-added or deleted; an Excel download; the MCP tools (run_sql with its SQL, the searches with their question).
+their admin rights; a chat renamed, removed, restored or deleted; a question edited or asked again; an Excel
+download; the MCP tools (run_sql with its SQL, the searches with their question).
 Not written: page views and the questions themselves - the Question table already keeps every question.
 
 record() never breaks the request: when the line cannot be written it logs a warning and goes on.

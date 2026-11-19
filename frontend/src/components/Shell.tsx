@@ -1,14 +1,14 @@
 // The frame of every page: a top bar across the window (the "MI" mark and the product name on the left; on the
 // right "New chat" (on ML Insights and the ML Dashboard a new ML chat on ML Insights, else a new Assistant chat), "History", the dark-mode button and the user's round badge, which opens a small menu with
 // the name, the role and "Sign out"), and under it the light menu on the left, in groups: Home (Home, Assistant),
-// Intelligence (Knowledge graph, ML Insights, ML Dashboard), Tools (History, Memory) and - for staff only - Administration (Users,
+// Intelligence (Knowledge graph, ML Insights, ML Dashboard), Tools (History) and - for staff only - Administration (Users,
 // Documents, Data, SQL, Audit). The page it is on is a filled pill. The browser tab shows "<page> · SS Manufacturing".
 // Above the page is a row with its title (a page can go without it: header={false}, as Home and the Assistant do).
 // The « button under the menu makes it small (icons only, the name on hover) on every page; » opens it again. The
 // choice is kept in this browser (localStorage). On a phone the menu is a drawer, opened by the ☰ button in the top bar.
 // Colours are the names of src/tailwind.css (light and dark); the layout is in shell.css.
 import {
-  Brain, ChevronsLeft, ChevronsRight, Clock, Database, FileText, History, House, LayoutDashboard, Lightbulb, LogOut, type LucideIcon, Menu,
+  ChevronsLeft, ChevronsRight, Clock, Database, FileText, History, House, LayoutDashboard, Lightbulb, LogOut, type LucideIcon, Menu,
   MessageSquareText, Moon, Network, Plus, ShieldCheck, SquareTerminal, Sun, Users,
 } from 'lucide-react'
 import { type ReactNode, useEffect, useState } from 'react'
@@ -21,7 +21,7 @@ import BrandMark from './BrandMark'
 import { Popover, PopoverContent, PopoverTrigger } from './ui/popover'
 import './shell.css'
 
-export type MenuItem = 'home' | 'ask' | 'history' | 'memory' | 'graph' | 'insights' | 'mldashboard' | 'users' | 'documents' | 'data' | 'sql' | 'audit' | ''
+export type MenuItem = 'home' | 'ask' | 'history' | 'graph' | 'insights' | 'mldashboard' | 'users' | 'documents' | 'data' | 'sql' | 'audit' | ''
 
 /** A time as the clock shows it, in India time: "Friday, 06 November 2026 · 10:56 AM IST". */
 export function istText(at: Date): string {
@@ -63,7 +63,6 @@ const MENU: Group[] = [
   ] },
   { name: 'Tools', entries: [
     { to: '/history', item: 'history', name: 'History', icon: History },
-    { to: '/memory', item: 'memory', name: 'Memory', icon: Brain },
   ] },
   { name: 'Administration', staffOnly: true, entries: [
     { to: '/users', item: 'users', name: 'Users', icon: Users },

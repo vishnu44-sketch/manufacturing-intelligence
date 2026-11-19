@@ -95,8 +95,7 @@ def test_the_rewrite_keeps_the_number_of_periods_and_the_customer_of_a_chart_fol
 
 
 def test_the_new_rules_reach_langchain_and_the_mcp_server():
-    system = prompts.SQL_PROMPT.format_messages(schema="s", count=1, documents="d", today="05-Nov-2026",
-                                                preferences="", earlier="", question="q")[0].content
+    system = prompts.SQL_PROMPT.format_messages(schema="s", count=1, documents="d", today="05-Nov-2026", earlier="", question="q")[0].content
     assert "17. dim_calendar has ONE ROW PER DAY." in system
     assert "17. dim_calendar has ONE ROW PER DAY." in mcp_server.SQL_RULES
     assert 'For "past / last months" name the months used' in mcp_server.ANSWER_RULES

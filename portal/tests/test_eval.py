@@ -133,9 +133,8 @@ def results_dir(tmp_path, monkeypatch):
 def test_a_run_asks_grades_and_adds_a_score_line(results_dir, truth, monkeypatch, staff):
     asked = []
 
-    def fake_ask(question, user, context=None, use_memories=True, mode="", model=""):
+    def fake_ask(question, user, context=None, mode="", model=""):
         asked.append((question, len(context or [])))
-        assert use_memories is False                          # the user's saved memories never reach the eval
         status = "refused" if question.startswith("delete") else "ok"
         return agent.AskResult(text=question, status=status, answer="so far, before gst", model="openai/gpt-oss-120b")
     monkeypatch.setattr(agent, "ask", fake_ask)
@@ -162,7 +161,7 @@ def test_a_run_stops_before_the_token_cap(results_dir, truth, monkeypatch, staff
     use_fake_ai(monkeypatch, [("Top customers in Sep 2026?", 7_000)] * 5)   # every call 'costs' 7,000 tokens
 
     # one AI call through LangChain, like the agent makes
-    def ask_one_call(question, user, context=None, use_memories=True, mode="", model=""):
+    def ask_one_call(question, user, context=None, mode="", model=""):
         lc_calls.chat(LcRequest("rewrite", {"earlier": "1. Q (latest)", "question": question}), 100, "low")
         return agent.AskResult(text=question, status="ok")
     monkeypatch.setattr(agent, "ask", ask_one_call)
@@ -184,7 +183,7 @@ def test_a_run_never_spends_the_other_models_tokens(results_dir, truth, monkeypa
     fake = use_fake_ai(monkeypatch, [("Top customers in Sep 2026?", 7_000)])
     refused = []
 
-    def ask_both(question, user, context=None, use_memories=True, mode="", model=""):
+    def ask_both(question, user, context=None, mode="", model=""):
         request = LcRequest("rewrite", {"earlier": "1. Q (latest)", "question": question})
         try:
             lc_calls.chat(request, 100, "low", "qwen/qwen3.8-27b")
@@ -217,7 +216,7 @@ def test_memory_store_searches_the_docs_in_a_store_in_memory(results_dir, truth,
     monkeypatch.setattr(vectorstore, "get_embeddings", lambda: LetterEmbeddings())
     search_before, found = agent.search, []
 
-    def ask_search(question, user, context=None, use_memories=True, mode="", model=""):
+    def ask_search(question, user, context=None, mode="", model=""):
         found.extend(agent.search(question, top_k=3))
         return agent.AskResult(text=question, status="ok")
     monkeypatch.setattr(agent, "ask", ask_search)
@@ -234,7 +233,7 @@ def test_memory_store_searches_the_docs_in_a_store_in_memory(results_dir, truth,
 def test_nothing_of_a_run_stays_in_history(results_dir, truth, monkeypatch, staff):
     from portal.models import Question
 
-    def ask_and_save(question, user, context=None, use_memories=True, mode="", model=""):
+    def ask_and_save(question, user, context=None, mode="", model=""):
         Question.objects.create(user=user, text=question)
         return agent.AskResult(text=question, status="ok")
     monkeypatch.setattr(agent, "ask", ask_and_save)
@@ -255,7 +254,7 @@ def test_model_choice_is_passed_to_every_question(results_dir, truth, monkeypatc
     fake = use_fake_ai(monkeypatch, [("Top customers in Sep 2026?", 3_000)])
     asked, refused = [], []
 
-    def ask_second(question, user, context=None, use_memories=True, mode="", model=""):
+    def ask_second(question, user, context=None, mode="", model=""):
         asked.append((question, mode, model, len(context or [])))
         request = LcRequest("rewrite", {"earlier": "1. Q (latest)", "question": question})
         try:
@@ -287,7 +286,7 @@ def test_main_and_backup_are_the_groq_models(results_dir, truth, monkeypatch, st
     monkeypatch.setenv("GROQ_FALLBACK_MODEL", "qwen/qwen3.8-27b")
     chosen = []
 
-    def ask_one(question, user, context=None, use_memories=True, mode="", model=""):
+    def ask_one(question, user, context=None, mode="", model=""):
         chosen.append(model)
         return agent.AskResult(text=question, status="ok")
     monkeypatch.setattr(agent, "ask", ask_one)

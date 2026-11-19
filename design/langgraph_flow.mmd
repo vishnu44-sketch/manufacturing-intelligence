@@ -5,7 +5,6 @@ config:
 ---
 graph TD;
 	__start__([<p>__start__</p>]):::first
-	load_memories(load_memories)
 	rewrite(rewrite)
 	route(route)
 	answer_from_documents(answer_from_documents)
@@ -22,7 +21,8 @@ graph TD;
 	documents_part(documents_part)
 	general_answer(general_answer)
 	__end__([<p>__end__</p>]):::last
-	__start__ --> load_memories;
+	__start__ -. &nbsp;in a chat&nbsp; .-> rewrite;
+	__start__ -. &nbsp;no chat&nbsp; .-> route;
 	check_names -. &nbsp;name not found&nbsp; .-> __end__;
 	check_names -. &nbsp;name not found (both)&nbsp; .-> documents_part;
 	check_names -.-> explain;
@@ -33,8 +33,6 @@ graph TD;
 	failed -. &nbsp;done&nbsp; .-> __end__;
 	failed -. &nbsp;done (both)&nbsp; .-> documents_part;
 	keep_first_answer --> explain;
-	load_memories -. &nbsp;in a chat&nbsp; .-> rewrite;
-	load_memories -. &nbsp;no chat&nbsp; .-> route;
 	pick_schema --> write_sql;
 	retry --> write_sql;
 	rewrite --> route;

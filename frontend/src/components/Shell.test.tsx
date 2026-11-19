@@ -64,7 +64,7 @@ describe('Shell: the menu (05-Nov)', () => {
     expect(names('Home')).toEqual(['Home', 'Assistant'])
     expect(names('Intelligence')).toEqual(['Knowledge graph', 'ML Insights', 'ML Dashboard'])   // 18-Nov: ML Dashboard
     expect(menu().getByRole('link', { name: 'ML Dashboard' })).toHaveAttribute('href', '/ml-dashboard')
-    expect(names('Tools')).toEqual(['History', 'Memory'])
+    expect(names('Tools')).toEqual(['History'])   // 19-Nov: no Memory page
     expect(menu().getAllByRole('link').filter((a) => a.getAttribute('aria-current') === 'page').map((a) => a.textContent)).toEqual(['History'])
     first.unmount()
 
@@ -177,8 +177,8 @@ describe('Shell: the phone drawer (12-Nov)', () => {
     expect(shell).not.toHaveClass('mi-shell-drawer-open')
 
     fireEvent.click(burger)
-    fireEvent.click(menu().getByRole('link', { name: 'Memory' }))
-    expect(window.location.pathname).toBe('/memory')
+    fireEvent.click(menu().getByRole('link', { name: 'Knowledge graph' }))
+    expect(window.location.pathname).toBe('/graph')
     expect(shell).not.toHaveClass('mi-shell-drawer-open')
   })
 })

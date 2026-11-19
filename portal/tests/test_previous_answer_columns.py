@@ -67,7 +67,7 @@ def test_the_column_question_gets_the_previous_query_and_is_explained_not_no_dat
 
     result = agent.ask(COLUMN_QUESTION, user, context=ChatHistory.for_chat(chat))
 
-    assert steps == ["load_memories", "rewrite", "route", "search_notes", "pick_schema", "write_sql", "general_answer"]
+    assert steps == ["rewrite", "route", "search_notes", "pick_schema", "write_sql", "general_answer"]
     assert result.status == "general" and result.answer == MEANING and mysql.calls == []
     rewrite, sql, general = fake.calls
     # the rewrite sees the query, so it can write the column out
