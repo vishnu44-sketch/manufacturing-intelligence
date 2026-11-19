@@ -7,8 +7,9 @@ staff only (403), and so is the Audit log (read-only: there is no way to change 
 The SQL page (sql_page.py) runs only one checked SELECT on ss_gold, as the read-only MySQL user; its saved
 queries are only text in the app's own database (only the owner changes one; shared ones are seen by staff).
 Who did what is written to the audit log (audit.py): sign-ins, people, chat actions, Excel
-downloads - never a password. The Knowledge graph (every user, GET only) reads the SS Manufacturing data live and
-read-only, with no AI call (knowledge_graph.py); so does the Home page (home.py). It never answers with a redirect or an HTML page: without a
+downloads - never a password. The Knowledge graph (every user) reads the SS Manufacturing data live and
+read-only, with no AI call (knowledge_graph.py) - only its "Explain this" button (POST, graph_explain.py) asks the AI,
+on a click; the Home page (home.py) reads the data with no AI call too. It never answers with a redirect or an HTML page: without a
 sign-in every endpoint says 401 in JSON. The work itself is in services.py. Never sent: the admin-only `error` details of a
 question, and any password or password hash.
 """
@@ -33,7 +34,7 @@ from django.utils.text import Truncator
 from django.views.decorators.cache import never_cache
 from django.views.decorators.csrf import csrf_exempt
 
-from . import audit, charts, home, insights, knowledge_graph, services, sql_page
+from . import audit, charts, graph_explain, home, insights, knowledge_graph, services, sql_page
 from .lc import llm
 from .models import AuditLog, Question, SavedQuery
 from .rag import agent, warehouse
@@ -1175,6 +1176,24 @@ def graph_similar(request):
     """?customer_id=16&fy=2627&limit=10 -> the customers who buy the most of the same products."""
     return _graph_reply(lambda: knowledge_graph.similar(request.GET.get("customer_id", ""), request.GET.get("fy", ""),
                                                         request.GET.get("limit")))
+
+
+@api_view(["POST"])
+def graph_explain_node(request):
+    """{"type": "customer", "id": "16", "fy": "2627"} -> {text, model, model_label, model_note, tokens, cached, node,
+    period}: 3-5 sentences the AI writes about one node, only on the user's click (uses AI tokens; the same node again
+    within 10 minutes: the kept reply, no tokens). The server reads the node's facts itself (graph_explain.py) - only
+    the type, id and period are taken from the browser. 400 bad type / id / FY, 404 unknown node, 503 when MySQL or
+    no AI model answers (a friendly message)."""
+    data = _body(request)
+    if data is None:
+        return _error(400, "Send a JSON object.")
+
+    try:
+        return _graph_reply(lambda: graph_explain.explain(str(data.get("type") or ""), str(data.get("id") or ""),
+                                                          str(data.get("fy") or "")))
+    except graph_explain.ExplainError as exc:  # no AI model answered
+        return _error(exc.status, str(exc))
 
 
 @csrf_exempt

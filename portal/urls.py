@@ -42,6 +42,7 @@ urlpatterns = [
     path("api/graph/search", api.graph_search, name="api_graph_search"),  # the Knowledge graph (every user)
     path("api/graph/node", api.graph_node, name="api_graph_node"),
     path("api/graph/similar", api.graph_similar, name="api_graph_similar"),
+    path("api/graph/explain", api.graph_explain_node, name="api_graph_explain"),  # AI sentences on a click (tokens)
     re_path(r"^api(?:/(?P<rest>.*))?$", api.not_found),  # any other API address: JSON 404
     # every other address (not the admin, not a static file) is a page of the React app
     path("", views.react_app, name="react_app"),

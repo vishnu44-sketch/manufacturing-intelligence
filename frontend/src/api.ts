@@ -3,7 +3,7 @@
 // the app then shows its Login page. A 403 on a staff page means "no access".
 import type {
   AiChartReply, AskMode, AskResponse, AuditData, AuditFilters, ChatDetail, ChatList, ChatSummary, DataTables, DocumentsData, EditResponse,
-  GraphNodeReply, GraphSearchReply, GraphSimilarReply, HistoryMode, HistoryPage, HomeData, InsightsData, Me, ModelList, PeopleList, PersonReply, Rows, SavedAnswer, SqlResult, SqlSavedList, SqlSavedQuery, SqlSchema,
+  GraphExplainReply, GraphNodeReply, GraphSearchReply, GraphSimilarReply, HistoryMode, HistoryPage, HomeData, InsightsData, Me, ModelList, PeopleList, PersonReply, Rows, SavedAnswer, SqlResult, SqlSavedList, SqlSavedQuery, SqlSchema,
   StreamEvent,
 } from './types'
 
@@ -263,6 +263,9 @@ export const api = {
     request<GraphNodeReply>('GET', `/api/graph/node${query({ type, id, fy, limit })}`),
   graphSimilar: (customerId: string, fy: string, limit?: number) =>
     request<GraphSimilarReply>('GET', `/api/graph/similar${query({ customer_id: customerId, fy, limit })}`),
+  // "Explain this": the AI writes a few sentences about one node from the server's facts - uses AI tokens
+  graphExplain: (type: string, id: string, fy: string) =>
+    request<GraphExplainReply>('POST', '/api/graph/explain', { type, id, fy }),
   // the SQL page (staff): the ss_gold tables and columns, one read-only SELECT, and its rows as Excel
   sqlSchema: () => request<SqlSchema>('GET', '/api/sql/schema'),
   sql: (sql: string) => request<SqlResult>('POST', '/api/sql', { sql }),

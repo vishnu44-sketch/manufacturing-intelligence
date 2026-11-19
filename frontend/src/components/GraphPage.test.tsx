@@ -11,10 +11,10 @@ import { buildGraphOption, cardModeFor, edgeWidth, FULL_CARDS, MAX_SIZE, MIN_SIZ
 import { TYPE_ICONS } from '../charts/graphLook'
 import { parseRoute } from '../router'
 import { charts, lastChart } from '../test/fakeEcharts'
-import { fakeFetch } from '../test/fakeFetch'
+import { callsTo, fakeFetch } from '../test/fakeFetch'
 import { ASHA, renderAt } from '../test/render'
-import type { GraphEdge, GraphNode, GraphNodeReply, GraphSimilarReply } from '../types'
-import GraphPage, { AT_MAX, MAX_HITS, SEARCH_HINT } from './GraphPage'
+import type { GraphEdge, GraphExplainReply, GraphNode, GraphNodeReply, GraphSimilarReply } from '../types'
+import GraphPage, { AT_MAX, EXPLAIN_FAILED, MAX_HITS, SEARCH_HINT } from './GraphPage'
 import { EMPTY_GRAPH, mergeGraph } from './graphData'
 
 vi.mock('../charts/echarts', () => import('../test/fakeEcharts'))
@@ -782,6 +782,143 @@ describe('GraphPage goes into a node and back (04-Nov: "double-click opens it, a
     await drawAurora()
     await waitFor(() => expect(nodeIds()).toEqual(AURORA_ONLY))
     expect(within(screen.getByRole('navigation', { name: 'Path' })).queryByRole('button', { name: /Aurora|Back/ })).not.toBeInTheDocument()
+  })
+})
+
+describe('GraphPage "Explain this" (19-Nov): the AI writes a few sentences only on a click', () => {
+  const EXPLAIN_URL = '/api/graph/explain'
+  const AURORA_TEXT: GraphExplainReply = {
+    text: 'Aurora Hydraulics Private Limited bought INR 2.91 Crore up to 04-Nov-2026, mostly hydraulic motors.',
+    model: 'openai/gpt-oss-120b', model_label: 'Groq gpt-oss-120b', model_note: '', tokens: 640, cached: false,
+    node: 'customer:3680', period: 'All data up to today',
+  }
+  const MOTOR_TEXT: GraphExplainReply = { ...AURORA_TEXT, text: 'The motor sells about INR 90 lakh.', node: 'product:45',
+    model_label: 'Groq gpt-oss-120b (2nd key)', model_note: 'the second Groq key answered', tokens: 410 }
+
+  /** The explain reply of the node the page asked about. */
+  function explainReplies(extra = {}) {
+    return replies({
+      [EXPLAIN_URL]: (init?: RequestInit) => {
+        const asked = JSON.parse(String(init?.body)) as { type: string }
+        return { body: asked.type === 'product' ? MOTOR_TEXT : AURORA_TEXT }
+      },
+      ...extra,
+    })
+  }
+
+  /** Holds the explain replies until the function it gives back is called (to see the wait). */
+  function holdExplain(fetch: ReturnType<typeof fakeFetch>) {
+    let release!: () => void
+    const gate = new Promise<void>((done) => { release = done })
+    const inner = fetch.getMockImplementation()!
+    fetch.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url === EXPLAIN_URL) await gate
+      return inner(url, init)
+    })
+    return () => release()
+  }
+
+  const panel = () => screen.getByRole('complementary', { name: 'Node details' })
+
+  it('asks nothing before the click; then shows the wait, and the text with the model', async () => {
+    const fetch = fakeFetch(explainReplies())
+    const release = holdExplain(fetch)
+    renderAt('/graph', <GraphPage />)
+    await drawAurora()
+
+    const button = within(panel()).getByRole('button', { name: 'Explain this' })
+    expect(callsTo(fetch, EXPLAIN_URL)).toEqual([])                                // never by itself
+    expect(within(panel()).queryByRole('region', { name: 'AI explanation' })).not.toBeInTheDocument()
+
+    fireEvent.click(button)
+
+    expect(await within(panel()).findByText('The AI is writing about Aurora Hydraulics Private Limited…')).toBeInTheDocument()
+    expect(within(panel()).getByRole('button', { name: 'Explain this' })).toBeDisabled()
+    release()
+    const card = await within(panel()).findByRole('region', { name: 'AI explanation' })
+    expect(within(card).getByText(AURORA_TEXT.text)).toBeInTheDocument()
+    expect(within(card).getByText('AI · Groq gpt-oss-120b · 640 tokens')).toBeInTheDocument()
+    expect(within(panel()).queryByRole('button', { name: 'Explain this' })).not.toBeInTheDocument()
+    expect(within(panel()).queryByText(/The AI is writing/)).not.toBeInTheDocument()
+    expect(callsTo(fetch, EXPLAIN_URL)).toEqual([{ type: 'customer', id: '3680', fy: '' }])   // only the node, no numbers
+  })
+
+  it("shows the server's friendly error, and the button stays to try again", async () => {
+    const busy = 'The AI service is busy right now (rate limit). Please wait a minute and ask again.'
+    const fetch = fakeFetch(explainReplies({ [EXPLAIN_URL]: { status: 503, body: { detail: busy } } }))
+    renderAt('/graph', <GraphPage />)
+    await drawAurora()
+
+    fireEvent.click(within(panel()).getByRole('button', { name: 'Explain this' }))
+
+    expect(await within(panel()).findByRole('alert')).toHaveTextContent(busy)
+    expect(within(panel()).getByRole('button', { name: 'Explain this' })).toBeEnabled()
+    expect(within(panel()).queryByRole('region', { name: 'AI explanation' })).not.toBeInTheDocument()
+    expect(callsTo(fetch, EXPLAIN_URL)).toHaveLength(1)
+  })
+
+  it("a server that cannot be reached gives the page's own friendly line", async () => {
+    const fetch = fakeFetch(explainReplies())
+    const inner = fetch.getMockImplementation()!
+    fetch.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url === EXPLAIN_URL) throw new TypeError('Failed to fetch')
+      return inner(url, init)
+    })
+    renderAt('/graph', <GraphPage />)
+    await drawAurora()
+
+    fireEvent.click(within(panel()).getByRole('button', { name: 'Explain this' }))
+
+    expect(await within(panel()).findByRole('alert')).toHaveTextContent(/cannot be reached|could not be made/)
+    expect(EXPLAIN_FAILED).toBe('The explanation could not be made - please try again.')
+  })
+
+  it("remembers each node's text: going back to a node (or to the page) asks no AI again", async () => {
+    const fetch = fakeFetch(explainReplies())
+    const first = renderAt('/graph', <GraphPage />)
+    await drawAurora()
+    fireEvent.click(within(panel()).getByRole('button', { name: 'Explain this' }))
+    await within(panel()).findByText(AURORA_TEXT.text)
+
+    handler('click')({ dataType: 'node', data: { id: 'product:45' } })              // another node: its own button
+    expect(await within(panel()).findByText('INR 90,00,000.00')).toBeInTheDocument()
+    expect(within(panel()).queryByText(AURORA_TEXT.text)).not.toBeInTheDocument()
+    fireEvent.click(within(panel()).getByRole('button', { name: 'Explain this' }))
+    const card = await within(panel()).findByRole('region', { name: 'AI explanation' })
+    expect(within(card).getByText(MOTOR_TEXT.text)).toBeInTheDocument()
+    expect(within(card).getByText('AI · Groq gpt-oss-120b (2nd key) · the second Groq key answered · 410 tokens')).toBeInTheDocument()
+
+    handler('click')({ dataType: 'node', data: { id: 'customer:3680' } })           // back to Aurora
+    expect(await within(panel()).findByText(AURORA_TEXT.text)).toBeInTheDocument()
+    expect(within(panel()).queryByRole('button', { name: 'Explain this' })).not.toBeInTheDocument()
+
+    first.unmount()                                                                 // another page and back
+    renderAt('/graph', <GraphPage />)
+    expect(await within(panel()).findByText(AURORA_TEXT.text)).toBeInTheDocument()
+    expect(callsTo(fetch, EXPLAIN_URL)).toEqual([{ type: 'customer', id: '3680', fy: '' },
+      { type: 'product', id: '45', fy: '' }])                                      // one call per node, no more
+  })
+
+  it('another FY is another explanation, and Reset forgets them', async () => {
+    const fetch = fakeFetch(explainReplies({
+      '/api/graph/node?type=customer&id=3680&fy=2526&limit=25': { body: { ...AURORA_REPLY, period: PERIOD_2526 } },
+    }))
+    renderAt('/graph', <GraphPage />)
+    await drawAurora()
+    fireEvent.click(within(panel()).getByRole('button', { name: 'Explain this' }))
+    await within(panel()).findByText(AURORA_TEXT.text)
+
+    fireEvent.change(screen.getByLabelText('Period'), { target: { value: '2526' } })
+    await within(panel()).findByText('FY 2025-26 (01-Apr-2025 to 31-Mar-2026)')
+    fireEvent.click(within(panel()).getByRole('button', { name: 'Explain this' }))
+    await within(panel()).findByText(AURORA_TEXT.text)
+    expect(callsTo(fetch, EXPLAIN_URL)).toEqual([{ type: 'customer', id: '3680', fy: '' },
+      { type: 'customer', id: '3680', fy: '2526' }])
+
+    fireEvent.click(screen.getByRole('button', { name: 'Reset' }))
+    fireEvent.change(screen.getByLabelText('Period'), { target: { value: '' } })
+    await drawAurora()
+    expect(await within(panel()).findByRole('button', { name: 'Explain this' })).toBeEnabled()  // forgotten
   })
 })
 

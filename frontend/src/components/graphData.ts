@@ -2,7 +2,7 @@
 // new node's neighbourhood is merged in (no duplicates, at most MAX_NODES nodes), and the names and colours of the
 // node and edge types. The node type colours have no red or yellow, and are the same in the light and the dark
 // theme: middle tones that read on a white box and on a dark one.
-import type { GraphEdge, GraphNode, GraphNodeReply, GraphNodeType, GraphPeriod, GraphSimilarReply } from '../types'
+import type { GraphEdge, GraphExplainReply, GraphNode, GraphNodeReply, GraphNodeType, GraphPeriod, GraphSimilarReply } from '../types'
 
 export const MAX_NODES = 150 // more than this is hard to read: the rest is left out with a message
 export const NEIGHBOURS = 25 // the top neighbours of each edge type the API sends
@@ -98,6 +98,8 @@ const SAVE_KEY = 'mi.graphPage.v2' // v2: the path (a v1 page, saved before it, 
 let saved: SavedGraphPage | null | undefined // undefined = not read from sessionStorage yet
 // the API's node replies (`${fy}|${id}`): coming back to the page does not ask for them again
 export const graphReplies = new Map<string, GraphNodeReply>()
+// "Explain this" replies (`${fy}|${id}`): a node explained once is not asked again while the app is open (AI tokens)
+export const graphExplanations = new Map<string, GraphExplainReply>()
 
 /** The page as the user left it, or null. */
 export function loadGraphPage(): SavedGraphPage | null {
@@ -123,8 +125,9 @@ export function saveGraphPage(page: SavedGraphPage | null): void {
   }
 }
 
-/** Forgets the page and its cached replies (Reset, sign-out, a lost sign-in, tests). */
+/** Forgets the page and its cached replies and explanations (Reset, sign-out, a lost sign-in, tests). */
 export function forgetGraphPage(): void {
   saveGraphPage(null)
   graphReplies.clear()
+  graphExplanations.clear()
 }

@@ -12,7 +12,10 @@
 // and the dark theme on its own. Each top-level block has the
 // class "ui-scope" (the small reset of src/tailwind.css); the page returns no wrapper of its own, because
 // .content > * gets a transform animation in app.css and full screen (position: fixed) must not sit inside it.
-import { ArrowRight, ChevronRight, CircleAlert, Info, Network, Search } from 'lucide-react'
+// 19-Nov: "Explain this" in the panel is the page's only AI call - only on a click: the server reads the node's
+// facts itself and the AI writes 3-5 sentences from them (graphExplain); a node explained once is kept for the
+// session (graphData.graphExplanations), so going back to it costs no tokens.
+import { ArrowRight, ChevronRight, CircleAlert, Info, Network, Search, Sparkles } from 'lucide-react'
 import { type KeyboardEvent, type ReactNode, Suspense, lazy, useCallback, useEffect, useRef, useState } from 'react'
 import { Button, buttonVariants } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
@@ -22,11 +25,11 @@ import { Spinner } from '@/components/ui/spinner'
 import { cn } from '@/lib/utils'
 import { AuthError, api, problemText } from '../api'
 import { Link } from '../router'
-import type { GraphNode, GraphNodeReply, GraphPeriod, GraphSimilarReply } from '../types'
+import type { GraphExplainReply, GraphNode, GraphNodeReply, GraphPeriod, GraphSimilarReply } from '../types'
 import { Loading } from './common'
 import {
-  EMPTY_GRAPH, type GraphData, MAX_NODES, NEIGHBOURS, TYPE_COLOURS, TYPE_NAMES, forgetGraphPage, graphReplies,
-  groupTitle, loadGraphPage, mergeGraph, saveGraphPage, splitId,
+  EMPTY_GRAPH, type GraphData, MAX_NODES, NEIGHBOURS, TYPE_COLOURS, TYPE_NAMES, forgetGraphPage, graphExplanations,
+  graphReplies, groupTitle, loadGraphPage, mergeGraph, saveGraphPage, splitId,
 } from './graphData'
 
 const GraphChart = lazy(() => import('../charts/GraphChart'))
@@ -276,6 +279,42 @@ function GraphSearch({ onPick }: { onPick: (node: GraphNode) => void }) {
   )
 }
 
+/** "Explain this" of one node: not asked yet, the AI is writing, its sentences, or a friendly error. */
+export type ExplainState = { state: 'idle' } | { state: 'loading' } | { state: 'done'; reply: GraphExplainReply }
+  | { state: 'failed'; message: string }
+const NOT_EXPLAINED: ExplainState = { state: 'idle' }
+export const EXPLAIN_FAILED = 'The explanation could not be made - please try again.'
+
+/** What the AI wrote about the node (or the wait / the error), under the panel's buttons. */
+function Explanation({ explain, label }: { explain: ExplainState; label: string }) {
+  if (explain.state === 'loading') {
+    return (
+      <div className={cn(HINT, 'mt-2.5')} role="status">
+        <Spinner className="size-3" />The AI is writing about {label}…
+      </div>
+    )
+  }
+  if (explain.state === 'failed') {
+    return (
+      <div className={cn(ERROR_BOX, 'mt-2.5 text-[12.5px]')} role="alert">
+        <CircleAlert aria-hidden="true" className="mt-px size-4 flex-none" />{explain.message}
+      </div>
+    )
+  }
+  if (explain.state !== 'done') return null
+  const { reply } = explain
+  const about = [`AI · ${reply.model_label || reply.model}`, reply.model_note,
+    reply.tokens ? `${reply.tokens.toLocaleString('en-IN')} tokens` : ''].filter(Boolean).join(' · ')
+  return (
+    <Card role="region" aria-label="AI explanation" className="mt-2.5 bg-muted px-3 py-2.5 shadow-none">
+      <p className="m-0 text-[12.5px] leading-relaxed text-body">{reply.text}</p>
+      <div className="mt-1.5 flex items-center gap-1.5 text-[11px] leading-4 text-muted-foreground">
+        <Sparkles aria-hidden="true" className="size-3 flex-none text-primary" />{about}
+      </div>
+    </Card>
+  )
+}
+
 interface PanelProps {
   selected: GraphNode | null
   detail: GraphNodeReply | null
@@ -284,13 +323,16 @@ interface PanelProps {
   inMiddle: boolean // this node is the one in the middle of the graph now
   similar: GraphSimilarReply | null
   similarBusy: boolean
+  explain: ExplainState // "Explain this" of the node shown, in this period
+  onExplain: () => void
   onOpen: () => void
   onSimilar: () => void
   onSelect: (node: GraphNode) => void
 }
 
 /** The details of the selected node: its totals, its top links, and what can be done with it. */
-function Panel({ selected, detail, loading, error, inMiddle, similar, similarBusy, onOpen, onSimilar, onSelect }: PanelProps) {
+function Panel({ selected, detail, loading, error, inMiddle, similar, similarBusy, explain, onExplain, onOpen, onSimilar,
+  onSelect }: PanelProps) {
   if (!selected) {
     return (
       <div className="rounded-lg border border-dashed border-input px-4 py-6 text-center text-[12.5px] leading-relaxed text-muted-foreground">
@@ -332,6 +374,13 @@ function Panel({ selected, detail, loading, error, inMiddle, similar, similarBus
                 {similarBusy && <Spinner />}Similar customers
               </Button>
             )}
+            {explain.state !== 'done' && (
+              // only on a click: the AI writes a few sentences from the server's facts (uses AI tokens)
+              <Button type="button" variant="outline" size="sm" onClick={onExplain} disabled={explain.state === 'loading'}
+                title="The AI explains this node in a few sentences, from its numbers (uses AI tokens)">
+                <Sparkles aria-hidden="true" />Explain this
+              </Button>
+            )}
             {node.ask && (
               // app.css colours every <a> outside a cascade layer: the link's own colours are marked important (!)
               <Link to={`/new?q=${encodeURIComponent(node.ask)}`}
@@ -340,6 +389,7 @@ function Panel({ selected, detail, loading, error, inMiddle, similar, similarBus
               </Link>
             )}
           </div>
+          <Explanation explain={explain} label={node.label} />
           {similar && similar.customer.id === node.id && (
             <LinkGroup title={<>Buys like this customer ({similar.products} products in {similar.period.label})</>}>
               {similar.similar.length ? (
@@ -449,6 +499,9 @@ export default function GraphPage() {
   const [loading, setLoading] = useState(false)
   const [similar, setSimilar] = useState<GraphSimilarReply | null>(saved?.similar ?? null)
   const [similarBusy, setSimilarBusy] = useState(false)
+  // "Explain this" per `${fy}|${id}`: the kept replies come back with the page (no AI call again)
+  const [explains, setExplains] = useState<Record<string, ExplainState>>(() => Object.fromEntries(
+    [...graphExplanations].map(([at, reply]) => [at, { state: 'done', reply } as ExplainState])))
   const [period, setPeriod] = useState<GraphPeriod | null>(saved?.period ?? null)
   const [message, setMessage] = useState(saved?.message ?? '')
   const [error, setError] = useState('')
@@ -582,6 +635,31 @@ export default function GraphPage() {
       .finally(() => setSimilarBusy(false))
   }, [selected, fy, failed, draw])
 
+  /** "Explain this": one AI call for the selected node in this period - never again for a node already explained. */
+  const explainNode = useCallback(() => {
+    if (!selected) return
+    const at = `${fy}|${selected.id}`
+    const kept = graphExplanations.get(at)
+    if (kept) {
+      setExplains((old) => ({ ...old, [at]: { state: 'done', reply: kept } }))
+      return
+    }
+    const set = (state: ExplainState | null) => setExplains((old) => {
+      const next = { ...old }
+      if (state) next[at] = state
+      else delete next[at]
+      return next
+    })
+    set({ state: 'loading' })
+    const [type, key] = splitId(selected.id)
+    api.graphExplain(type, key, fy)
+      .then((reply) => {
+        graphExplanations.set(at, reply)
+        set({ state: 'done', reply })
+      })
+      .catch((err) => set(err instanceof AuthError ? null : { state: 'failed', message: problemText(err, EXPLAIN_FAILED) }))
+  }, [selected, fy])
+
   /** Another FY: the node in the middle drawn again with that year's numbers (the path stays). */
   const changeFy = (year: string) => {
     setFy(year)
@@ -671,6 +749,7 @@ export default function GraphPage() {
     pickNode(null)
     setDetail(null)
     setSimilar(null)
+    setExplains({})
     setPeriod(null)
     setMessage('')
     setError('')
@@ -781,6 +860,7 @@ export default function GraphPage() {
                 full ? 'max-h-[calc(100vh-28px)]' : 'max-h-[700px] max-[1100px]:max-h-none')}>
               <Panel selected={selected} detail={detail} loading={loading} error={detailError}
                 inMiddle={selected?.id === center} similar={similar} similarBusy={similarBusy}
+                explain={(selected && explains[`${fy}|${selected.id}`]) || NOT_EXPLAINED} onExplain={explainNode}
                 onOpen={() => selected && open(selected.id)} onSimilar={showSimilar} onSelect={select} />
             </aside>
           )}
