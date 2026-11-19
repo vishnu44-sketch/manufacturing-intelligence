@@ -182,9 +182,8 @@ class Command(BaseCommand):
                            for c in item.get("context", []) if c in results and results[c]["status"] in ("ok", "nodata")]
                 c0, l0 = len(calls), len(logs)
                 with transaction.atomic():   # nothing of the eval stays in History
-                    # the user's saved memories would change the prompts: the eval checks the plain app;
                     # model = the one chosen model (as an admin's choice); mode 'ml' = an ML Insights chat
-                    result = agent.ask(item["question"], user, context=context, use_memories=False,
+                    result = agent.ask(item["question"], user, context=context,
                                        mode=item.get("mode", ""), model=entry.id)
                     transaction.set_rollback(True)
                 tokens = sum(call["total"] or 0 for call in calls[c0:])

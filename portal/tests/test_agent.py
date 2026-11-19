@@ -2245,9 +2245,13 @@ def test_a_follow_up_is_built_on_the_latest_question(monkeypatch, user):
 
 def test_explain_prompt_never_describes_a_chart():
     """03-Nov: "give me that bar chart" got "In the bar chart of net sales ..." - the AI never sees the chart;
-    the React page draws it from the rows."""
-    assert "Never describe or mention a chart, graph, plot or picture" in agent.EXPLAIN_SYSTEM_PROMPT
-    assert "the app draws the chart from the rows itself" in agent.EXPLAIN_SYSTEM_PROMPT
+    the React page draws it from the rows. 19-Nov: "These six points can be plotted on a line graph" / "The line
+    graph would plot ..." - the chart (or table) is already shown below the answer."""
+    prompt = agent.EXPLAIN_SYSTEM_PROMPT
+    assert ("The app already shows the chart or the table right below your answer, drawn from the rows: never write "
+            "that the data \"can be plotted\", \"would plot\" or that a chart could be made, and never describe how "
+            "to draw it. If you mention it at all, only as e.g. \"the chart below shows ...\".") in prompt
+    assert "Never describe or mention a chart" not in prompt
 
 
 def test_explain_prompt_asks_for_every_number_of_a_one_row_summary():
@@ -2436,12 +2440,11 @@ def test_the_router_and_document_answer_are_langchain_chains():
     from portal.lc import calls, chains
     assert calls.CHAINS["route"] is chains.route_chain and calls.CHAINS["docs"] is chains.docs_chain
     route = prompts.ROUTE_PROMPT.format_messages(documents="- A, page 1: text", question="q")
-    docs = prompts.DOCS_PROMPT.format_messages(documents="[1] A, page 1\ntext", question="q", understood="",
-                                               preferences="")
+    docs = prompts.DOCS_PROMPT.format_messages(documents="[1] A, page 1\ntext", question="q", understood="")
     assert [m.content for m in route] == [agent.ROUTE_SYSTEM_PROMPT, agent.ROUTE_REQUEST.format(
         documents="- A, page 1: text", question="q")]
     assert [m.content for m in docs] == [agent.DOCS_SYSTEM_PROMPT, agent.DOCS_REQUEST.format(
-        documents="[1] A, page 1\ntext", question="q", understood="", preferences="")]
+        documents="[1] A, page 1\ntext", question="q", understood="")]
 
 
 # ---------- charts are not data changes (05-Nov: "Create a line chart of last month's sales" got NO_SQL) ----------

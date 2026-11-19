@@ -170,29 +170,20 @@ def test_an_excel_download_is_recorded(client, user, mysql):
     assert line.target == f"question {saved.pk}" and line.details == {"rows": 2}
 
 
-# ---------- memories ----------
+# ---------- memories (the user memory was removed 19-Nov) ----------
 
-def test_memory_actions_are_recorded(client, user):
-    client.force_login(user)
-    first = api_post(client, "api_memories", {"text": "I only work with export sales"}).json()["memory"]
-    api_post(client, "api_memories", {"text": "Always round to whole rupees"})
-    api_post(client, "api_memory_delete", None, first["id"])
-    api_post(client, "api_memories_delete_all")
-    api_post(client, "api_memories_delete_all")             # nothing left: no line
+def test_old_memory_lines_still_show_with_their_words_and_no_new_ones_are_written(client, staff, fake_ask, mysql):
+    make_lines(1, action="memory_added", text="I only work with export sales")   # a line from before 19-Nov
+    client.force_login(staff)
 
-    added = lines("memory_added")
-    assert [line.details["text"] for line in added] == ["I only work with export sales", "Always round to whole rupees"]
-    assert only("memory_deleted").target == f"memory {first['id']}"
-    assert only("memory_delete_all").details == {"deleted": 1}
+    page = api_get(client, "api_audit", data={"action": "memory_added"}).json()
 
-
-def test_a_memory_saved_by_a_question_is_recorded_with_the_question(client, user):
-    client.force_login(user)                                # the real agent: a memory needs no AI call
-    card = api_post(client, "api_ask", {"question": "Remember that I only work with export sales",
-                                        "chat_id": None}).json()["card"]
-
-    line = only("memory_added")
-    assert line.details == {"text": "I only work with export sales", "question": card["id"]}
+    assert page["count"] == 1 and page["lines"][0]["action_text"] == "Memory added"
+    assert {"code": "memory_delete_all", "text": "All memories deleted"} in page["actions"]
+    assert api_post(client, "api_ask", {"question": "Remember that I only work with export sales",
+                                        "chat_id": None}).status_code == 200
+    assert fake_ask == ["Remember that I only work with export sales"]          # asked like any other message
+    assert AuditLog.objects.filter(action__startswith="memory").count() == 1
 
 
 # ---------- the helper itself ----------

@@ -5,7 +5,7 @@
 //   /new[?q=..]  the empty new-chat screen (box filled)      /users              Users (staff)
 //   /c/<id>      one chat                                     /documents[?...]    Documents (staff)
 //   /q/<id>      one saved answer with its rows              /data               Data (staff)
-//   /login       the sign-in page                             /memory             Memory (every user)
+//   /login       the sign-in page
 //   /graph       the Knowledge graph (every user)            /sql                SQL (staff)
 //   /insights[?chat=<id>]  ML Insights: the ML question box and its chat (every user); ?chat= opens an ML chat,
 //                          /insights alone the latest ML chat (none yet: the empty box), ?new=1 a new, empty ML chat,
@@ -29,7 +29,6 @@ export type Route =
   | { kind: 'users' }
   | { kind: 'data' }
   | { kind: 'sql' }
-  | { kind: 'memory' }
   | { kind: 'graph' }
   // fresh: ?new=1, a new ML chat (not the latest one); ask: ?ask=, a question to ask in it at once ('' none)
   | { kind: 'insights'; chat: number | null; fresh: boolean; ask: string }
@@ -56,7 +55,6 @@ export function parseRoute(pathname: string, search = ''): Route {
   if (rest === '/users') return { kind: 'users' }
   if (rest === '/data') return { kind: 'data' }
   if (rest === '/sql') return { kind: 'sql' }
-  if (rest === '/memory') return { kind: 'memory' }
   if (rest === '/graph') return { kind: 'graph' }
   if (rest === '/insights') {
     const chat = Number(params.get('chat')) || null

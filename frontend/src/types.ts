@@ -49,6 +49,7 @@ export interface Source {
 }
 
 // 'general' = a question not about the company ("what is GST?"): the AI answers it itself - no SQL, rows or Excel
+// 'memory' = only old "Remember that ..." answers (the user memory was removed 19-Nov; nothing new gets it)
 export type Status = 'ok' | 'docs' | 'nodata' | 'refused' | 'error' | 'memory' | 'general'
 
 // one saved question as the answer card shows it
@@ -327,26 +328,6 @@ export interface PeopleList {
 
 export interface PersonReply {
   person: Person
-  message: string
-}
-
-// one fact the user asked the app to remember (used in all his later chats)
-export interface Memory {
-  id: number
-  text: string
-  question_id: number | null // the question that said "Remember ..." (null = added on the Memory page)
-  created_at: string
-  created_text: string // '03 Nov 2026 10:15 AM' (India time)
-}
-
-export interface MemoryList {
-  memories: Memory[] // newest first
-  limit: number // at most this many per user
-  max_chars: number
-}
-
-export interface MemoryReply {
-  memory: Memory
   message: string
 }
 

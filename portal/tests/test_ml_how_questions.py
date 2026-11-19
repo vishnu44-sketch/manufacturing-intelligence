@@ -85,7 +85,7 @@ def test_the_routers_general_does_the_same(monkeypatch, mysql, user, steps):
 
     result = agent.ask("how do you calculate risk", user)
 
-    assert steps == ["load_memories", "route", "general_answer"]
+    assert steps == ["route", "general_answer"]
     assert result.status == "general" and result.answer == TRAINED
     assert general_request(fake) == f"how do you calculate risk\n\n{ML_BLOCK}"
     assert len(calls) == 1                                               # the facts query only
@@ -103,7 +103,7 @@ def test_the_follow_up_is_written_out_and_reaches_the_sql_writer_and_the_facts(m
 
     result = agent.ask(QUESTION, user, context=ChatHistory.for_chat(forecast_chat(user)))
 
-    assert steps == ["load_memories", "rewrite"] + DATA_START[1:] + ["write_sql", "general_answer"]
+    assert steps == ["rewrite"] + DATA_START + ["write_sql", "general_answer"]
     assert result.status == "general" and result.understood_as == UNDERSTOOD
     assert FORECAST_QUESTION in fake.calls[0][-1]["content"]             # the rewrite saw the forecast question
     assert f"(Written out in full: {UNDERSTOOD})" in fake.calls[1][-1]["content"]   # the SQL writer decided on it
@@ -118,7 +118,7 @@ def test_the_router_decides_on_the_written_out_follow_up(monkeypatch, mysql, use
 
     result = agent.ask(QUESTION, user, context=ChatHistory.for_chat(forecast_chat(user)))
 
-    assert steps == ["load_memories", "rewrite", "route", "general_answer"]
+    assert steps == ["rewrite", "route", "general_answer"]
     assert f"Question: {UNDERSTOOD}" in fake.calls[1][-1]["content"]     # the router saw the written-out question
     assert result.status == "general" and ML_BLOCK in general_request(fake)
 

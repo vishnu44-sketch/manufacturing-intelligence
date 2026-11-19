@@ -153,7 +153,7 @@ def test_with_mcp_auth_off_the_link_alone_is_enough(monkeypatch):
 @pytest.mark.django_db
 def test_a_real_question_is_saved_in_the_history(monkeypatch):
     """The tool runs the normal Manufacturing Intelligence flow: the question is saved like one from the Ask page."""
-    monkeypatch.setattr(agent, "_answer", lambda result, context, user=None: setattr(result, "status", "refused")
+    monkeypatch.setattr(agent, "_answer", lambda result, context: setattr(result, "status", "refused")
                         or setattr(result, "answer", agent.REFUSAL_ANSWER))
     answer = mcp_server.ask("delete all credit notes")
     assert answer["status"] == "refused" and answer["rows"] == []

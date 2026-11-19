@@ -15,7 +15,7 @@ from portal.rag import agent, store
 MAIN, BACKUP = "openai/gpt-oss-120b", "qwen/qwen3.8-27b"
 SQL_VALUES = {"schema": "dim_customers: customer_id, customer_name", "count": 2,
               "documents": "Example SQL ...\n\n---\n\nSales month rule ...",
-              "today": "02-Nov-2026 (Monday)", "preferences": "", "earlier": "",
+              "today": "02-Nov-2026 (Monday)", "earlier": "",
               "question": "Top 5 customers in Aug 2026?"}
 
 CHUNKS = [  # three notes with small hand-made vectors (like test_store_qdrant.py)
@@ -182,7 +182,7 @@ def test_the_rewrite_and_answer_templates_use_the_agents_texts():
     assert rewrite[0].content == agent.REWRITE_SYSTEM_PROMPT
     assert rewrite[1].content == agent.REWRITE_REQUEST.format(earlier="1. Top customers in Aug 2026 (latest)",
                                                               question="and for Sep?")
-    values = {"question": "Top customers?", "understood": "", "preferences": "", "sql": "SELECT 1", "periods": "",
+    values = {"question": "Top customers?", "understood": "", "sql": "SELECT 1", "periods": "",
               "note": "2 row(s)", "table": "customer_name | net_sales_inr", "documents": ""}
     answer = prompts.EXPLAIN_PROMPT.format_messages(**values)
     assert [m.content for m in answer] == [agent.EXPLAIN_SYSTEM_PROMPT, agent.EXPLAIN_REQUEST.format(**values)]
@@ -205,7 +205,7 @@ def test_the_chains_work_with_a_langchain_fake_chat_model():
                                         "Top customers in Sep 2026?"])
     assert chains.sql_chain(fake).invoke(SQL_VALUES).content == "```sql\nSELECT 1\n```"
     assert chains.answer_chain(fake).invoke(
-        {"question": "q", "understood": "", "preferences": "", "sql": "SELECT 1", "periods": "", "note": "1 row(s)",
+        {"question": "q", "understood": "", "sql": "SELECT 1", "periods": "", "note": "1 row(s)",
          "table": "x", "documents": ""}).content == "Aurora had the highest sales."
     assert chains.rewrite_chain(fake).invoke(
         {"earlier": "1. Top customers in Aug 2026", "question": "and Sep?"}).content == "Top customers in Sep 2026?"

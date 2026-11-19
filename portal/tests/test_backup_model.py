@@ -53,8 +53,7 @@ def sql_request(call):
 # ---------- the request cut for the backup ----------
 
 def test_for_backup_keeps_the_two_closest_notes_and_the_last_try():
-    values = {"schema": "s", "count": 3, "documents": "a\n\n---\n\nb\n\n---\n\nc", "today": "t", "preferences": "",
-              "earlier": "E", "question": "q"}
+    values = {"schema": "s", "count": 3, "documents": "a\n\n---\n\nb\n\n---\n\nc", "today": "t", "earlier": "E", "question": "q"}
     tries = [AIMessage("try 1"), HumanMessage("problem 1"), AIMessage("try 2"), HumanMessage("problem 2")]
     request = LcRequest("sql", values, retries=tries)
 

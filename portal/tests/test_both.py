@@ -38,7 +38,7 @@ BOTH_ANSWER = ("In FY 2025-26 Aurora Fluid Power Limited had the highest net sal
                "advance and 70% against the shipping documents (Sales Terms and Discount Policy, page 1).")
 TERMS_ANSWER = ("Export customers pay 30% in advance and 70% against the shipping documents (Sales Terms and "
                 "Discount Policy, page 1).")
-DATA_PATH = ["load_memories", "route", "search_notes", "pick_schema", "write_sql"]
+DATA_PATH = ["route", "search_notes", "pick_schema", "write_sql"]
 
 
 # ---------- the router ----------
@@ -158,7 +158,7 @@ def test_a_data_question_gets_the_same_prompts_as_before(monkeypatch, mysql, use
         {"role": "system", "content": agent.SQL_SYSTEM_PROMPT},
         {"role": "user", "content": agent.SQL_REQUEST.format(
             schema=schema, count=2, documents="\n\n---\n\n".join(h["text"] for h in HITS),
-            today=timezone.localdate().strftime("%d-%b-%Y (%A)"), preferences="", earlier="", question=question)}]
+            today=timezone.localdate().strftime("%d-%b-%Y (%A)"), earlier="", question=question)}]
     values = agent.explain_values(result, agent.ROWS_FOR_ANSWER)
     assert values["documents"] == ""
     old_template = agent.EXPLAIN_REQUEST.replace("{documents}", "")      # the answer request before 'both'
@@ -192,7 +192,7 @@ def test_a_documents_question_gets_the_same_prompts_as_before(monkeypatch, mysql
         {"role": "user", "content": agent.DOCS_REQUEST.format(
             documents="\n\n---\n\n".join(f"[{n}] {h['title']}, page {h['page']}\n{h['text']}"
                                          for n, h in enumerate(PDF_HITS, start=1)),
-            question=DOC_QUESTION, understood="", preferences="")}]
+            question=DOC_QUESTION, understood="")}]
     assert agent.from_documents(result.sources)
 
 

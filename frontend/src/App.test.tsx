@@ -42,7 +42,7 @@ describe('App', () => {
     expect(screen.getByRole('link', { name: 'Home' })).toHaveAttribute('href', '/')
     expect(screen.getByRole('link', { name: 'Assistant' })).toHaveAttribute('href', '/ask')
     expect(menu().getByRole('link', { name: 'History' })).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: 'Memory' })).toHaveAttribute('href', '/memory')   // for every user
+    expect(screen.queryByRole('link', { name: 'Memory' })).not.toBeInTheDocument()   // 19-Nov: no Memory page
     for (const name of [/Users/, /Documents/, /Data/, /Audit/]) {
       expect(screen.queryByRole('link', { name })).not.toBeInTheDocument()
     }
@@ -77,15 +77,15 @@ describe('App', () => {
       { kind: 'audit', page: 3, user: 'asha', action: '', from: '', to: '', q: '' })
   })
 
-  it('opens the Memory page for a normal user with its menu item lit', async () => {
-    fakeFetch({ '/api/me': { body: ASHA }, '/api/memories': { body: { memories: [], limit: 20, max_chars: 300 } } })
+  it('has no Memory page any more (19-Nov): the old /memory address is not found and asks the API nothing', async () => {
+    const fetch = fakeFetch({ '/api/me': { body: ASHA } })
 
     open('/memory')
 
-    expect(await screen.findByText('What I remember about you')).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: 'Memory' })).toHaveAttribute('aria-current', 'page')
-    expect(document.title).toBe('Memory · SS Manufacturing')
-    expect(parseRoute('/memory')).toEqual({ kind: 'memory' })
+    expect(await screen.findByText('This page does not exist')).toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: 'Memory' })).not.toBeInTheDocument()
+    expect(parseRoute('/memory')).toEqual({ kind: 'notfound' })
+    expect(fetch.mock.calls.map(([url]) => url)).toEqual(['/api/me'])
   })
 
   it('shows the staff menu to staff with the page lit', async () => {
@@ -174,13 +174,13 @@ describe('App', () => {
     const SALES = { id: 1, title: 'Net sales by month', archived: false, created_at: '', created_text: '03 Nov 2026 09:00 AM',
                     updated_at: '', updated_text: '', group: 'Today', questions: 0 }
     fakeFetch({
-      '/api/me': { body: ASHA }, '/api/memories': { body: { memories: [], limit: 20, max_chars: 300 } },
+      '/api/me': { body: ASHA },
       '/api/chats': { body: { chats: [SALES], removed: [] } },
       '/api/chats/1': { body: { chat: SALES, total: 0, earlier: 0, cards: [] } },
     })
 
-    open('/memory')
-    expect(await screen.findByRole('heading', { level: 1, name: 'Memory' })).toBeInTheDocument()
+    open('/nothing')                                                      // the Not found page has the title row
+    expect(await screen.findByRole('heading', { level: 1, name: 'Not found' })).toBeInTheDocument()
 
     fireEvent.click(menu().getByRole('link', { name: 'Assistant' }))      // /ask opens the latest chat
 
@@ -189,9 +189,6 @@ describe('App', () => {
     expect(document.querySelector('.mi-shell-title')).toBeNull()
     expect(screen.getByRole('button', { name: 'Options for this chat' })).toBeInTheDocument()
 
-    fireEvent.click(menu().getByRole('link', { name: 'Memory' }))
-    expect(await screen.findByRole('heading', { level: 1, name: 'Memory' })).toBeInTheDocument()
-    await waitFor(() => expect(document.title).toBe('Memory · SS Manufacturing'))
   })
 
   it('the top bar opens a new chat and the History page', async () => {

@@ -1,7 +1,7 @@
 """17-Nov, like ChatGPT: a message that is not about SS Manufacturing's data or documents ("what is the capital of
 France", "who are you", "what is GST?") is no longer answered with the fixed REFUSAL_ANSWER. The AI decides: the
 router says 'general' (when it runs), or the SQL writer replies GENERAL - then the general_answer step (graph.py)
-lets the AI answer it itself, with the chat's earlier questions and answers and the user's memories. Status
+lets the AI answer it itself, with the chat's earlier questions and answers. Status
 'general', no SQL, no rows. NO_SQL (a request to change data or to bend the rules) - 19-Nov - goes to the same call
 with the read-only fact (agent.READ_ONLY_NOTE): the AI writes the reply, status 'refused', nothing runs.
 
@@ -61,7 +61,7 @@ def test_the_router_can_send_a_question_to_the_general_answer_without_the_sql_ca
 
     result = agent.ask("what is GST?", user)
 
-    assert steps == ["load_memories", "route", "general_answer"]
+    assert steps == ["route", "general_answer"]
     assert result.status == "general" and result.answer == GST and mysql.calls == []
     assert len(fake.calls) == 2 and "general" in fake.calls[0][0]["content"]       # the router knows 'general'
     assert result.tokens_text == "Tokens used: 900 (route 300 + answer 600)"        # no SQL was written
@@ -124,25 +124,78 @@ def test_long_earlier_answers_are_cut_for_the_general_prompt(monkeypatch, mysql,
     assert "SELECT" not in json.dumps(general_call(fake)[1:])       # a general answer never sees the SQL
 
 
-def test_the_users_memories_reach_the_general_prompt(monkeypatch, mysql, user):
-    UserMemory.objects.create(user=user, text="Always answer in short bullet points")
-    fake = use_fake_ai(monkeypatch, ["GENERAL", "- Paris"])
-
-    result = agent.ask("what is the capital of France", user)
-
-    assert result.status == "general"
-    asked = general_call(fake)[-1]["content"]
-    assert asked.startswith("what is the capital of France\n\nThe user's saved preferences")
-    assert "- Always answer in short bullet points" in asked
-
-
-def test_without_memories_the_general_request_is_only_the_question(monkeypatch, mysql, user):
+def test_the_general_request_is_only_the_question(monkeypatch, mysql, user):
     fake = use_fake_ai(monkeypatch, ["GENERAL", PARIS])
 
     agent.ask("what is the capital of France", user)
 
     assert general_call(fake) == [{"role": "system", "content": agent.GENERAL_SYSTEM_PROMPT},
                                   {"role": "user", "content": "what is the capital of France"}]
+
+
+# ---------- 19-Nov: the user memory ("Remember that ...", the Memory page) was removed ----------
+
+REMEMBER = "Remember that I only work with export sales"
+NO_NOTES = "I can't keep notes between chats - just mention export sales in your question each time."
+
+
+def test_a_remember_message_takes_the_normal_steps_and_saves_no_memory(monkeypatch, mysql, user, steps):
+    fake = use_fake_ai(monkeypatch, [("GENERAL", 400), (NO_NOTES, 300)])
+
+    result = agent.ask(REMEMBER, user)
+
+    assert steps == DATA_START + ["write_sql", "general_answer"]     # no memory step, no shortcut
+    assert len(fake.calls) == 2                                       # the SQL call, then the general answer
+    assert result.status == "general" and result.answer == NO_NOTES and mysql.calls == []
+    saved = Question.objects.get(text=REMEMBER)
+    assert saved.status == "general" and saved.total_tokens == 700
+    assert not Question.objects.filter(status="memory").exists()
+    assert not UserMemory.objects.exists()                            # the old table is kept, nothing is written to it
+
+
+def test_old_user_memories_never_reach_the_prompts(monkeypatch, mysql, user):
+    UserMemory.objects.create(user=user, text="Always answer in short bullet points")  # an old row of the table
+    fake = use_fake_ai(monkeypatch, ["GENERAL", PARIS])
+
+    agent.ask("what is the capital of France", user)
+
+    assert "bullet points" not in json.dumps(fake.calls)
+    assert general_call(fake)[-1] == {"role": "user", "content": "what is the capital of France"}
+
+
+def test_the_prompts_no_longer_ask_for_remember_or_forget_replies():
+    for text in (agent.SQL_SYSTEM_PROMPT, agent.RETRY_PROMPT, agent.REWRITE_SYSTEM_PROMPT, agent.ROUTE_SYSTEM_PROMPT):
+        assert "REMEMBER" not in text and "FORGET" not in text and "update your memory" not in text
+    assert "{preferences}" not in agent.SQL_REQUEST + agent.EXPLAIN_REQUEST + agent.DOCS_REQUEST + agent.GENERAL_REQUEST
+    assert "keep no notes or preferences between chats" in agent.GENERAL_SYSTEM_PROMPT
+
+
+@pytest.mark.parametrize("reply", ["REMEMBER: I only work with export sales", "FORGET: export sales",
+                                   "<think>a memory</think>\nremember: Show amounts in lakhs"])
+def test_an_old_style_remember_or_forget_reply_is_read_as_general(reply):
+    assert agent.read_sql_reply(reply) == ("general", "")
+    assert agent.read_sql_reply("```sql\nSELECT 1 AS remember FROM dim_calendar\n```") == (
+        "sql", "SELECT 1 AS remember FROM dim_calendar")
+
+
+def test_a_streamed_remember_message_ends_with_a_normal_card(client, monkeypatch, mysql, user):
+    client.force_login(user)
+    fake_ai(monkeypatch, [("GENERAL", 400), (NO_NOTES, 300)])
+
+    _, events = stream(client, REMEMBER)
+
+    labels = [e["label"] for e in events if e["type"] == "step"]
+    assert labels[-2:] == ["Write the SQL (AI)", "Write a general answer (AI)"]   # the normal live steps
+    done = events[-1]
+    assert done["type"] == "done" and done["card"]["status"] == "general" and done["card"]["answer"] == NO_NOTES
+    assert not Question.objects.filter(status="memory").exists() and not UserMemory.objects.exists()
+
+
+def test_the_memory_endpoints_are_gone(client, user):
+    client.force_login(user)
+    for address in ("/api/memories", "/api/memories/delete-all", "/api/memories/1/delete"):
+        assert client.get(address).status_code == 404
+        assert client.post(address, {}).status_code in (403, 404)    # a POST without the CSRF token, or 404
 
 
 # ---------- what stays as it was ----------

@@ -1,5 +1,5 @@
 // The answer card: an answered data question shows its SQL (folded), its rows and the Excel link;
-// a documents answer shows its PDF pages (📄) and no SQL, rows or Excel; a saved memory shows its chip only;
+// a documents answer shows its PDF pages (📄) and no SQL, rows or Excel; an old saved memory shows its chip only;
 // a general answer (not about the company) shows its chip, a "not from company data" label and its lists.
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeAll, describe, expect, it, onTestFinished, vi } from 'vitest'
@@ -137,14 +137,14 @@ describe('AnswerCard', () => {
     expect(fetch).not.toHaveBeenCalled()
   })
 
-  it('shows a saved memory with its chip and a link to the Memory page, and no SQL, rows or Excel', () => {
+  it('shows an old saved memory (19-Nov: the feature was removed) with its chip only: no Memory page link, no SQL, rows or Excel', () => {
     const fetch = fakeFetch({})
 
     renderAt('/c/3', <AnswerCard card={MEMORY} autoRows />)
 
     expect(screen.getByText('MEMORY UPDATED')).toHaveClass('chip', 'ok')
     expect(screen.getByText(MEMORY.answer)).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: 'Open the Memory page' })).toHaveAttribute('href', '/memory')
+    expect(screen.queryByRole('link', { name: /Memory page/ })).not.toBeInTheDocument()
     expect(screen.queryByText('Show SQL')).not.toBeInTheDocument()
     expect(screen.queryByText('Download Excel')).not.toBeInTheDocument()
     expect(screen.queryByText('Show rows')).not.toBeInTheDocument()

@@ -21,7 +21,7 @@ from portal.tests.test_agent import (ANSWER, DOC_ANSWER, DOC_QUESTION, GOOD_SQL,
 
 pytestmark = pytest.mark.django_db  # agent.ask() saves a Question
 
-DATA_START = ["load_memories", "route", "search_notes", "pick_schema"]
+DATA_START = ["route", "search_notes", "pick_schema"]
 
 
 @pytest.fixture
@@ -29,8 +29,8 @@ def steps(monkeypatch):
     """The nodes each question passes through, in order: agent.ask() runs the graph streamed instead of invoked."""
     seen = []
 
-    def run(result, context=(), user=None):
-        for update in graph.GRAPH.stream(graph.start_state(result, context, user),
+    def run(result, context=()):
+        for update in graph.GRAPH.stream(graph.start_state(result, context),
                                          {"recursion_limit": graph.RECURSION_LIMIT}, stream_mode="updates"):
             seen.extend(update)
         return result
@@ -42,12 +42,12 @@ def steps(monkeypatch):
 
 def test_the_graph_has_a_node_per_step_and_the_edges_between_them():
     drawn = graph.GRAPH.get_graph()
-    assert set(drawn.nodes) == {"__start__", "load_memories", "rewrite", "route", "answer_from_documents", "search_notes",
+    assert set(drawn.nodes) == {"__start__", "rewrite", "route", "answer_from_documents", "search_notes",
                                 "pick_schema", "write_sql", "check_sql", "run_sql", "retry", "failed",
                                 "keep_first_answer", "check_names", "explain", "documents_part", "general_answer",
                                 "__end__"}
     assert {(e.source, e.target) for e in drawn.edges} == {
-        ("__start__", "load_memories"), ("load_memories", "rewrite"), ("load_memories", "route"),
+        ("__start__", "rewrite"), ("__start__", "route"),
         ("rewrite", "route"),
         ("route", "answer_from_documents"), ("route", "search_notes"), ("answer_from_documents", "__end__"),
         ("search_notes", "pick_schema"), ("pick_schema", "write_sql"),
@@ -99,7 +99,7 @@ def test_a_document_question_takes_the_documents_path(monkeypatch, mysql, user, 
 
     result = agent.ask(DOC_QUESTION, user)
 
-    assert steps == ["load_memories", "route", "answer_from_documents"]
+    assert steps == ["route", "answer_from_documents"]
     assert result.status == "docs" and result.answer == DOC_ANSWER and mysql.calls == []
 
 
@@ -183,7 +183,7 @@ def test_a_follow_up_uses_the_chat_memory_without_the_deprecated_wrapper(monkeyp
         warnings.simplefilter("always")
         result = agent.ask("and for Sep?", user, context=ChatHistory.for_chat(chat))
 
-    assert steps == ["load_memories", "rewrite"] + DATA_START[1:] + ["write_sql", "check_sql", "run_sql", "explain"]
+    assert steps == ["rewrite"] + DATA_START + ["write_sql", "check_sql", "run_sql", "explain"]
     assert result.status == "ok" and result.understood_as == "Top customers in Sep 2026?"
     assert "1. Top customers in Aug 2026? (latest)\n\nNew question: and for Sep?" in fake.calls[0][-1]["content"]
     assert "Earlier in this chat" in fake.calls[1][1]["content"]           # the SQL step sees the chat too
@@ -209,7 +209,7 @@ def test_a_question_of_its_own_in_a_chat_drops_the_memory(monkeypatch, mysql, us
 
     result = agent.ask("Who is our top customer in Japan?", user, context=chat)
 
-    assert steps[:2] == ["load_memories", "rewrite"] and result.understood_as == "" and result.status == "ok"
+    assert steps[:1] == ["rewrite"] and result.understood_as == "" and result.status == "ok"
     assert "Earlier in this chat" not in fake.calls[1][1]["content"]
 
 
@@ -318,7 +318,7 @@ def test_a_follow_up_create_line_chart_goes_to_the_sql_and_returns_the_rows(monk
 
     result = agent.ask(CHART_FOLLOW_UP, user, context=ChatHistory.for_chat(sales_chat(user)))
 
-    assert steps == ["load_memories", "rewrite"] + DATA_START[1:] + ["write_sql", "check_sql", "run_sql", "explain"]
+    assert steps == ["rewrite"] + DATA_START + ["write_sql", "check_sql", "run_sql", "explain"]
     assert result.status == "ok" and result.answer == TREND_ANSWER and len(result.rows) == 6
     assert result.understood_as == CHART_UNDERSTOOD
     assert "line chart" in fake.calls[1][-1]["content"]                   # the SQL step sees the chart wish
@@ -331,7 +331,7 @@ def test_no_sql_for_a_chart_of_company_data_is_sent_back_once_and_then_answered(
 
     result = agent.ask(CHART_FOLLOW_UP, user, context=ChatHistory.for_chat(sales_chat(user)))
 
-    assert steps == ["load_memories", "rewrite"] + DATA_START[1:] + ["write_sql", "retry", "write_sql",
+    assert steps == ["rewrite"] + DATA_START + ["write_sql", "retry", "write_sql",
                                                                      "check_sql", "run_sql", "explain"]
     assert result.status == "ok" and result.answer == TREND_ANSWER and result.tries == 2 and len(result.rows) == 6
     second = fake.calls[2]

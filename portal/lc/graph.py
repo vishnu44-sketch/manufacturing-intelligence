@@ -1,6 +1,6 @@
 """LangGraph: the steps of one question as a graph (a StateGraph) instead of plain if / for code.
 
-    START -> load_memories (the user's saved memories) -> rewrite (only in a chat with earlier questions) -> route
+    START -> rewrite (only in a chat with earlier questions) -> route
     route -> answer_from_documents -> END                     a question about the company PDFs
           -> general_answer -> END                            not about the data or the documents ('general')
           -> search_notes -> pick_schema -> write_sql          a question about the data (or 'both')
@@ -39,9 +39,8 @@ the chat's earlier questions (lc.memory.ChatHistory, read from MySQL) into the s
 agent.ask() saves the new Question row with its SQL, rows and tokens - one database for the History page
 and the memory.
 
-The user's long-term memory (portal/user_memory.py: "Remember that I only work with export sales") is another
-thing: load_memories reads it into the state first, and the SQL, answer and documents prompts get it as their
-{preferences} block - in every chat of that user. No memories = the prompts exactly as without it.
+19-Nov: the long-term user memory ("Remember that I only work with export sales", the Memory page) was removed:
+such a message goes through the steps like any other. Only the chat memory above is kept.
 """
 import functools
 import re
@@ -55,7 +54,7 @@ from langchain_core.messages import AIMessage, HumanMessage
 from langgraph.config import get_stream_writer
 from langgraph.graph import END, START, StateGraph
 
-from .. import ai_hints, period_check, user_memory
+from .. import ai_hints, period_check
 from ..rag import agent, store, warehouse
 from ..rag.sql_guard import GuardError
 from .calls import LcRequest
@@ -101,8 +100,6 @@ def several_periods_chart_request(text):
 class AskState(TypedDict, total=False):
     """What the steps of one question hand on to each other."""
     result: object            # the agent.AskResult the steps fill in (status, answer, SQL, rows, tokens, seconds)
-    user: object              # who asks (None = no saved memories are used)
-    memories: list            # the user's saved memories as texts, oldest first ([] = none)
     memory: list              # the chat's earlier questions as LangChain messages ([] = none, or a new question)
     chat: list                # the same messages, kept also for a new question (the general answer follows the chat)
     history: object           # the lc.memory.ChatHistory of a saved chat (None = none): previous_query reads its
@@ -115,7 +112,6 @@ class AskState(TypedDict, total=False):
     route: str                # 'data' | 'documents' | 'both' | 'general' (the router's choice)
     pdf_hits: list            # the PDF pieces to answer from ([] = the data path)
     streaming: bool           # run_events(): the steps announce themselves and the answer is streamed
-    memories_loaded: bool     # run_events() read the memories before the graph (its steps run in another thread)
     caller_thread: int        # the thread that runs the question (a step in another thread closes its DB link)
     hits: list                # the notes closest to the question
     allowed: set              # the ss_gold tables the SQL may use
@@ -125,7 +121,7 @@ class AskState(TypedDict, total=False):
     retries: list            # the failed tries: the AI's reply (AIMessage) + what was wrong (HumanMessage)
     attempt: int              # the SQL try (1 to MAX_TRIES)
     reply: str                # the AI's last SQL reply
-    kind: str                 # what that reply was: 'sql' | 'no_sql' | 'no_data' | 'general' | 'empty' | 'remember' | 'forget'
+    kind: str                 # what that reply was: 'sql' | 'no_sql' | 'no_data' | 'general' | 'empty'
     sql: str                  # the SQL of that reply
     missing: str              # its MISSING line: one part of the question has no data
     asks_for: str             # its ASKS_FOR line: what the question ranks or lists (ai_hints.asks_for; '' = none)
@@ -155,14 +151,6 @@ class AskState(TypedDict, total=False):
 
 
 # ------------------------------------------------------------------ the steps (nodes)
-def load_memories(state):
-    """The user's saved memories (user_memory.texts_for) for the SQL, answer and documents prompts - read
-    from MySQL once per question, so a memory saved in one chat is used in every other chat."""
-    if state.get("memories_loaded"):  # run_events() read them already, in the question's own thread
-        return {}
-    return {"memories": user_memory.texts_for(state["user"])}
-
-
 def rewrite(state):
     """A follow-up ("can I get the above with profit %") is first written out as a full question by its own
     small AI call - far more reliable than asking for it on the side. A question of its own is answered like
@@ -198,13 +186,13 @@ def route(state):
 def general_answer(state):
     """17-Nov, like ChatGPT: a message not about SS Manufacturing's data or documents (the router said 'general',
     or the SQL writer replied GENERAL) is answered by the AI itself, with the chat's earlier questions and answers
-    and the user's memories (agent.answer_general) - status 'general', no SQL, no rows. A message about an earlier
+    (agent.answer_general) - status 'general', no SQL, no rows. A message about an earlier
     answer's own result also gets that answer's query and columns (agent.PREVIOUS_QUERY_GENERAL).
     19-Nov: the SQL writer's NO_SQL (a request to change data or to bend the rules) comes here too, with the fact
     that the app is read-only (agent.READ_ONLY_NOTE) - the AI writes the reply, status 'refused', nothing ran."""
     found = state.get("previous_query")
     no_sql = state.get("kind") == "no_sql"
-    agent.answer_general(state["result"], state.get("chat") or [], state["memories"],
+    agent.answer_general(state["result"], state.get("chat") or [],
                          on_token=_token_sender(state),
                          previous=agent.PREVIOUS_QUERY_GENERAL.format(query=previous_query_text(found)) if found else "",
                          note=agent.READ_ONLY_NOTE if no_sql else "", status="refused" if no_sql else "general")
@@ -213,7 +201,7 @@ def general_answer(state):
 
 def answer_from_documents(state):
     """A question about the company documents (warranty, discount rules ...) is answered from the PDFs only."""
-    agent.answer_from_documents(state["result"], state["pdf_hits"], state["memories"],
+    agent.answer_from_documents(state["result"], state["pdf_hits"],
                                 on_token=_token_sender(state, documents=True))
     return {}
 
@@ -221,7 +209,7 @@ def answer_from_documents(state):
 def documents_part(state):
     """A 'both' question whose data part gave no answer: the documents part is still answered from the PDFs,
     with one sentence about the data part (agent.answer_documents_part)."""
-    agent.answer_documents_part(state["result"], state["pdf_hits"], state["memories"],
+    agent.answer_documents_part(state["result"], state["pdf_hits"],
                                 on_token=_token_sender(state, documents=True))
     return {}
 
@@ -271,7 +259,6 @@ def pick_schema(state):
         count=len(hits),
         documents="\n\n---\n\n".join(agent.compact_notes(h["text"]) for h in hits),
         today=timezone.localdate().strftime("%d-%b-%Y (%A)"),
-        preferences=agent.preferences(state["memories"], "sql"),
         earlier=sql_earlier(state["memory"]),
         question=result.text + (f"\n(Written out in full: {result.understood_as})" if result.understood_as else "")
         + (agent.SQL_BOTH_NOTE if state["route"] == "both" else "")
@@ -312,20 +299,6 @@ def write_sql(state):
     kind, sql = agent.read_sql_reply(reply)
     update = {"attempt": attempt, "retries": request.retries, "reply": reply, "kind": kind, "sql": sql,
               "problem": "", "schema_not_needed": False}
-    if kind in ("remember", "forget"):
-        # 12-Nov, like ChatGPT's memory: the AI understood a memory request in any words and named the fact;
-        # our own code saves or removes it, with the same limits as "Remember that ..." (user_memory.py)
-        update["sql"] = ""
-        user = state.get("user")
-        if user is None:  # nobody to remember it for (the eval, a tool)
-            result.status, result.answer = "refused", agent.REFUSAL_ANSWER
-        elif kind == "remember":
-            outcome, result.answer, result.memory = user_memory.remember(user, sql)
-            result.status = "error" if outcome == "refused" else "memory"
-        else:
-            outcome, result.answer = user_memory.forget(user, sql)
-            result.status = "error" if outcome == "refused" else "memory"
-        return update
     # 17-Nov: the chart the AI said was asked for ("CHART: bar"). A try without a CHART line keeps the one of an
     # earlier try of this question; agent.ask_events clears it when no rows came back.
     # 19-Nov: the line comes with every SQL block - a kind the user asked for, one the AI suggests ("CHART: line
@@ -578,7 +551,7 @@ def explain(state):
     if both:
         result.sources = result.sources + agent.pdf_sources(both)
     try:
-        result.answer = agent.explain(result, state["memories"], both, on_token=_token_sender(state),
+        result.answer = agent.explain(result, both, on_token=_token_sender(state),
                                       on_rewrite=_rewrite_sender(state)) or agent.ROWS_ONLY_ANSWER
     except agent.AIUnavailable as exc:  # the rows are still worth showing
         result.answer = agent.ROWS_ONLY_ANSWER
@@ -591,7 +564,7 @@ def explain(state):
 
 # ------------------------------------------------------------------ the streamed run
 # the label each step shows on the streamed Ask page while it runs (the time box's labels, agent.STEP_NAMES);
-# steps without one (memories, retry, failed) are quick and need no line of their own
+# steps without one (retry, failed, keep_first_answer) are quick and need no line of their own
 _LABELS = dict(agent.STEP_NAMES)
 NODE_LABELS = {
     "rewrite": _LABELS["rewrite"], "route": _LABELS["pdf_search"], "answer_from_documents": _LABELS["answer_ai"],
@@ -705,8 +678,6 @@ def _no_better_rows(state):
 
 
 def after_write_sql(state):
-    if state["kind"] in ("remember", "forget"):  # a memory request: saved or removed, nothing to run or to add
-        return "refused / nodata"
     if _first_kept(state) and (state["problem"] or state["kind"] in ("no_sql", "no_data", "general")):
         return "keep the first answer"
     if state["problem"]:  # no SQL in the reply, or the profit-growth switch
@@ -741,12 +712,11 @@ def after_check_names(state):
 def build():
     """The graph of one question (not compiled)."""
     graph = StateGraph(AskState)
-    for node in (load_memories, rewrite, route, answer_from_documents, search_notes, pick_schema, write_sql,
+    for node in (rewrite, route, answer_from_documents, search_notes, pick_schema, write_sql,
                  check_sql, run_sql, retry, failed, keep_first_answer, check_names, explain, documents_part,
                  general_answer):
         graph.add_node(node.__name__, _announced(node))
-    graph.add_edge(START, "load_memories")
-    graph.add_conditional_edges("load_memories", chat_or_not, {"in a chat": "rewrite", "no chat": "route"})
+    graph.add_conditional_edges(START, chat_or_not, {"in a chat": "rewrite", "no chat": "route"})
     graph.add_edge("rewrite", "route")
     graph.add_conditional_edges("route", documents_or_data, {"documents": "answer_from_documents",
                                                              "general": "general_answer",
@@ -778,12 +748,11 @@ def build():
 GRAPH = build().compile()  # compiled once, used by every question
 
 
-def start_state(result, context=(), user=None):
-    """The state a question starts with: its AskResult, the chat's memory (a lc.memory.ChatHistory read
-    from the History DB, or the earlier Questions) as messages, and who asks (load_memories reads his
-    saved memories)."""
+def start_state(result, context=()):
+    """The state a question starts with: its AskResult and the chat's memory (a lc.memory.ChatHistory read
+    from the History DB, or the earlier Questions) as messages."""
     return {
-        "result": result, "user": user, "memories": [], "memory": messages_of(context), "chat": messages_of(context),
+        "result": result, "memory": messages_of(context), "chat": messages_of(context),
         "previous_query": {}, "previous_names": "", "history": context if hasattr(context, "older_answers") else None,
         "asked": result.text,
         "route": "data", "pdf_hits": [], "hits": [],
@@ -796,20 +765,18 @@ def start_state(result, context=(), user=None):
     }
 
 
-def run(result, context=(), user=None):
-    """Answer one question through the graph; fills in the AskResult. user = whose saved memories are used."""
-    GRAPH.invoke(start_state(result, context, user), {"recursion_limit": RECURSION_LIMIT})
+def run(result, context=()):
+    """Answer one question through the graph; fills in the AskResult."""
+    GRAPH.invoke(start_state(result, context), {"recursion_limit": RECURSION_LIMIT})
     return result
 
 
-def run_events(result, context=(), user=None):
+def run_events(result, context=()):
     """run() for the streamed Ask page: a generator that yields the progress events while the graph runs -
     {"type": "step", "label": ...} as each step starts and {"type": "token", "text": ...} for each piece of the
-    final answer (LangGraph's "custom" stream mode) - and returns the filled-in AskResult. The user's memories
-    are read here, in the question's own thread (LangGraph runs streamed steps in a thread of its own)."""
-    state = start_state(result, context, user)
-    state.update(streaming=True, memories_loaded=True, memories=user_memory.texts_for(user),
-                 caller_thread=threading.get_ident())
+    final answer (LangGraph's "custom" stream mode) - and returns the filled-in AskResult."""
+    state = start_state(result, context)
+    state.update(streaming=True, caller_thread=threading.get_ident())
     yield from GRAPH.stream(state, {"recursion_limit": RECURSION_LIMIT}, stream_mode="custom")
     return result
 

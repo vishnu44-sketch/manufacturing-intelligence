@@ -67,24 +67,34 @@ ML_BLOCK = (
     "- Sales forecast: Holt-Winters (trend + multiplicative 12-month season), best of 5 models in a backtest "
     "(lowest MAPE on the last 6 complete months held back; tried: Holt-Winters multiplicative / additive, SARIMAX, "
     "last year x growth, 3-month average); "
-    "forecast_monthly_sales.csv (complete sales months); trained on 30 complete sales months (May 2024 - Oct 2026); "
+    "forecast_monthly_sales.csv (complete sales months); company net sales per sales month with an 80 % range "
+    "(low - high); no forecast per customer; trained on 30 complete sales months (May 2024 - Oct 2026); "
     "forecasts 12 sales months ahead (Nov 2026 - Oct 2027) total, 3 for the top 10 products; "
     "backtest MAPE % (last 6 months) = 4.16\n"
     "- Customer risk: 0-100 points score: 40 % how far sales dropped (last 3 months vs the customer's normal 3 "
     "months), 40 % fewer sales orders than normal, 20 % days overdue (days since the last invoice vs the customer's "
-    "usual gap between invoices - not unpaid amounts); lowered for customers who order less than about once a month; "
+    "usual gap between invoices - not unpaid amounts); High at 50+ points, Medium at 30+, else Low; only customers "
+    "with 6+ invoices over 6+ months; lowered for customers who order less than about once a month; "
     "customer_features.csv; "
     "built from invoices 02-Apr-2024 - 31-Oct-2026 + sales orders up to 31-Oct-2026; customers High risk = 118\n"
     "- Customer groups: KMeans, 5 groups, on recency (days since the last invoice), frequency (invoices), money "
-    "(net sales), tenure (days since the first invoice); customer_rfm.csv; "
+    "(net sales), tenure (days since the first invoice); named in this order: Lapsed (longest since the last "
+    "invoice), then of the rest New customers (shortest time as a customer), Big regular buyers (highest sales), "
+    "Regular buyers (most invoices), Occasional buyers (the group left); customer_rfm.csv; "
     "built from invoices 02-Apr-2024 - 31-Oct-2026; customer groups = 5\n"
-    "- Unusual invoices: robust z-scores: unit price and quantity vs that product's median, credit-note size vs the "
-    "usual credit note; invoice_lines_for_alerts.csv; "
+    "- Unusual invoices: robust z-scores, only 3 kinds: Unusual price (a line's unit price far from that product's "
+    "median price, z 3.5+ and 15 %+ off), Unusual quantity (a line's quantity far above the product's median, z 3.5+ "
+    "and 5 x+), Large credit note (5 x+ the median credit note and z 2+ or taking back half+ of its invoice); compare "
+    "scores only within one kind; invoice_lines_for_alerts.csv; "
     "built from invoices 02-Apr-2024 - 31-Oct-2026; alerts = 172\n"
-    "- Bought together: support, confidence, lift of product pairs on the same sales order; order_baskets.csv; "
+    "- Bought together: support, confidence, lift of product pairs on the same sales order; support % = share of all "
+    "orders with both, confidence % = of the orders with the rarer product, the share that also had the other, lift = "
+    "times more often than by chance; kept: lift above 1 and on enough orders together (the smallest of 3 to 50 that "
+    "keeps at most 300 pairs); order_baskets.csv; "
     "built from sales orders 01-Apr-2024 - 31-Oct-2026; pairs kept = 242\n"
-    "- Stock run-out: days left = stock quantity / average daily sales quantity of the last 90 days of invoices; "
-    "stock_speed.csv; built from stock report "
+    "- Stock run-out: days left = stock quantity / average daily sales quantity of the last 90 days of invoices "
+    "(stock of the newest stock report); run-out date = report date + days left; status Out of stock, Under 30 days, "
+    "Under 90 days, OK or No recent sales; stock_speed.csv; built from stock report "
     "31-Oct-2026 + invoices 03-Aug-2026 - 31-Oct-2026 (the last 90 days); items under 30 days = 349")
 
 
@@ -180,6 +190,8 @@ def test_a_failing_or_empty_query_gives_no_block(monkeypatch, data):
     ("what data was the ML trained on", True),
     ("is KMeans used here?", True),
     ("is that trained for 12 months?", True),
+    ("Unusual invoices - what it means actually", True),
+    ("what does a price alert mean", True),
     ("what is the capital of France", False),
     ("who are you", False),
     ("what is GST?", False),
@@ -227,6 +239,53 @@ def test_a_non_ml_general_question_gets_no_block_and_no_query(monkeypatch, mysql
     assert calls == []                                                   # no query, no extra tokens
     assert fake.calls[-1] == [{"role": "system", "content": agent.GENERAL_SYSTEM_PROMPT},
                               {"role": "user", "content": "what is the capital of France"}]
+
+
+def test_what_unusual_invoices_means_gets_the_true_definitions_of_every_result(monkeypatch, mysql, user):
+    """19-Nov, real chat: "Unusual invoices - what it means actually" (a general answer) invented "unexpected product
+    mix", "irregular timing (weekend/holiday)", "differs from the standard price list". The request now has the app's
+    own definitions of all 6 ML results, and the prompt says to use only those."""
+    question = "Unusual invoices - what it means actually"
+    fake_ml_db(monkeypatch, ML_ROWS)
+    fake = use_fake_ai(monkeypatch, ["GENERAL", "An unusual invoice is ..."])
+
+    result = agent.ask(question, user)
+
+    assert result.status == "general"
+    asked = general_request(fake)
+    assert asked == f"{question}\n\n{ML_BLOCK}"
+    for words in ("only 3 kinds: Unusual price", "Unusual quantity (a line's quantity far above", "Large credit note",
+                  "80 % range (low - high); no forecast per customer", "High at 50+ points, Medium at 30+, else Low",
+                  "Big regular buyers", "Occasional buyers", "Lapsed", "lift = times more often than by chance",
+                  "run-out date = report date + days left", "No recent sales"):
+        assert words in asked
+    system = fake.calls[-1][0]["content"]
+    assert "use only their definitions - never invent other criteria" in system
+    assert "what a result means" in system
+
+
+def test_the_general_prompt_has_the_true_facts_about_charts_and_the_ml_run():
+    """19-Nov: "how do you render graphs" got "I run the appropriate query or ML model behind the scenes ... the
+    platform automatically creates a simple chart". The ML runs beforehand (by hand, on new data); the AI picks the
+    chart while writing the SQL and the browser draws it."""
+    prompt = agent.GENERAL_SYSTEM_PROMPT
+    assert ("while writing the SQL, the AI also picks the chart type and the columns to draw (or a table); the "
+            "browser draws it (ECharts, no extra AI cost)") in prompt
+    assert "switch Chart / Table and download Excel" in prompt and '"Make this chart with AI"' in prompt
+    assert ("The ML models never run while a question is answered: a separate ML run, started by hand when new data "
+            "arrives, trains them beforehand and saves 6 result tables; the chat only reads those results.") in prompt
+    assert "run_ml" not in prompt and ".py" not in prompt                  # plain words, no file names
+
+
+def test_how_do_you_render_graphs_gets_those_facts(monkeypatch, mysql, user):
+    fake = use_fake_ai(monkeypatch, ["GENERAL", "The chart below each answer ..."])
+
+    result = agent.ask("how do you render graphs", user)
+
+    assert result.status == "general"
+    assert fake.calls[-1] == [{"role": "system", "content": agent.GENERAL_SYSTEM_PROMPT},
+                              {"role": "user", "content": "how do you render graphs"}]
+    assert "ECharts" in fake.calls[-1][0]["content"] and "trains them beforehand" in fake.calls[-1][0]["content"]
 
 
 def test_a_failing_facts_query_leaves_the_block_out_and_the_answer_still_comes(monkeypatch, mysql, user):

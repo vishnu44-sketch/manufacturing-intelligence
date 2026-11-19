@@ -178,6 +178,9 @@ def test_the_answer_request_of_a_risk_list_gets_the_totals_and_no_lows(monkeypat
     assert "\n\n" + RISK_NOTE in request
     assert "ML results: " + agent.ML_RESULTS_NOTE in request
     assert "Highest / lowest" not in request and "-10,044.00" in request              # the row is there, no "lowest"
+    # 19-Nov: an ML answer gets the chart rule too ("the chart below shows ...", never "can be plotted")
+    assert fake.calls[1][0]["content"] == agent.EXPLAIN_SYSTEM_PROMPT
+    assert "never write that the data \"can be plotted\"" in fake.calls[1][0]["content"]
 
 
 def test_a_failing_note_query_still_gives_the_answer(monkeypatch, ml_db, user):

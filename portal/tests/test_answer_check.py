@@ -392,7 +392,7 @@ def test_the_eval_context_list_takes_the_normal_path(monkeypatch, mysql, user):
     fake = use_fake_ai(monkeypatch, ["NEW", "NO_SQL", "I can only read the data."])
     context = [SimpleNamespace(text=BAR_QUESTION, sql=BAR_SQL, answer=BAR_ANSWER, understood_as="")]
 
-    result = agent.ask("is that correct", user, context=context, use_memories=False)
+    result = agent.ask("is that correct", user, context=context)
 
     assert len(fake.calls) == 3 and result.status == "refused" and mysql.calls == []
 

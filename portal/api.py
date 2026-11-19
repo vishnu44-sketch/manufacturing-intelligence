@@ -1,12 +1,12 @@
 """The JSON API of the website (the React app in frontend/), under /api/.
 
 The rules: a session sign-in (Django's own), a CSRF token on every POST (and any other changing
-method), and a user only reaches his own chats, questions and memories (anyone else's are 'not found'; staff
+method), and a user only reaches his own chats and questions (anyone else's are 'not found'; staff
 as before: a chat is private, a saved question may be opened). Users, Documents, Data and the SQL page are for
 staff only (403), and so is the Audit log (read-only: there is no way to change or delete a line).
 The SQL page (sql_page.py) runs only one checked SELECT on ss_gold, as the read-only MySQL user; its saved
 queries are only text in the app's own database (only the owner changes one; shared ones are seen by staff).
-Who did what is written to the audit log (audit.py): sign-ins, people, chat and memory actions, Excel
+Who did what is written to the audit log (audit.py): sign-ins, people, chat actions, Excel
 downloads - never a password. The Knowledge graph (every user, GET only) reads the SS Manufacturing data live and
 read-only, with no AI call (knowledge_graph.py); so does the Home page (home.py). It never answers with a redirect or an HTML page: without a
 sign-in every endpoint says 401 in JSON. The work itself is in services.py. Never sent: the admin-only `error` details of a
@@ -33,9 +33,9 @@ from django.utils.text import Truncator
 from django.views.decorators.cache import never_cache
 from django.views.decorators.csrf import csrf_exempt
 
-from . import audit, charts, home, insights, knowledge_graph, services, sql_page, user_memory
+from . import audit, charts, home, insights, knowledge_graph, services, sql_page
 from .lc import llm
-from .models import AuditLog, Question, SavedQuery, UserMemory
+from .models import AuditLog, Question, SavedQuery
 from .rag import agent, warehouse
 from .usage import ai_usage
 
@@ -186,13 +186,6 @@ def _model_fields(saved, result):
         note = "" if not first or first[0].model == saved.model else f"used instead of {first[0].short}"
     return {"backup_model": (entry.id if entry else saved.model) if result.answered_by_backup else "",
             "model_label": llm.label_of(saved.model), "model_note": note}
-
-
-def _audit_memories(request, saved):
-    """A question that said "Remember that ..." and saved a memory: one audit line for the new memory."""
-    if saved.status == "memory":
-        for memory in saved.memories.all():
-            audit.record(request, "memory_added", f"memory {memory.pk}", text=memory.text, question=saved.pk)
 
 
 def _answered(saved, chat):
@@ -369,7 +362,6 @@ def ask(request):
     if refused:
         return refused
     saved, chat = services.answer_in_chat(request.user, chat, question, mode, model)
-    _audit_memories(request, saved)  # the question itself is in the Question table (its own audit trail)
     return JsonResponse(_answered(saved, chat))
 
 
@@ -425,7 +417,6 @@ def _ask_lines(request, chat, question, mode="", model=""):
             yield _line(event)
         except GeneratorExit:  # the browser left: finish quietly (no more lines may be sent)
             gone = True
-    _audit_memories(request, saved)
     if not gone:
         yield _line({"type": "done", **_answered(saved, chat)})
 
@@ -445,7 +436,6 @@ def question_edit(request, pk):
     saved, chat = services.edit_question(request.user, old, text)
     audit.record(request, "question_edited", f"question {old.pk}", new_question=saved.pk,
                  chat=chat.pk if chat else None)
-    _audit_memories(request, saved)
     return JsonResponse({**_answered(saved, chat), "replaced": old.pk})
 
 
@@ -462,7 +452,6 @@ def question_again(request, pk):
     mode = old.conversation.mode if old.conversation_id else ""
     saved, chat = services.answer_in_chat(request.user, None, question, mode)
     audit.record(request, "ask_again", f"question {old.pk}", new_question=saved.pk, chat=chat.pk)
-    _audit_memories(request, saved)
     return JsonResponse(_answered(saved, chat))
 
 
@@ -598,56 +587,6 @@ def history(request):
         "counts": counts,
         "usage": _usage(),
     })
-
-
-# ------------------------------------------------------------------ Memory (every user, own memories only)
-def _memory(memory):
-    """One saved memory for the Memory page (question_id = the question that said "Remember ...", or null)."""
-    return {"id": memory.pk, "text": memory.text, "question_id": memory.question_id,
-            "created_at": timezone.localtime(memory.created_at).isoformat(), "created_text": _when(memory.created_at)}
-
-
-@api_view(["GET", "POST"])
-def memories(request):
-    """GET: the user's own memories, newest first, with the limits. POST {text}: add one by hand - with the same
-    limits as "Remember that ..." in a question (400 with the reason when it is too short / long, already
-    remembered, or the memory is full)."""
-    if request.method == "GET":
-        return JsonResponse({"memories": [_memory(m) for m in request.user.memories.order_by("-created_at", "-pk")],
-                             "limit": user_memory.MAX_MEMORIES, "max_chars": UserMemory.MAX_CHARS})
-    data = _body(request)
-    if data is None or not isinstance(data.get("text", ""), str):
-        return _error(400, "Send the memory as a JSON object with its text.")
-    text = data.get("text", "")
-    fact = user_memory.memory_fact(text) or text  # "Remember that X" typed in the box: X is saved
-    _, message, memory = user_memory.remember(request.user, fact)
-    if memory is None:
-        return _error(400, message)
-    audit.record(request, "memory_added", f"memory {memory.pk}", text=memory.text)
-    return JsonResponse({"memory": _memory(memory), "message": message})
-
-
-@api_view(["POST"])
-def memory_delete(request, memory_id):
-    """Delete one of the user's own memories (anyone else's is 'not found')."""
-    memory = get_object_or_404(UserMemory, pk=memory_id, user=request.user)
-    text, number = memory.text, memory.pk
-    memory.delete()
-    audit.record(request, "memory_deleted", f"memory {number}", text=text)
-    return JsonResponse({"deleted": 1, "message": f'Forgotten: "{text}".'})
-
-
-@api_view(["POST"])
-def memory_delete_all(request):
-    """Delete all of the user's own memories (the app asks "Are you sure?" first)."""
-    count, _ = request.user.memories.all().delete()
-    if count:
-        audit.record(request, "memory_delete_all", f"user {request.user.pk}", deleted=count)
-    if not count:
-        message = "There was nothing to delete."
-    else:
-        message = "Your 1 memory was deleted." if count == 1 else f"All {count} memories were deleted."
-    return JsonResponse({"deleted": count, "message": message})
 
 
 # ------------------------------------------------------------------ AI models (staff)
