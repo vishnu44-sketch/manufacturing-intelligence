@@ -244,8 +244,11 @@ export default function AnswerCard({ card, autoRows = false, staff = false }:
   const [chipClass, chipText] = CHIPS[card.status] ?? CHIPS.error
   const loaded = rows.state === 'done' ? rows.rows : null
   const rowCount = loaded && !loaded.rows_error ? loaded.row_count : rows.state === 'idle' ? card.row_count : null
-  // a chart when the rows fit one (months -> line, names -> bar, parts of a whole -> donut); the table is one click away
-  const [view, setView] = useState<'chart' | 'table'>('chart')
+  // a chart when the rows fit one (months -> line, names -> bar, parts of a whole -> donut); the table is one click away.
+  // 19-Nov: the AI decides - chart_kind 'none' (no chart makes this answer clearer) shows the TABLE first, the Chart
+  // switch stays when the rows fit one; a kind -> that chart first; '' (older answers) -> a chart when the rows fit
+  const [picked, setView] = useState<'chart' | 'table' | null>(null) // null = not switched by the user yet
+  const view = picked ?? (card.chart_kind === 'none' ? 'table' : 'chart')
   const hasChart = useMemo(
     () => !!loaded && !loaded.rows_error && pickChart(loaded.headers, loaded.rows) !== null, [loaded])
   const wish = `${card.text} ${card.understood_as}`

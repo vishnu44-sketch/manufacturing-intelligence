@@ -97,8 +97,11 @@ class ChatHistory(BaseChatMessageHistory):
         for question in self.questions:  # a saved Question (or anything with its fields)
             understood = getattr(question, "understood_as", "") or ""
             found.append(HumanMessage(question.text, additional_kwargs={"understood_as": understood}))
+            # 19-Nov: status and rows_count too, so the rewrite can mark an earlier question that got no data
             found.append(AIMessage(getattr(question, "answer", "") or "",
-                                   additional_kwargs={"sql": getattr(question, "sql", "") or ""}))
+                                   additional_kwargs={"sql": getattr(question, "sql", "") or "",
+                                                      "status": getattr(question, "status", "") or "",
+                                                      "rows_count": getattr(question, "rows_count", None)}))
         return found
 
     def add_messages(self, messages):
@@ -132,12 +135,30 @@ def _pairs(messages):
     return list(zip(messages[0::2], messages[1::2]))
 
 
+def got_no_data(ai):
+    """True when an earlier answer (its AIMessage) found no data: status 'nodata', or an answered data question whose
+    query gave 0 rows."""
+    kwargs = ai.additional_kwargs
+    return kwargs.get("status") == "nodata" or (kwargs.get("status") == "ok" and kwargs.get("rows_count") == 0)
+
+
+def _no_data_mark(ai):
+    """agent.REWRITE_NO_DATA with the answer (cut) for an earlier question that got no data, '' for any other."""
+    if not got_no_data(ai):
+        return ""
+    answer = " ".join((ai.content or "").split())
+    limit = agent.REWRITE_NO_DATA_CHARS
+    return agent.REWRITE_NO_DATA.format(answer=answer[:limit] + (" ..." if len(answer) > limit else ""))
+
+
 def rewrite_earlier(messages):
-    """The earlier questions for the rewrite prompt: '1. <understood as, or the question>' ... '(latest)'."""
+    """The earlier questions for the rewrite prompt: '1. <understood as, or the question>' ... '(latest)'.
+    19-Nov: one that got no data ends with ' - got no data: <its answer>' (agent.REWRITE_NO_DATA), so a new question
+    does not take its period (REWRITE_SYSTEM_PROMPT)."""
     pairs = _pairs(messages)
     return "\n".join(f"{n}. {human.additional_kwargs.get('understood_as') or ' '.join(human.content.split())}"
-                     + (LATEST if n == len(pairs) else "")
-                     for n, (human, _) in enumerate(pairs, 1))
+                     + (LATEST if n == len(pairs) else "") + _no_data_mark(ai)
+                     for n, (human, ai) in enumerate(pairs, 1))
 
 
 def sql_earlier(messages):

@@ -4,8 +4,10 @@
     route -> answer_from_documents -> END                     a question about the company PDFs
           -> general_answer -> END                            not about the data or the documents ('general')
           -> search_notes -> pick_schema -> write_sql          a question about the data (or 'both')
-    write_sql -> END (refused: NO_SQL, or nodata: NO_DATA)
-              -> general_answer -> END (GENERAL: the router did not run, the SQL writer saw it is off-topic)
+    write_sql -> END (nodata: NO_DATA)
+              -> general_answer -> END (GENERAL: the router did not run, the SQL writer saw it is off-topic;
+                                        NO_SQL: a request to change data / bend the rules, the AI says the app is
+                                        read-only - status 'refused', nothing ran)
               -> check_sql (SQL guard + checks) -> run_sql (read-only MySQL)
     write_sql / check_sql / run_sql with a problem -> retry -> write_sql again, while tries < MAX_TRIES;
               after the last try -> failed (the "3 tries" answer) -> END
@@ -53,7 +55,7 @@ from langchain_core.messages import AIMessage, HumanMessage
 from langgraph.config import get_stream_writer
 from langgraph.graph import END, START, StateGraph
 
-from .. import ai_hints, user_memory
+from .. import ai_hints, period_check, user_memory
 from ..rag import agent, store, warehouse
 from ..rag.sql_guard import GuardError
 from .calls import LcRequest
@@ -143,7 +145,9 @@ class AskState(TypedDict, total=False):
     forecast_level_check_used: bool  # product forecast rows read for a question that names no product: sent back once
                                      # (before running, or after 0 rows for a TOTAL forecast month)
     forecast_levels: dict     # agent.forecast_levels(), read once per question when one of those checks needs it
+    fy_check_used: bool       # "this year" / "last year" filtered by a calendar year is sent back once (period_check)
     one_row_retry_used: bool  # a line chart / trend question with only 1 row is sent back once
+    chart_asked: bool         # the CHART line names a chart the user asked for (not one the AI suggests, not none)
     entity_check_used: bool   # a ranking of customers / products ... whose rows name none of them is sent back once
     first_answer: dict        # the answer kept while one of those two retries runs ({} = none): its try, SQL, data,
                               # notes, chart kind, and for the ranking check the thing ranked ("entity")
@@ -195,11 +199,15 @@ def general_answer(state):
     """17-Nov, like ChatGPT: a message not about SS Manufacturing's data or documents (the router said 'general',
     or the SQL writer replied GENERAL) is answered by the AI itself, with the chat's earlier questions and answers
     and the user's memories (agent.answer_general) - status 'general', no SQL, no rows. A message about an earlier
-    answer's own result also gets that answer's query and columns (agent.PREVIOUS_QUERY_GENERAL)."""
+    answer's own result also gets that answer's query and columns (agent.PREVIOUS_QUERY_GENERAL).
+    19-Nov: the SQL writer's NO_SQL (a request to change data or to bend the rules) comes here too, with the fact
+    that the app is read-only (agent.READ_ONLY_NOTE) - the AI writes the reply, status 'refused', nothing ran."""
     found = state.get("previous_query")
+    no_sql = state.get("kind") == "no_sql"
     agent.answer_general(state["result"], state.get("chat") or [], state["memories"],
                          on_token=_token_sender(state),
-                         previous=agent.PREVIOUS_QUERY_GENERAL.format(query=previous_query_text(found)) if found else "")
+                         previous=agent.PREVIOUS_QUERY_GENERAL.format(query=previous_query_text(found)) if found else "",
+                         note=agent.READ_ONLY_NOTE if no_sql else "", status="refused" if no_sql else "general")
     return {}
 
 
@@ -282,7 +290,8 @@ def pick_schema(state):
 
 def write_sql(state):
     """The AI writes the SQL: LangChain's SQL chain with the prompt values and the failed tries so far.
-    NO_SQL -> refused (a chart question of SS Manufacturing data: first sent back once); GENERAL -> general_answer;
+    NO_SQL -> general_answer with the read-only fact, status 'refused' (a chart question of SS Manufacturing data:
+    first sent back once; a 'both' question: refused, then its documents part); GENERAL -> general_answer;
     NO_DATA -> nodata (or, once, the revenue growth for a profit % between two periods; a NO_DATA about how the
     app's own ML works -> general_answer, agent.no_data_about_app_ml);
     a reply without SQL -> a retry."""
@@ -318,10 +327,14 @@ def write_sql(state):
             result.status = "error" if outcome == "refused" else "memory"
         return update
     # 17-Nov: the chart the AI said was asked for ("CHART: bar"). A try without a CHART line keeps the one of an
-    # earlier try of this question; agent.ask_events clears it when no rows came back
+    # earlier try of this question; agent.ask_events clears it when no rows came back.
+    # 19-Nov: the line comes with every SQL block - a kind the user asked for, one the AI suggests ("CHART: line
+    # (suggested)") or "CHART: none" (saved as 'none': the table first). Only an ASKED chart counts as a chart wish
+    # for run_sql's one-row retry (chart_asked)
     chart_kind = agent.chart_kind_line(reply)
     if chart_kind:
         result.chart_kind = chart_kind
+        update["chart_asked"] = agent.chart_asked(reply)
     # 17-Nov: what the AI said the question ranks or lists ("ASKS_FOR: customers") and how many periods it asks
     # for ("PERIODS: 6") - read by run_sql's checks before their word rules (portal/ai_hints.py). Like CHART, a
     # try without such a line keeps the one of an earlier try
@@ -336,9 +349,10 @@ def write_sql(state):
             # 05-Nov: "Create a line chart of last month's sales" was read as a CREATE: sent back once
             update.update(chart_retry_used=True, schema_not_needed=True, problem=agent.CHART_NOT_A_CHANGE_PROBLEM)
             return update
-        if kind == "no_sql" or state["route"] == "both":
-            # GENERAL goes on to general_answer; a 'both' question still answers its documents part (as before)
+        if state["route"] == "both":
+            # a 'both' question still answers its documents part (as before)
             result.status, result.answer = "refused", agent.REFUSAL_ANSWER
+        # GENERAL and (19-Nov) NO_SQL go on to general_answer: the AI writes the reply, nothing runs
         return update
     no_data, try_question, missing = agent.data_notes(reply)
     if missing and not agent.missing_was_asked(missing, f"{result.text} {result.understood_as}"):
@@ -417,6 +431,12 @@ def check_sql(state):
             if problem:
                 return {"forecast_level_check_used": True, "schema_not_needed": True, "problem": problem,
                         "forecast_levels": levels}
+        if not state.get("fy_check_used"):
+            # 19-Nov: "total sales to Sakura Pump Japan this year" was filtered by YEAR(invoice_date) = 2026 - "this
+            # year" / "last year" = the financial year (docs/business_rules.md); period_check.py says when
+            problem = period_check.problem(state.get("asked") or result.text, cleaned, agent.today())
+            if problem:
+                return {"fy_check_used": True, "schema_not_needed": True, "problem": problem}
         if not state["today_check_used"]:
             # 03-Nov: "FY 2026-27 so far" was summed with the invoices dated up to 20-Mar-2027
             labels = agent.periods_not_over(cleaned)
@@ -450,7 +470,8 @@ def run_sql(state):
              "notes": list(result.notes), "chart_kind": result.chart_kind}
     if (not state["one_row_retry_used"] and not state["first_answer"] and state["attempt"] < agent.MAX_TRIES
             and len(data["rows"]) == 1
-            and (ai_hints.several_periods_chart(question, state.get("periods"), result.chart_kind)
+            and (ai_hints.several_periods_chart(question, state.get("periods"),
+                                                result.chart_kind if state.get("chart_asked") else "")
                  or several_periods_chart_request(question))):
         # a line chart needs one row per period: sent back once; the 1-row answer is kept in case that try
         # gives nothing better (keep_first_answer) - an answered question never becomes an error.
@@ -687,8 +708,8 @@ def after_write_sql(state):
         return "keep the first answer"
     if state["problem"]:  # no SQL in the reply, or the profit-growth switch
         return retry_or_fail(state)
-    if state["kind"] == "general" and state["route"] != "both":
-        return "general"
+    if state["kind"] in ("general", "no_sql") and state["route"] != "both":
+        return "general"  # 19-Nov: NO_SQL too - the AI writes that the app is read-only (status 'refused')
     return _both("refused / nodata", state) if state["kind"] in ("no_sql", "no_data", "general") else "check"
 
 
@@ -766,7 +787,8 @@ def start_state(result, context=(), user=None):
         "retries": [], "attempt": 0, "problem": "", "missing": "", "asks_for": "", "periods": None,
         "last_sql": "", "schema_note": "",
         "not_found": "", "schema_not_needed": False, "name_check_used": False, "profit_switched": False,
-        "chart_retry_used": False, "one_row_retry_used": False, "entity_check_used": False, "first_answer": {},
+        "chart_retry_used": False, "one_row_retry_used": False, "chart_asked": False, "entity_check_used": False,
+        "first_answer": {},
         "values_checked": False, "year_check_used": False, "today_check_used": False, "forecast_check_used": False,
     }
 

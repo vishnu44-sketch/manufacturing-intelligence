@@ -136,7 +136,7 @@ def test_the_rewrite_that_gives_the_total_passes_the_check_of_the_second_answer(
     result = result_of(PRODUCT_SQL, NO_ROWS, QUESTION)
     correction, facts = answer_verify.problems(result, NO_FORECAST_ANSWER)
 
-    assert answer_verify.problems(result, FIXED_ANSWER, correction, facts) == ("", "")
+    assert answer_verify.problems(result, FIXED_ANSWER, "", facts, correction) == ("", "")
     # the same amounts in a FIRST answer (no rows, no correction yet) would be invented
     assert "not in the rows or the facts: 53.7 Cr, 46.8 Cr, 60.7 Cr" in answer_verify.problems(result, FIXED_ANSWER)[0]
 
@@ -284,6 +284,168 @@ def test_a_count_of_the_whole_table_needs_the_totals_fact():
     correction, _facts = answer_verify.problems(result_of(RUNOUT_SQL, RUNOUT), RUNOUT_ANSWER)
 
     assert "not in the rows or the facts: 1,613." in correction
+
+
+# ---------- check 3: a *_pct column taken x 100 again (19-Nov) ----------
+# 19-Nov: "Which products are bought together? Can we sell them as a bundle?" got "... appearing in 146 orders
+# (support 48.16 %)" - support_pct 0.4816 is ALREADY a percent (146 of 30,317 orders = 0.48 %).
+PAIRS_SQL = ("SELECT pp.product_a_code, pp.product_a_description, pp.product_b_code, pp.product_b_description, "
+             "pp.orders_together, pp.support_pct, pp.confidence_pct, pp.lift FROM ml_product_pairs pp "
+             "ORDER BY pp.orders_together DESC, pp.lift DESC LIMIT 10")
+PAIRS = {"columns": ["product_a_code", "product_a_description", "product_b_code", "product_b_description",
+                     "orders_together", "support_pct", "confidence_pct", "lift"],
+         "rows": [["FG00580", "Coolant Unit HM-132-3A", "FG01116", "Procon Pump PR-317-3A", 146, Decimal("0.4816"),
+                   Decimal("27.92"), Decimal("11.77")],
+                  ["FG00542", "Gear Pump GX-210-2B", "FG01484", "Hydraulic motor TX-549-1B", 144, Decimal("0.4750"),
+                   Decimal("60.98"), Decimal("1.98")]]}
+PAIRS_ANSWER = ("The pair bought together most often is Coolant Unit (FG00580) with Procon Pump (FG01116), appearing "
+                "in 146 orders (support {support}); of the orders with the Coolant Unit, {confidence} also had the "
+                "Procon Pump (lift 11.77). Gear Pump (FG00542) with Hydraulic motor (FG01484) follows with 144 orders "
+                "(confidence 60.98 %).")
+
+
+def test_the_19_nov_support_taken_x_100_is_flagged():
+    answer = PAIRS_ANSWER.format(support="48.16 %", confidence="27.92%")
+
+    correction, facts = answer_verify.problems(result_of(PAIRS_SQL, PAIRS), answer)
+
+    assert correction.startswith("support_pct 0.4816 is already a percent: write 0.48 %, not 48.16 %. Never "
+                                 "multiply support_pct by 100.")
+    assert "confidence_pct" not in correction and facts == ""   # 27.92 % and 60.98 % are right as they are
+    assert "Rewrite the whole answer using only the rows and the facts - in the same plain style." in correction
+
+
+@pytest.mark.parametrize("support, confidence", [
+    ("0.48 %", "27.92 %"),           # the right answer
+    ("0.4816%", "27.92%"),
+    ("0.48 percent", "27.9 %"),
+])
+def test_percent_columns_written_as_they_are_are_not_flagged(support, confidence):
+    answer = PAIRS_ANSWER.format(support=support, confidence=confidence)
+    assert answer_verify.problems(result_of(PAIRS_SQL, PAIRS), answer) == ("", "")
+
+
+def test_a_percent_x_100_is_not_flagged_when_it_is_a_real_value_of_the_rows_or_the_request():
+    """48.16 is a real value of another *_pct cell (or of the request): then "48.16 %" can be right."""
+    rows = {"columns": PAIRS["columns"], "rows": PAIRS["rows"] + [["FG00001", "Valve", "FG00002", "Seal", 20,
+                                                                    Decimal("0.0660"), Decimal("48.16"), Decimal("3.10")]]}
+    answer = PAIRS_ANSWER.format(support="48.16 %", confidence="27.92 %")
+
+    assert answer_verify.problems(result_of(PAIRS_SQL, rows), answer) == ("", "")
+    assert answer_verify.problems(result_of(PAIRS_SQL, PAIRS), answer, "pairs with a share above 48.16 %") == ("", "")
+
+
+def test_every_wrong_value_of_a_column_is_named_in_one_sentence():
+    answer = ("Coolant Unit with Procon Pump: support 48.16 %. Gear Pump with Hydraulic motor: support 47.5 %. "
+              "Confidence 27.92 % and 60.98 %.")
+
+    correction, _facts = answer_verify.problems(result_of(PAIRS_SQL, PAIRS), answer)
+
+    assert correction.startswith("support_pct 0.4816 is already a percent: write 0.48 %, not 48.16 %; support_pct "
+                                 "0.475 is already a percent: write 0.48 %, not 47.5 %. Never multiply support_pct "
+                                 "by 100.")
+
+
+def test_a_percent_x_100_of_another_pct_column_is_flagged_too():
+    """Generic for any *_pct column, e.g. change_pct -0.5 (a fall of half a percent) told as "-50 %"."""
+    data = {"columns": ["customer_name", "change_pct"], "rows": [["Aurora Fluid Power Limited", Decimal("-0.50")]]}
+
+    correction, _facts = answer_verify.problems(result_of("SELECT 1", data), "Aurora's sales fell by 50 %.")
+
+    assert correction.startswith("change_pct -0.5 is already a percent: write -0.50 %, not 50 %.")
+    assert answer_verify.problems(result_of("SELECT 1", data), "Aurora's sales fell by 0.5 %.") == ("", "")
+
+
+def test_percents_without_a_pct_column_are_never_checked():
+    data = {"columns": ["customer_name", "share"], "rows": [["Aurora Fluid Power Limited", Decimal("0.4816")]]}
+    assert answer_verify.problems(result_of("SELECT 1", data), "Aurora has a 48.16 % share.") == ("", "")
+
+
+def test_the_corrections_own_wrong_percent_never_makes_a_still_wrong_rewrite_pass():
+    """19-Nov gap: the rewrite was checked with the correction as known text, and the correction quotes the wrong
+    "48.16 %" - so a rewrite that still wrote 48.16 % passed. The correction now counts only for the amounts."""
+    result = result_of(PAIRS_SQL, PAIRS)
+    correction, facts = answer_verify.problems(result, PAIRS_ANSWER.format(support="48.16 %", confidence="27.92 %"))
+    still_wrong = "Coolant Unit (FG00580) with Procon Pump (FG01116) is the top pair: 146 orders, support 48.16 %."
+    fixed = "Coolant Unit (FG00580) with Procon Pump (FG01116) is the top pair: 146 orders, support 0.48 %."
+
+    assert "not 48.16 %" in correction
+    assert answer_verify.problems(result, still_wrong, "", facts, correction)[0].startswith(
+        "support_pct 0.4816 is already a percent: write 0.48 %, not 48.16 %.")
+    assert answer_verify.problems(result, fixed, "", facts, correction) == ("", "")
+
+
+def test_the_rewrite_that_still_multiplies_the_percent_is_logged_and_kept_once(monkeypatch, ml, caplog):
+    first = PAIRS_ANSWER.format(support="48.16 %", confidence="27.92 %")
+    still_wrong = "Coolant Unit (FG00580) with Procon Pump (FG01116) is the top pair: 146 orders, support 48.16 %."
+    fake = use_fake_ai(monkeypatch, [first, still_wrong])
+
+    answer = agent.explain(result_of(PAIRS_SQL, PAIRS, "Which products are bought together?"))
+
+    assert answer == still_wrong and len(fake.calls) == 2              # one rewrite, never a loop
+    assert "the rewritten answer still has a problem (kept) - support_pct 0.4816" in caplog.text
+
+
+# ---------- check 4: the stock report date (19-Nov) ----------
+# 19-Nov: "Which products have the most stock right now?" listed the quantities but never said they are the stock of
+# the stock report of 31-Oct-2026 ("right now" = the newest stock report).
+STOCK_SQL = ("SELECT sl.report_date, p.product_code, p.product_description, sl.cumulative_qty AS stock_qty "
+             "FROM fact_stock_ledger sl JOIN dim_stock_movement_types t ON t.movement_type_id = sl.movement_type_id "
+             "JOIN dim_products p ON p.product_id = sl.product_id WHERE t.movement_type = 'Closing balance' "
+             "AND sl.report_date = (SELECT MAX(report_date) FROM fact_stock_ledger) ORDER BY sl.cumulative_qty DESC "
+             "LIMIT 10")
+STOCK = {"columns": ["report_date", "product_code", "product_description", "stock_qty"],
+         "rows": [[DATA_TO, "RM0128", "Cast iron housing blank 128", Decimal("800.000")],
+                  [DATA_TO, "RM0135", "Cast iron housing blank 135", Decimal("725.000")],
+                  [DATA_TO, "CO00070", "Packing tape 70", Decimal("705.000")]]}
+STOCK_ANSWER = ("The items with the most stock are Cast iron housing blank 128 (RM0128) with 800 units, Cast iron "
+                "housing blank 135 (RM0135) with 725 and Packing tape 70 (CO00070) with 705{date}.")
+
+
+def test_a_stock_answer_without_the_report_date_is_sent_back():
+    correction, facts = answer_verify.problems(result_of(STOCK_SQL, STOCK), STOCK_ANSWER.format(date=""))
+
+    assert correction.startswith("Your answer does not say which stock report the numbers are from: the rows are "
+                                 "from the stock report of 31-Oct-2026. Say it, e.g. \"As of the stock report "
+                                 "31-Oct-2026, ...\"")
+    assert facts == ""
+
+
+@pytest.mark.parametrize("date", [" (stock report of 31-Oct-2026)", ", as of the stock report 31 October 2026",
+                                  " as of October 31, 2026", " in the 2026-10-31 report", " on 31/10/2026"])
+def test_a_stock_answer_that_names_the_report_date_is_not_flagged(date):
+    assert answer_verify.problems(result_of(STOCK_SQL, STOCK), STOCK_ANSWER.format(date=date)) == ("", "")
+
+
+def test_the_report_date_check_is_only_for_stock_ledger_rows_with_a_report_date():
+    answer = STOCK_ANSWER.format(date="")
+    no_date = {"columns": STOCK["columns"][1:], "rows": [row[1:] for row in STOCK["rows"]]}
+    assert answer_verify.problems(result_of(STOCK_SQL, no_date), answer) == ("", "")      # no report_date column
+    assert answer_verify.problems(result_of("SELECT 1", STOCK), answer) == ("", "")         # not fact_stock_ledger
+    assert answer_verify.problems(result_of(STOCK_SQL, {"columns": STOCK["columns"], "rows": []}),
+                                  "There is no stock.") == ("", "")                          # no rows
+
+
+def test_a_stock_answer_is_rewritten_once_with_the_report_date(monkeypatch, ml):
+    fixed = "As of the stock report 31-Oct-2026, " + STOCK_ANSWER.format(date="")[0].lower() + \
+        STOCK_ANSWER.format(date="")[1:]
+    fake = use_fake_ai(monkeypatch, [STOCK_ANSWER.format(date=""), fixed])
+
+    answer = agent.explain(result_of(STOCK_SQL, STOCK, "Which products have the most stock right now?"))
+
+    assert answer == fixed and len(fake.calls) == 2
+    assert "the stock report of 31-Oct-2026" in last_message(fake.calls[1])
+
+
+# ---------- the answer rules and the docs (19-Nov) ----------
+
+def test_the_answer_rules_say_pct_columns_are_percents_and_stock_answers_name_the_report():
+    """The answer writer reads EXPLAIN_SYSTEM_PROMPT for every data answer (not only ML ones)."""
+    prompt = agent.EXPLAIN_SYSTEM_PROMPT
+    assert "Columns ending in _pct are ALREADY percentages" in prompt and "never multiply them by 100" in prompt
+    assert "lift is a plain ratio" in prompt
+    assert ("Stock rows with a report_date column: ALWAYS say which stock report the numbers are from, e.g. \"As of "
+            "the stock report 31-Oct-2026, ...\"") in prompt
 
 
 # ---------- the flow: once, never a loop; only data answers ----------

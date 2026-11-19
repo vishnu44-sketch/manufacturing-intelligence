@@ -2,7 +2,8 @@
 France", "who are you", "what is GST?") is no longer answered with the fixed REFUSAL_ANSWER. The AI decides: the
 router says 'general' (when it runs), or the SQL writer replies GENERAL - then the general_answer step (graph.py)
 lets the AI answer it itself, with the chat's earlier questions and answers and the user's memories. Status
-'general', no SQL, no rows. NO_SQL (a request to change data or to bend the rules) still gets the fixed refusal.
+'general', no SQL, no rows. NO_SQL (a request to change data or to bend the rules) - 19-Nov - goes to the same call
+with the read-only fact (agent.READ_ONLY_NOTE): the AI writes the reply, status 'refused', nothing runs.
 
 The AI is always the fake one of test_agent.py; MySQL and the notes search are faked.
 Run with:  python -m pytest -q portal/tests/test_general_answer.py
@@ -146,14 +147,42 @@ def test_without_memories_the_general_request_is_only_the_question(monkeypatch, 
 
 # ---------- what stays as it was ----------
 
-def test_a_request_to_delete_data_is_still_refused_with_the_fixed_sentence(monkeypatch, mysql, user, steps):
-    fake = use_fake_ai(monkeypatch, ["NO_SQL"])
+READ_ONLY_REPLY = ("I can't delete invoices - this app can only read SS Manufacturing's data, never change it. "
+                   "I can show you the old invoices instead, e.g. \"List the invoices before Apr 2025\".")
 
-    result = agent.ask("delete all credit notes from the database", user)
 
-    assert steps == DATA_START + ["write_sql"]
-    assert result.status == "refused" and result.answer == agent.REFUSAL_ANSWER
-    assert len(fake.calls) == 1 and mysql.calls == []                # no general answer call
+def test_a_request_to_delete_data_gets_an_ai_written_read_only_reply(monkeypatch, mysql, user, steps):
+    """19-Nov: "Delete all old invoices" got the fixed REFUSAL_ANSWER ("I can only answer questions about SS
+    Manufacturing data."). NO_SQL now goes to the general answer call with the read-only fact: the AI writes the
+    reply, status stays 'refused', nothing runs on MySQL."""
+    fake = use_fake_ai(monkeypatch, ["NO_SQL", READ_ONLY_REPLY])
+
+    result = agent.ask("Delete all old invoices", user)
+
+    assert steps == DATA_START + ["write_sql", "general_answer"]
+    assert result.status == "refused" and result.answer == READ_ONLY_REPLY
+    assert result.sql == "" and result.rows == [] and mysql.calls == []
+    assert general_call(fake) == [{"role": "system", "content": agent.GENERAL_SYSTEM_PROMPT},
+                                  {"role": "user", "content": "Delete all old invoices" + agent.READ_ONLY_NOTE}]
+    saved = Question.objects.get()
+    assert saved.status == "refused" and saved.answer == READ_ONLY_REPLY and saved.sql == ""
+
+
+def test_the_general_prompt_knows_the_app_is_read_only():
+    prompt = agent.GENERAL_SYSTEM_PROMPT
+    assert "This app is read-only: it can only read SS Manufacturing's data, never change, add or delete it" in prompt
+    assert "offer what you can do instead" in prompt and "never say you changed any data" in prompt
+    assert "nothing ran and no data changed" in agent.READ_ONLY_NOTE
+
+
+def test_an_off_topic_question_gets_no_read_only_note(monkeypatch, mysql, user, steps):
+    """GENERAL (off-topic) is answered as before: no read-only note, status 'general'."""
+    fake = use_fake_ai(monkeypatch, ["GENERAL", "Paris."])
+
+    result = agent.ask("what is the capital of France", user)
+
+    assert result.status == "general" and result.answer == "Paris."
+    assert agent.READ_ONLY_NOTE not in general_call(fake)[-1]["content"]
 
 
 def test_a_data_question_still_goes_the_sql_way(monkeypatch, mysql, user, steps):

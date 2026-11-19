@@ -74,9 +74,10 @@ export interface Card {
   created_at: string
   created_text: string
   edited: boolean
-  // the chart kind the AI named when it wrote the SQL: 'bar', 'hbar', 'line', 'area', 'stackedArea', 'stacked',
-  // 'grouped', 'pie', 'scatter', 'heatmap', 'treemap', 'waterfall', 'funnel', 'radar'; '' = none / unknown
-  // (missing on an older server). Read it with chartWish, which checks it and falls back to the question's words.
+  // the chart kind the AI named when it wrote the SQL (asked for, or its own choice): 'bar', 'column', 'hbar', 'line',
+  // 'area', 'stackedArea', 'stacked', 'grouped', 'pie', 'scatter', 'heatmap', 'treemap', 'waterfall', 'funnel',
+  // 'radar'; 'none' = the AI said no chart helps (the table first); '' = no line / unknown (an older answer, missing
+  // on an older server). Read it with chartWish, which checks it and falls back to the question's words.
   chart_kind?: string
 }
 

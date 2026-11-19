@@ -549,6 +549,10 @@ describe('the chart kind the AI names (chart_kind)', () => {
     expect(chartWish('', 'monthly sales as a line chart')).toBe('line')          // none named: the words
     expect(chartWish(undefined, 'monthly sales as a pie')).toBe('pie')           // an older server: the words
     expect(chartWish(undefined, 'give me sales amount of each month')).toBeNull() // no wish at all
+    // 19-Nov: 'none' = the AI said no chart helps (the card shows the table first) - not a kind, not a chart wish
+    expect(chartWish('none', 'give me sales amount of each month')).toBeNull()
+    expect(namesChartKind('none')).toBe(false)
+    expect(uprightWish('none', 'sales of each month')).toBe(false)
   })
 
   it('draws the 17-Nov question as bars, upright and in month order', () => {

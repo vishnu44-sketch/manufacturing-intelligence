@@ -16,7 +16,12 @@ What it flags:
    worked out, the question, the SQL ...) and of the simple sums an answer makes from the rows (a column's total
    or average, a run of months added up, two values added / taken away, quantity x price in one row) - roundings
    such as "53.5 Cr", "18.9 lakh", "INR 534,887,655.19" or "about 54 Cr" all count as found.
-What it never flags: percentages, counts and amounts under 1,000, dates, years, FY labels, "no actual sales yet"
+3. (19-Nov) a percent that is 100 x a value of a *_pct column of the rows ("support 48.16 %" for support_pct 0.4816):
+   a *_pct column is already a percent, so 0.4816 is 0.48 %. The rewritten answer is checked for it WITHOUT the
+   correction's text (the correction itself quotes the wrong "48.16 %", which would make a still-wrong rewrite pass);
+4. (19-Nov) a fact_stock_ledger answer that never names the stock report date of its rows (a report_date column):
+   "most stock right now" listed quantities without saying they are the stock report of 31-Oct-2026.
+What it never flags: other percentages, counts and amounts under 1,000, dates, years, FY labels, "no actual sales yet"
 (actual sales of a forecast month), claims with "beyond / after / only / other ..." ("no forecast beyond Oct 2027"),
 a month with no row ("no export sales in Sep 2026" - the missing-months note asks for that), a claim about a name
 that has no row in that month ("Meridian had no sales in Sep 2026" while other customers did).
@@ -24,6 +29,7 @@ Only the answer of a data question is checked (agent.explain) - never a general 
 (also not the 'both' answer that has PDF pieces), a memory reply or an answer-check reply.
 """
 import bisect
+import datetime
 import decimal
 import logging
 import re
@@ -316,20 +322,118 @@ def unknown_amounts(result, answer, sent_text=""):
     return list(dict.fromkeys(missing))
 
 
+# ------------------------------------------------------------------ check 3: a percent column taken x 100 again
+# 19-Nov: "Which products are bought together? Can we sell them as a bundle?" got "Coolant Unit (FG00580) with Procon
+# Pump (FG01116), appearing in 146 orders (support 48.16 %)" - ml_product_pairs.support_pct 0.4816 is ALREADY a
+# percent (146 of 30,317 orders x 100 = 0.48 %); the AI multiplied it by 100 again. A *_pct column holds a percent
+# (the x 100 is done by the SQL or by the ML run: growth_pct, mape_pct, confidence_pct ...), so a percent in the answer
+# that is 100 x such a value is flagged - unless that percent is itself a value of the rows or of the request
+# (confidence 60.98 % for confidence_pct 60.98, a real 48.16 in another column).
+_PCT_COLUMN = re.compile(r"(?:^|_)(?:pct|percent|percentage)$", re.I)
+_PERCENT_NUMBER = re.compile(r"(?<![\w.])(-?\d[\d,]*(?:\.\d+)?)\s*(?:%|percent\b|per\s+cent\b)", re.I)
+
+
+def _as_percent(value):
+    """0.4816 -> '0.48', 0.475 -> '0.48'; a very small value keeps its own decimals (0.0012 -> '0.0012')."""
+    value = decimal.Decimal(str(value))
+    if abs(value) < decimal.Decimal("0.01"):
+        return format(value.normalize(), "f")
+    return f"{value.quantize(decimal.Decimal('0.01'), rounding=decimal.ROUND_HALF_UP):,}"
+
+
+def percent_problems(result, answer, sent_text=""):
+    """The correction sentences of check 3 ([] when nothing is wrong): one per *_pct column whose value the answer
+    gives x 100, with up to MOST_ROWS_SHOWN examples."""
+    pct_columns = [(i, str(name)) for i, name in enumerate(result.columns or []) if _PCT_COLUMN.search(str(name))]
+    times_100 = []  # (100 x the value, column, value) of every *_pct cell that is not 0
+    for row in result.rows or []:
+        for i, name in pct_columns:
+            if i < len(row) and _number(row[i]) and row[i]:
+                times_100.append((abs(float(row[i])) * 100, name, row[i]))
+    if not times_100:
+        return []
+    known = sorted({float(v) for v in answer_check._row_values(result.rows)} | _numbers_in(sent_text))
+    wrong = {}  # column -> ["support_pct 0.4816 ... not 48.16 %"]
+    for match in _PERCENT_NUMBER.finditer(answer or ""):
+        written = match.group(1)
+        try:
+            value = decimal.Decimal(written.replace(",", ""))
+        except decimal.InvalidOperation:
+            continue
+        number, places = abs(float(value)), max(0, -value.as_tuple().exponent)
+        if not number or _found(number, 1, places, known):
+            continue  # the percent is a value of the rows or of the request: it is right as it is
+        for hundred, name, cell in times_100:
+            if _found(number, 1, places, [hundred]):
+                cell_text = format(decimal.Decimal(str(cell)).normalize(), "f")  # 0.4816 as stored, never rounded
+                wrong.setdefault(name, []).append(f"{name} {cell_text} is already a percent: write "
+                                                  f"{_as_percent(cell)} %, not {written} %")
+                break
+    return [("; ".join(list(dict.fromkeys(examples))[:MOST_ROWS_SHOWN]) +
+             f". Never multiply {name} by 100.") for name, examples in wrong.items()]
+
+
+# ------------------------------------------------------------------ check 4: the stock report date not said
+# 19-Nov: "Which products have the most stock right now?" listed the quantities of the newest stock report but never
+# said which report they are from (31-Oct-2026) - "right now" is the newest stock report, not today. When the rows of
+# a fact_stock_ledger query have a report_date column (docs/business_rules.md: stock queries return it), the answer
+# must name that date. Only a few dates (one report, or two compared); more are a list, not checked.
+_STOCK_TABLE = re.compile(r"\bfact_stock_ledger\b", re.I)
+_REPORT_DATE_COLUMN = re.compile(r"(?:^|_)report_date$", re.I)
+MOST_REPORT_DATES = 3
+
+
+def _says_date(answer, day):
+    """True when the answer names this day: 31-Oct-2026, 31 October 2026, October 31, 2026, 2026-10-31, 31/10/2026."""
+    month, day_number = rf"{day:%b}[a-z]*\.?", rf"0?{day.day}(?:st|nd|rd|th)?"
+    patterns = (rf"\b{day_number}(?:\s+of)?[\s/.,-]*{month}[\s/.,-]*{day.year}\b",
+                rf"\b{month}\s*{day_number},?\s*{day.year}\b",
+                rf"\b{day.year}-0?{day.month}-0?{day.day}\b",
+                rf"\b0?{day.day}[/.-]0?{day.month}[/.-]{day.year}\b")
+    return any(re.search(pattern, answer or "", re.I) for pattern in patterns)
+
+
+def report_date_problems(result, answer):
+    """The correction sentence of check 4 ([] when nothing is wrong): the stock report dates of the rows that the
+    answer does not name."""
+    if not _STOCK_TABLE.search(result.sql or "") or agent.found_nothing(result.rows):
+        return []
+    columns = [i for i, name in enumerate(result.columns or []) if _REPORT_DATE_COLUMN.search(str(name))]
+    days = set()
+    for row in result.rows or []:
+        for i in columns:
+            value = row[i] if i < len(row) else None
+            if isinstance(value, datetime.date):
+                days.add(value.date() if isinstance(value, datetime.datetime) else value)
+    if not days or len(days) > MOST_REPORT_DATES:
+        return []
+    missing = [day for day in sorted(days) if not _says_date(answer, day)]
+    if not missing:
+        return []
+    names = " and ".join(f"{day:%d-%b-%Y}" for day in missing)
+    return [f"Your answer does not say which stock report the numbers are from: the rows are from the stock report "
+            f"of {names}. Say it, e.g. \"As of the stock report {missing[0]:%d-%b-%Y}, ...\" (\"right now\" / "
+            "\"current\" stock = the newest stock report, not today)."]
+
+
 # ------------------------------------------------------------------ the check and the correction
-def problems(result, answer, sent_text="", extra_facts=""):
+def problems(result, answer, sent_text="", extra_facts="", correction=""):
     """(the correction message for the AI, the numbers it adds) - ('', '') when the answer is fine.
+    correction = the correction the AI was sent (the check of the rewritten answer, agent.explain): its amounts
+    count as known for check 2, but never for check 3 - it quotes the wrong percent ("not 48.16 %").
     The check is extra: any failure of its own leaves the answer as it is."""
     try:
-        return _problems(result, answer, sent_text, extra_facts)
+        return _problems(result, answer, sent_text, extra_facts, correction)
     except Exception:  # noqa: BLE001
         log.warning("Answer check failed - the answer is kept as it is", exc_info=True)
         return "", ""
 
 
-def _problems(result, answer, sent_text, extra_facts):
+def _problems(result, answer, sent_text, extra_facts, correction=""):
     found, facts = no_data_problems(result, answer)
-    missing = unknown_amounts(result, answer, f"{sent_text} {facts} {extra_facts}")
+    found += percent_problems(result, answer, f"{sent_text} {extra_facts}")
+    found += report_date_problems(result, answer)
+    missing = unknown_amounts(result, answer, f"{sent_text} {facts} {extra_facts} {correction}")
     if missing:
         one = len(missing) == 1
         found.append(f"{'This amount' if one else 'These amounts'} in your answer {'is' if one else 'are'} not in the "

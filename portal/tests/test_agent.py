@@ -202,20 +202,27 @@ def with_backup(monkeypatch):
 
 # ---------- refusals ----------
 
+READ_ONLY_REPLY = "I can't delete anything - this app only reads SS Manufacturing's data. I can list the credit notes instead."
+
+
 def test_a_request_to_change_data_is_refused_and_no_sql_runs(monkeypatch, mysql, user):
-    """The model says NO_SQL -> the fixed refusal text, nothing runs on MySQL. (17-Nov: an off-topic question,
-    e.g. "What is the capital of France?", gets a general answer instead - test_general_answer.py.)"""
-    fake = use_fake_ai(monkeypatch, ["NO_SQL"])
+    """The model says NO_SQL -> nothing runs on MySQL; 19-Nov: the reply is written by the AI (the general answer
+    call, with the read-only fact), not a fixed text. (17-Nov: an off-topic question, e.g. "What is the capital of
+    France?", gets a general answer - test_general_answer.py.)"""
+    fake = use_fake_ai(monkeypatch, ["NO_SQL", READ_ONLY_REPLY])
 
     result = agent.ask("delete all credit notes from the database", user)
 
     assert result.status == "refused"
-    assert result.answer == "I can only answer questions about SS Manufacturing data."
+    assert result.answer == READ_ONLY_REPLY
     assert result.sql == ""
     assert mysql.calls == []          # MySQL was never asked
-    assert len(fake.calls) == 1       # no second (explain) call
+    assert len(fake.calls) == 2       # the SQL call, then the general answer call (no explain call)
+    assert fake.calls[1][0]["content"] == agent.GENERAL_SYSTEM_PROMPT
+    assert fake.calls[1][-1]["content"].endswith(agent.READ_ONLY_NOTE)
     saved = Question.objects.get()
     assert saved.status == "refused" and saved.sql == "" and saved.rows_count is None
+    assert saved.answer == READ_ONLY_REPLY
 
 
 @pytest.mark.parametrize("bad_reply", [
@@ -894,15 +901,15 @@ def test_a_name_check_retry_counts_in_the_sql_step(monkeypatch, mysql, user):
     assert (result.sql_tokens, result.answer_tokens, result.total_tokens) == (7100, 700, 7800)
 
 
-def test_a_refused_question_counts_only_the_sql_step(monkeypatch, mysql, user):
-    use_fake_ai(monkeypatch, [("NO_SQL", 2900)])
+def test_a_refused_question_counts_the_sql_step_and_its_written_reply(monkeypatch, mysql, user):
+    """19-Nov: the reply to NO_SQL is written by the general answer call - its tokens count as the answer step."""
+    use_fake_ai(monkeypatch, [("NO_SQL", 2900), (READ_ONLY_REPLY, 500)])
 
-    result = agent.ask("What is the capital of France?", user)
+    result = agent.ask("delete all credit notes from the database", user)
 
     assert result.status == "refused"
-    assert (result.sql_tokens, result.answer_tokens, result.total_tokens) == (2900, None, 2900)
-    assert result.tokens_text == "Tokens used: 2,900 (SQL 2,900)"
-    assert Question.objects.get().total_tokens == 2900
+    assert (result.sql_tokens, result.answer_tokens, result.total_tokens) == (2900, 500, 3400)
+    assert Question.objects.get().total_tokens == 3400
 
 
 def test_backup_model_tokens_are_saved_with_the_backup_model(monkeypatch, mysql, user, with_backup):
@@ -977,7 +984,12 @@ def real_services():
 
 
 def ask_with_example_sql(monkeypatch, user, question):
-    """Ask a docs/sql_examples.md question; the fake model replies with that example's SQL."""
+    """Ask a docs/sql_examples.md question; the fake model replies with that example's SQL. The stub answer is no
+    real answer, so the answer check (answer_verify.py, tested in test_answer_verify.py) is switched off here - it
+    would send it back (e.g. a stock answer that does not name the stock report date)."""
+    from portal import answer_verify
+
+    monkeypatch.setattr(answer_verify, "applies", lambda *args, **kwargs: False)
     fake = use_fake_ai(monkeypatch, [f"```sql\n{EXAMPLE_SQL[question]}\n```",
                                        "Stub answer from the fake AI."])
     result = agent.ask(question, user)

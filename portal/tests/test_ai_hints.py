@@ -222,6 +222,8 @@ def test_periods_again_one_row_keeps_the_first_answer(monkeypatch, mysql, user, 
     ("CHART: bar",),                      # a chart, but no periods named
     ("PERIODS: 6",),                      # periods, but no chart wish
     ("CHART: bar", "PERIODS: 1"),         # a chart of one period
+    ("CHART: line (suggested)", "PERIODS: 6"),  # 19-Nov: a chart the AI only suggests is no chart wish
+    ("CHART: none", "PERIODS: 6"),        # the AI said no chart helps
 ])
 def test_without_periods_and_a_chart_wish_a_typo_question_is_answered_as_today(monkeypatch, mysql, user, steps,
                                                                                lines):
@@ -250,6 +252,7 @@ def test_without_periods_the_word_rules_still_send_it_back(monkeypatch, mysql, u
     ("bar chat of the lst six mnths", 6, "", False),           # no chart wish
     ("bar chat of Oct", 1, "bar", False),
     ("bar chat of Oct", None, "bar", False),
+    ("bar chat of the lst six mnths", 6, "none", False),       # 19-Nov: "CHART: none" is no chart wish
 ])
 def test_several_periods_chart(question, periods, chart_kind, expected):
     assert ai_hints.several_periods_chart(question, periods, chart_kind) is expected

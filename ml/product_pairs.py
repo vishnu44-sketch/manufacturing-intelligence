@@ -4,8 +4,10 @@ One order = SO number + financial year of the order date (the SO number restarts
 cancelled orders and the Unknown product (-1) are left out. For every pair of products A and B on the
 same order:
   orders_together  orders that have both
-  support_pct      orders_together / all orders x 100
-  confidence_pct   orders_together / orders with A x 100 = 'of the orders with A, this % also had B'.
+  support_pct      orders_together / all orders x 100 - ALREADY a percent: 0.4816 = 0.48 % of all orders
+                   (19-Nov: an answer multiplied it by 100 again)
+  confidence_pct   orders_together / orders with A x 100 = 'of the orders with A, this % also had B' - ALREADY
+                   a percent (27.92 = 27.92 %).
                    A is the product of the pair with FEWER orders, so this is the stronger direction.
   lift             orders_together x all orders / (orders with A x orders with B): how many times more often
                    the two are bought together than by chance (1 = chance, 2 = twice as often).
@@ -37,9 +39,12 @@ TABLE = MlTable("ml_product_pairs", (
     ("orders_together", "INT", "Sales orders that had both products."),
     ("orders_a", "INT", "Sales orders that had product A."),
     ("orders_b", "INT", "Sales orders that had product B."),
-    ("support_pct", "DECIMAL(9,4)", "orders_together / all sales orders x 100 (how common the pair is overall)."),
-    ("confidence_pct", "DECIMAL(9,2)", "orders_together / orders_a x 100: of the orders with product A, this % also had product B."),
-    ("lift", "DECIMAL(9,2)", "How many times more often A and B are on one order than by chance (1 = chance; 2 = twice as often)."),
+    ("support_pct", "DECIMAL(9,4)", "orders_together / all sales orders x 100 (how common the pair is overall). "
+                                    "ALREADY a percent: 0.4816 = 0.48 % of all orders - write it as 0.48 %, never "
+                                    "multiply it by 100."),
+    ("confidence_pct", "DECIMAL(9,2)", "orders_together / orders_a x 100: of the orders with product A, this % also "
+                                       "had product B. ALREADY a percent: 27.92 = 27.92 % - never multiply it by 100."),
+    ("lift", "DECIMAL(9,2)", "How many times more often A and B are on one order than by chance (1 = chance; 2 = twice as often). A plain ratio, not a percent."),
     ("min_orders", "INT", "The threshold of this run: pairs need at least this many orders together."),
     ("run_at", "DATETIME", "When ml/run_ml.py found the pairs."),
 ], primary_key=["product_a_id", "product_b_id"], indexes=["product_a_code", "product_b_code"])
