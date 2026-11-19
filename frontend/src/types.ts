@@ -451,6 +451,18 @@ export interface GraphSearchReply {
   total?: number // how many nodes the search finds in all (none for close spellings: no "Show more")
 }
 
+// "Explain this" on the Knowledge graph (POST /api/graph/explain): sentences the AI wrote from the server's facts
+export interface GraphExplainReply {
+  text: string
+  model: string
+  model_label: string // e.g. 'Groq gpt-oss-120b'
+  model_note: string // why it was not the chain's first model ('' when it was)
+  tokens: number | null
+  cached: boolean // the server's kept reply (no tokens used this time)
+  node: string // the node id it is about
+  period: string // e.g. 'FY 2026-27 so far'
+}
+
 export interface GraphSimilarReply {
   customer: GraphNode
   period: GraphPeriod
