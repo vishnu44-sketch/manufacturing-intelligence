@@ -1,24 +1,26 @@
-"""LangChain step C: the AI models as LangChain chat models (ChatOpenAI pointed at Groq or Google Gemini).
+"""LangChain step C: the AI models as LangChain chat models (ChatOpenAI pointed at Groq).
 
 Why ChatOpenAI and not ChatGroq: Groq serves its models through an OpenAI-compatible address
 (GROQ_OPENAI_URL), so ChatOpenAI reaches the same model with the same key and the same tokens - and
-langchain-groq would need an old groq package (below 1.0). Google Gemini has an OpenAI-compatible address too
-(GEMINI_OPENAI_URL), so the same ChatOpenAI reaches it with the GEMINI_API_KEY (18-Nov).
+langchain-groq would need an old groq package (below 1.0).
 
-The model chain (18-Nov): every AI call tries these models in turn until one answers (agent._ask_models):
-  groq-main          GROQ_MODEL            (default openai/gpt-oss-120b)    the full request
-  gemini-flash       GEMINI_MODEL          (default gemini-flash-latest)    the full request (large context)
-  gemini-flash-lite  GEMINI_LITE_MODEL     (default gemini-flash-lite-latest)  the cut request (calls.for_backup)
-  groq-backup        GROQ_FALLBACK_MODEL   (empty = none)                   the cut request, at most 1,000 tokens
-AI_MODEL_CHAIN (optional, e.g. "groq-main,gemini-flash,gemini-flash-lite,groq-backup") sets the order; an id left
-out is not used. The Gemini models are left out silently when GEMINI_API_KEY is not set.
-Gemini Flash-Lite only does the small calls (rewrite, route - ALLOWED_CALLS); an admin's chosen model is the only
-model asked (no fallback: a clear error when it cannot answer - agent._ask_models).
+The model chain (18-Nov; 19-Nov: Groq only, with a second Groq key): every AI call tries these models in turn
+until one answers (agent._ask_models):
+  groq-main      GROQ_MODEL (default openai/gpt-oss-120b) on GROQ_API_KEY     the full request
+  groq-main-2    the SAME model on GROQ_API_KEY_2 (a second Groq account)     the full request
+  groq-backup    GROQ_FALLBACK_MODEL (empty = none) on GROQ_API_KEY           the cut request, at most 1,000 tokens
+19-Nov, the second key: each Groq account has its own daily (and per-minute) token limits, so when the first key's
+limit is reached the same strong model is asked on the second key before the weaker backup - two accounts, twice
+the daily tokens. groq-main-2 is left out silently when GROQ_API_KEY_2 is not set. Because groq-main and groq-main-2
+send the same model name, a model of the chain is told apart by its id (and its key setting), never by its name
+alone: the dedup below, the key make_llm() uses and the resting memory (agent._resting) all go by it.
+AI_MODEL_CHAIN (optional, e.g. "groq-main,groq-main-2,groq-backup") sets the order; an id left out is not used, an
+unknown id (e.g. one of an older chain) is ignored. An admin's chosen model is the only model asked (no fallback: a
+clear error when it cannot answer - agent._ask_models).
 
-The settings: temperature 0, the model's reasoning setting, the smaller limits of the backup model, a 90 s
-timeout for Groq (45 s for Gemini: a hanging call moves on to the next model sooner) and max_retries=0 -
-waiting after a per-minute limit and moving to the next model stay in our own code (calls.py and agent._ask_ai).
-Tests swap make_llm() for a fake chat model: no test ever reaches Groq or Gemini.
+The settings: temperature 0, the model's reasoning setting, the smaller limits of the backup model, a 90 s timeout
+and max_retries=0 - waiting after a per-minute limit and moving to the next model stay in our own code (calls.py
+and agent._ask_ai). Tests swap make_llm() for a fake chat model: no test ever reaches Groq.
 """
 import os
 import re
@@ -27,45 +29,26 @@ from dataclasses import dataclass
 from ..rag import agent
 
 GROQ_OPENAI_URL = "https://api.groq.com/openai/v1"  # Groq's OpenAI-compatible address
-GEMINI_OPENAI_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"  # Google's OpenAI-compatible address
 TIMEOUT_SECS = 90                                    # seconds one Groq call may take
-GEMINI_TIMEOUT_SECS = 45                             # seconds one Gemini call may take (then the next model)
-# Gemini models think before they reply and the thinking counts in max_tokens: this much room is added for it,
-# so the reply itself still has the app's max_tokens (the thinking is kept short: reasoning_effort "low")
-GEMINI_THINKING_ROOM = 2000
-DEFAULT_GEMINI_MODEL = "gemini-flash-latest"
-DEFAULT_GEMINI_LITE_MODEL = "gemini-flash-lite-latest"
+KEY = "GROQ_API_KEY"                                 # the .env setting of the first Groq key
+KEY_2 = "GROQ_API_KEY_2"                             # 19-Nov: the .env setting of the second Groq key (optional)
 MISSING_KEY = "The AI service is not set up (GROQ_API_KEY is missing in .env)."
-GEMINI_MISSING_KEY = "The AI service is not set up (GEMINI_API_KEY is missing in .env)."
+MISSING_KEY_2 = "The AI service is not set up (GROQ_API_KEY_2 is missing in .env)."
+MISSING_KEYS = {KEY: MISSING_KEY, KEY_2: MISSING_KEY_2}
 
-MODEL_IDS = ("groq-main", "gemini-flash", "gemini-flash-lite", "groq-backup")  # the fixed ids, default order
-# short names for the notes ("Groq's daily limit was reached", "Gemini Flash was busy")
-SHORT_NAMES = {"groq-main": "Groq", "gemini-flash": "Gemini Flash", "gemini-flash-lite": "Gemini Flash-Lite",
-               "groq-backup": "the Groq backup model"}
-
-# 18-Nov (the Flash-Lite bug): which calls a model may do. The important calls - the SQL ('sql'), the answers
-# ('answer', 'docs', 'general') and the AI chart ('chart') - go only to the strong models; Gemini Flash-Lite wrote
-# wrong SQL ("no forecast for Aug 2027" while the total forecast was there), so it only does the small calls: the
-# follow-up rewrite ('rewrite') and the route ('route'). A model not listed may do every call. The Groq backup stays
-# allowed everywhere as the last resort (its card note says so plainly: agent.model_note).
-SMALL_CALLS = frozenset({"rewrite", "route"})
-ALLOWED_CALLS = {"gemini-flash-lite": SMALL_CALLS}
-
-
-def may_do(entry, kind):
-    """True when this model (a ChainModel) may do this call (an LcRequest's chain: 'sql', 'answer', 'rewrite' ...)."""
-    allowed = ALLOWED_CALLS.get(entry.id)
-    return allowed is None or kind in allowed
+MODEL_IDS = ("groq-main", "groq-main-2", "groq-backup")  # the fixed ids, default order
+# short names for the notes ("Groq's daily limit was reached", "the second Groq key was busy")
+SHORT_NAMES = {"groq-main": "Groq", "groq-main-2": "the second Groq key", "groq-backup": "the Groq backup model"}
 
 
 @dataclass(frozen=True)
 class ChainModel:
-    """One model of the chain: its fixed id, who serves it, the model name sent to that service, the name shown
-    on the answer card, and whether it gets the full request (False = the cut one, calls.for_backup)."""
+    """One model of the chain: its fixed id, the .env setting of the Groq key it uses, the model name sent to Groq,
+    the name shown on the answer card, and whether it gets the full request (False = the cut one, calls.for_backup)."""
     id: str
-    provider: str        # 'groq' | 'gemini'
-    model: str           # e.g. 'openai/gpt-oss-120b', 'gemini-flash-latest'
-    label: str           # e.g. 'Groq gpt-oss-120b', 'Gemini Flash (gemini-flash-latest)'
+    key_env: str         # 'GROQ_API_KEY' | 'GROQ_API_KEY_2' (the setting's name - never the key itself)
+    model: str           # e.g. 'openai/gpt-oss-120b'
+    label: str           # e.g. 'Groq gpt-oss-120b', 'Groq gpt-oss-120b (2nd key)'
     full_request: bool
 
     @property
@@ -73,9 +56,9 @@ class ChainModel:
         return SHORT_NAMES.get(self.id, self.label)
 
 
-def gemini_key():
-    """The Gemini key from .env ('' = Gemini is not set up). Never printed or logged."""
-    return os.getenv("GEMINI_API_KEY", "").strip()
+def _key(key_env):
+    """The Groq key of this .env setting ('' = not set). Never printed or logged."""
+    return os.getenv(key_env, "").strip()
 
 
 def _family(model):
@@ -85,18 +68,16 @@ def _family(model):
 
 
 def known_models():
-    """{id: ChainModel} of every model that is set up (Gemini only with its key; the backup only when set)."""
+    """{id: ChainModel} of every model that is set up (the second key only when GROQ_API_KEY_2 is set; the backup
+    only when GROQ_FALLBACK_MODEL is)."""
     main = agent.model_name()
-    found = {"groq-main": ChainModel("groq-main", "groq", main, f"Groq {main.split('/')[-1]}", True)}
-    if gemini_key():
-        flash = os.getenv("GEMINI_MODEL", "").strip() or DEFAULT_GEMINI_MODEL
-        lite = os.getenv("GEMINI_LITE_MODEL", "").strip() or DEFAULT_GEMINI_LITE_MODEL
-        found["gemini-flash"] = ChainModel("gemini-flash", "gemini", flash, f"Gemini Flash ({flash})", True)
-        found["gemini-flash-lite"] = ChainModel("gemini-flash-lite", "gemini", lite, f"Gemini Flash-Lite ({lite})",
-                                                False)
+    label = f"Groq {main.split('/')[-1]}"
+    found = {"groq-main": ChainModel("groq-main", KEY, main, label, True)}
+    if _key(KEY_2):
+        found["groq-main-2"] = ChainModel("groq-main-2", KEY_2, main, f"{label} (2nd key)", True)
     backup = agent.fallback_model_name()
     if backup:
-        found["groq-backup"] = ChainModel("groq-backup", "groq", backup, f"Groq {_family(backup)} ({backup})", False)
+        found["groq-backup"] = ChainModel("groq-backup", KEY, backup, f"Groq {_family(backup)} ({backup})", False)
     return found
 
 
@@ -108,18 +89,20 @@ def chain_order():
 
 
 def chain_models():
-    """The models every AI call tries, in order (a model name listed twice is tried once)."""
+    """The models every AI call tries, in order (the same model on the same key listed twice is tried once; 19-Nov:
+    the same model on the other key is a model of its own - groq-main-2 stays)."""
     found, seen, chain = known_models(), set(), []
     for model_id in chain_order():
         entry = found.get(model_id)
-        if entry and (entry.provider, entry.model) not in seen:
-            seen.add((entry.provider, entry.model))
+        if entry and (entry.key_env, entry.model) not in seen:
+            seen.add((entry.key_env, entry.model))
             chain.append(entry)
     return chain
 
 
 def find(model):
-    """The ChainModel with this model name (the chain first, then any model that is set up); None = not known."""
+    """The ChainModel with this model name (the chain first, then any model that is set up); None = not known.
+    Both Groq keys send the same name: the first one found is given (they have the same label)."""
     for entry in chain_models() + list(known_models().values()):
         if entry.model == model:
             return entry
@@ -134,39 +117,16 @@ def label_of(model):
     return entry.label if entry else model
 
 
-def _provider_of(model):
-    entry = find(model)
-    if entry:
-        return entry.provider
-    return "gemini" if model.startswith("gemini") else "groq"
-
-
-def make_llm(model, max_tokens, effort):
-    """A ChatOpenAI for one AI call of `model`: max_tokens for its reply, effort = 'low' / 'medium' (how hard a
-    reasoning model thinks). The Groq backup model gets at most agent.FALLBACK_MAX_TOKENS (as in agent._ask_ai()).
-    AIUnavailable with a friendly message when the model's key (GROQ_API_KEY / GEMINI_API_KEY) is missing."""
+def make_llm(model, max_tokens, effort, key_env=KEY):
+    """A ChatOpenAI for one AI call of `model` on the Groq key of the .env setting key_env (GROQ_API_KEY, or
+    GROQ_API_KEY_2 for the second key - ChainModel.key_env): max_tokens for its reply, effort = 'low' / 'medium'
+    (how hard a reasoning model thinks). The Groq backup model gets at most agent.FALLBACK_MAX_TOKENS (as in
+    agent._ask_ai()). AIUnavailable with a friendly message when that key is missing."""
     from langchain_openai import ChatOpenAI  # imported here: the import itself is slow
 
-    if _provider_of(model) == "gemini":
-        api_key = gemini_key()
-        if not api_key:
-            raise agent.AIUnavailable(GEMINI_MISSING_KEY)
-        return ChatOpenAI(
-            model=model,
-            base_url=GEMINI_OPENAI_URL,
-            api_key=api_key,
-            temperature=0,
-            max_tokens=max_tokens + GEMINI_THINKING_ROOM,
-            max_retries=0,                     # our own code moves on to the next model (agent._ask_models)
-            timeout=GEMINI_TIMEOUT_SECS,
-            stream_usage=True,
-            use_responses_api=False,
-            # Google's setting for its thinking models: think briefly ("low" works for every Gemini Flash model)
-            extra_body={"reasoning_effort": "low"},
-        )
-    api_key = os.getenv("GROQ_API_KEY", "").strip()
+    api_key = _key(key_env)
     if not api_key:
-        raise agent.AIUnavailable(MISSING_KEY)
+        raise agent.AIUnavailable(MISSING_KEYS.get(key_env, MISSING_KEY))
     if model == agent.fallback_model_name():
         max_tokens = min(max_tokens, agent.FALLBACK_MAX_TOKENS)
     return ChatOpenAI(

@@ -4,14 +4,14 @@ agent.py builds an LcRequest (which chain + the values of its prompt template) f
 agent._ask_ai() hands it to chat() here. Around the call agent._ask_ai() keeps: the main model first,
 the backup model after a daily limit, the token count and the time per step.
 
-The rules for the errors LangChain's ChatOpenAI raises (openai.*) - Groq and Gemini alike (18-Nov: the model
-chain, agent._ask_models, moves on to the next model after each of these errors):
-- per-minute limit (429)        -> the main Groq model waits as Groq asks and tries again (at most RATE_LIMIT_RETRIES
-                                   times), then ModelBusy; any other model: ModelBusy at once
-- daily limit (429 "per day", Gemini's "...PerDay..." quota) -> DailyLimitReached
+The rules for the errors LangChain's ChatOpenAI raises (openai.*) (18-Nov: the model chain, agent._ask_models,
+moves on to the next model after each of these errors - 19-Nov: on either Groq key):
+- per-minute limit (429)        -> the main Groq model (on either key) waits as Groq asks and tries again (at most
+                                   RATE_LIMIT_RETRIES times), then ModelBusy; the backup model: ModelBusy at once
+- daily limit (429 "tokens per day (TPD)") -> DailyLimitReached
 - request too large (413, or a context-length error) -> RequestTooLarge (a smaller request may still go)
 - network error                 -> try once more after 3 s, then ModelDown ("could not be reached")
-- a timeout / server error (5xx, Gemini's 503 "high demand") -> ModelDown at once
+- a timeout / server error (5xx, e.g. 503 "over capacity") -> ModelDown at once
 - any other error (a wrong key, an unknown model, a bad request) -> ModelFailed ("returned an error")
 A streamed reply (the final answer on the streamed Ask page) follows the same rules until its first piece is
 shown; an error after that is StreamBroken (the answer step then shows the rows without a summary).
@@ -85,24 +85,26 @@ def for_backup(request, smallest=False):
     return LcRequest(request.chain, values, retries=list(request.retries[-2:]))  # the last try: reply + problem
 
 
-# a context-length error of a request that is too big for the model (Gemini: "The input token count (...) exceeds
-# the maximum number of tokens allowed"; OpenAI-style: "context_length_exceeded")
-TOO_LONG = re.compile(r"context.length|context window|maximum context|exceeds the maximum number of tokens|"
-                      r"input token count", re.I)
+# a context-length error of a request that is too big for the model (OpenAI-style: "context_length_exceeded",
+# "maximum context length is ... tokens")
+TOO_LONG = re.compile(r"context.length|context window|maximum context", re.I)
 
 
-def chat(request, max_tokens, effort, model=None, on_token=None):
+def chat(request, max_tokens, effort, model=None, on_token=None, key_env=llm.KEY):
     """One AI call through the request's chain -> (reply text, total tokens or None, True when the reply
     stopped at max_tokens). The main Groq model waits and retries on a per-minute rate limit (429); every other
     error raises (the rules above) and agent._ask_models moves on to the next model of the chain.
     on_token = the reply is streamed (the streamed Ask page): each piece of text goes to on_token while it is
-    written. Until the first piece the rules above apply as they are; a failure after it raises StreamBroken."""
+    written. Until the first piece the rules above apply as they are; a failure after it raises StreamBroken.
+    key_env = the .env setting of the Groq key to use (19-Nov: GROQ_API_KEY_2 for the second key -
+    ChainModel.key_env)."""
     model = model or agent.model_name()
-    waits = model == agent.model_name()  # only the main Groq model waits for a per-minute limit (as before)
+    waits = model == agent.model_name()  # only the main Groq model (either key) waits for a per-minute limit
     attempt = 0
     while True:
         attempt += 1
-        chain = CHAINS[request.chain](llm.make_llm(model, max_tokens, effort))  # no key -> AIUnavailable
+        # no key -> AIUnavailable
+        chain = CHAINS[request.chain](llm.make_llm(model, max_tokens, effort, key_env=key_env))
         try:
             message = chain.invoke(request.inputs()) if on_token is None else _streamed(chain, request, on_token)
             text, tokens, cut_off = chains.reply_info(message)

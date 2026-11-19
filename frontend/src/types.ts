@@ -27,7 +27,7 @@ export type AskMode = 'ml' | ''
 /** One AI model an administrator can choose for a question (GET /api/models, staff only). "auto" = the server
  *  picks (the main model first, the others when it is busy or its daily limit is reached). */
 export interface ModelOption {
-  id: string // 'auto' | 'groq-main' | 'gemini-flash' | 'gemini-flash-lite' | 'groq-backup'
+  id: string // 'auto' | 'groq-main' | 'groq-main-2' | 'groq-backup'
   label: string
   available: boolean // false: shown greyed out, with the note saying why
   note?: string
@@ -59,7 +59,7 @@ export interface Card {
   answer: string
   understood_as: string
   backup_model: string // '' = the main model answered (older answers; newer ones use model_label / model_note)
-  model_label?: string // 18-Nov: the human name of the model that answered (e.g. "Gemini Flash")
+  model_label?: string // 18-Nov: the human name of the model that answered (e.g. "Groq gpt-oss-120b (2nd key)")
   model_note?: string // why that model answered: '' when the first model of the chain did; else e.g. "chosen by you"
   token_notice: string // only right after asking
   time_steps: TimeStep[]

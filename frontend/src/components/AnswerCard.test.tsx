@@ -212,9 +212,9 @@ describe('AnswerCard', () => {
 
   it('says which model answered and why when it was not the first one (18-Nov)', () => {
     fakeFetch({})
-    render(<AnswerCard card={{ ...OK, has_rows: false, model_label: 'Gemini Flash', model_note: "Groq's daily limit was reached" }} />)
+    render(<AnswerCard card={{ ...OK, has_rows: false, model_label: 'Groq gpt-oss-120b (2nd key)', model_note: "Groq's daily limit on the first key was reached" }} />)
     const line = document.querySelector('[data-model-line]')
-    expect(line).toHaveTextContent("Answered by Gemini Flash - Groq's daily limit was reached.")
+    expect(line).toHaveTextContent("Answered by Groq gpt-oss-120b (2nd key) - Groq's daily limit on the first key was reached.")
     expect(line?.querySelector('svg')).not.toBeNull()   // the info icon
     expect(screen.queryByText(/Answered by the backup model/)).not.toBeInTheDocument()
   })
