@@ -36,8 +36,10 @@ def fast_passwords(settings):
 def no_groq_key(monkeypatch):
     """Runs for every test: no Groq key (a real chat model cannot even be made), and no second Groq key - so the
     model chain is the Groq main model and the backup; a test of the chain sets its own (test_model_chain.py,
-    19-Nov). The chain's order comes from the test, never from .env."""
-    for name in ("GROQ_API_KEY", "GROQ_API_KEY_2", "AI_MODEL_CHAIN"):
+    19-Nov). The chain's order comes from the test, never from .env. 20-Nov: no local model either (LOCAL_LLM_*) -
+    test_local_model.py sets its own."""
+    for name in ("GROQ_API_KEY", "GROQ_API_KEY_2", "AI_MODEL_CHAIN", "LOCAL_LLM_URL", "LOCAL_LLM_MODEL",
+                 "LOCAL_LLM_API_KEY", "LOCAL_LLM_TIMEOUT", "LOCAL_LLM_LABEL"):
         monkeypatch.delenv(name, raising=False)
 
 

@@ -594,17 +594,21 @@ def history(request):
 # the name shown for a model that is not set up (its .env line is missing)
 NOT_SET_UP = {"groq-main": ("Groq", "GROQ_MODEL"),
               "groq-main-2": ("Groq (2nd key)", llm.KEY_2),                # 19-Nov: the second Groq key
-              "groq-backup": ("Groq backup", "GROQ_FALLBACK_MODEL")}
+              "groq-backup": ("Groq backup", "GROQ_FALLBACK_MODEL"),
+              llm.LOCAL_ID: ("Local model", f"{llm.LOCAL_URL} / {llm.LOCAL_MODEL}")}  # 20-Nov: the company's own
 
 
 def _model_choice(model_id, found, in_chain):
-    """One model of /api/models: {id, label, available[, note]} - available = set up, in the chain and not
-    resting now (note says why not, e.g. "resting until 03:45 PM (Groq's daily limit was reached)")."""
+    """One model of /api/models: {id, label, available[, note][, hint]} - available = set up, in the chain (the
+    local model: any time it is set up) and not resting now (note says why not, e.g. "resting until 03:45 PM (Groq's
+    daily limit was reached)"). 20-Nov: the local model always has hint (llm.LOCAL_HINT: it runs on a CPU - slow)."""
     entry = found.get(model_id)
+    hint = {"hint": llm.LOCAL_HINT} if model_id == llm.LOCAL_ID else {}
     if entry is None:
         label, setting = NOT_SET_UP[model_id]
-        return {"id": model_id, "label": label, "available": False, "note": f"{setting} is not set in .env"}
-    row = {"id": model_id, "label": entry.label, "available": False}
+        verb = "" if model_id == llm.LOCAL_ID else "is "  # "LOCAL_LLM_URL / LOCAL_LLM_MODEL not set in .env"
+        return {"id": model_id, "label": label, "available": False, "note": f"{setting} {verb}not set in .env", **hint}
+    row = {"id": model_id, "label": entry.label, "available": False, **hint}
     rest = agent.resting(model_id)
     if model_id not in in_chain:
         row["note"] = "not in AI_MODEL_CHAIN"
@@ -621,8 +625,10 @@ def models(request):
     """The AI models an admin may choose on the Ask page (POST /api/ask "model"): "auto" (the chain's own order:
     Groq main, the same model on the second Groq key (19-Nov), the Groq backup) and each model of the chain - set up
     in .env, in the chain and not resting right now = available (each key rests on its own). A chosen model is the
-    only one asked (18-Nov: no fallback - a clear error card when it cannot answer). Never a key."""
-    found, in_chain = llm.known_models(), {entry.id for entry in llm.chain_models()}
+    only one asked (18-Nov: no fallback - a clear error card when it cannot answer). Never a key.
+    20-Nov: "local" (the company's own model, LOCAL_LLM_URL / LOCAL_LLM_MODEL) is listed too, with "hint" (it runs
+    on a CPU: slow); it can be chosen whenever it is set up - Auto never uses it unless AI_MODEL_CHAIN lists it."""
+    found, in_chain = llm.known_models(), {entry.id for entry in llm.choosable_models()}
     return JsonResponse({"models": [{"id": "auto", "label": "Auto (recommended)", "available": True}]
                          + [_model_choice(model_id, found, in_chain) for model_id in llm.MODEL_IDS]})
 

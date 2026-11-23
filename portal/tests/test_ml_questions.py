@@ -48,8 +48,9 @@ FORECAST_ROWS = {"columns": ["sales_month", "period_start", "period_end", "forec
                            Decimal("480000000.00"), Decimal("440000000.00"), Decimal("520000000.00"),
                            Decimal("6.20"), datetime.date(2026, 10, 31)]],
                  "truncated": False}
-FORECAST_ANSWER = ("The forecast for sales month Nov 2026 (21-Oct-2026 to 20-Nov-2026) is INR 480,000,000.00, likely "
-                   "between INR 440,000,000.00 and INR 520,000,000.00 (average error 6.20 %).")
+# 20-Nov: in Cr as the answer rule says - full rupees (INR 480,000,000.00) are now sent back once (answer_verify check 7)
+FORECAST_ANSWER = ("The forecast for sales month Nov 2026 (21-Oct-2026 to 20-Nov-2026) is about INR 48.0 Cr, likely "
+                   "between 44.0 Cr and 52.0 Cr (average error 6.20 %).")
 # the actual sales of the same month from the invoices, NOT cut at today: this one must still be sent back
 ACTUAL_NOV_SQL = """SELECT ROUND(SUM(il.net_taxable_value), 2) AS net_sales_inr
 FROM fact_invoice_lines il JOIN dim_calendar c ON c.date_id = il.invoice_date_id
@@ -231,7 +232,7 @@ def test_every_ml_example_parses_passes_the_guard_and_the_checks(chunk):
 
 def test_the_ml_note_asks_for_rounded_crore_amounts_and_no_filler():
     """17-Nov: the forecast answer gave 534,887,655.19 and ended with "should be monitored for any risk alerts"."""
-    assert "rounded in Cr (e.g. about INR 53.5 Cr, range 49.8 - 57.1 Cr)" in agent.ML_RESULTS_NOTE
+    assert "rounded in Cr (e.g. 123,456,789.00 = about INR 12.3 Cr, range 11.1 - 13.6 Cr)" in agent.ML_RESULTS_NOTE
     assert "no advice, no filler and no bare date at the end" in agent.ML_RESULTS_NOTE
 
 

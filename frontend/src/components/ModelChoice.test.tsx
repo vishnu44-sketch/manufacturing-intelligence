@@ -2,7 +2,7 @@
 // screen and under a conversation) and on ML Insights, with the models of /api/models; the chosen model goes
 // with the question as "model" (none for Auto) and is kept in this browser. Other users see no pill and the
 // models list is never asked for. fetch is a fake.
-import { fireEvent, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import { callsTo, fakeFetch, type Replies } from '../test/fakeFetch'
 import { ASHA, BOSS, renderAt } from '../test/render'
@@ -46,6 +46,28 @@ function replies(extra: Replies = {}): Replies {
     ...extra,
   }
 }
+
+// 20-Nov: the company's own model on a CPU server ("local"): never in Auto, only when an administrator picks it
+const HINT = "Runs on the company's CPU server - an answer can take a few minutes"
+const LOCAL = { id: 'local', label: 'Local (llama3.1:8b)', available: true, hint: HINT }
+const WITH_LOCAL = { models: [...MODELS.models, LOCAL] }
+const LOCAL_OFF = { models: [...MODELS.models,
+  { id: 'local', label: 'Local (llama3.1:8b)', available: false, note: 'LOCAL_LLM_URL / LOCAL_LLM_MODEL not set in .env', hint: HINT }] }
+
+/** A stream the test feeds line by line (it stays open until end()). */
+function liveStream() {
+  let controller!: ReadableStreamDefaultController<Uint8Array>
+  const stream = new ReadableStream<Uint8Array>({ start(c) { controller = c } })
+  const encoder = new TextEncoder()
+  return {
+    reply: { body: stream, headers: { 'Content-Type': 'application/x-ndjson' } },
+    send: (event: object) => controller.enqueue(encoder.encode(`${JSON.stringify(event)}\n`)),
+    end: () => controller.close(),
+  }
+}
+
+/** The line under "Thinking…" / the steps that names the slow model and its hint. */
+const slowNote = () => screen.findByText((_, el) => el?.hasAttribute('data-slow-model') ?? false)
 
 const picker = () => screen.findByRole('combobox', { name: 'AI model' })
 
@@ -157,5 +179,120 @@ describe('the model pill (other users)', () => {
     expect(await screen.findByLabelText('Your question about forecasts and insights')).toBeInTheDocument()
     expect(screen.queryByRole('combobox', { name: 'AI model' })).not.toBeInTheDocument()
     expect(fetch.mock.calls.map(([url]) => url)).not.toContain('/api/models')
+  })
+})
+
+describe('the local model (company CPU server, 20-Nov)', () => {
+  it('is listed with its hint after the name (and as the tooltip); picking it sends model "local"', async () => {
+    const fetch = fakeFetch(replies({ '/api/models': { body: WITH_LOCAL } }))
+    renderAt('/new', <AskPage me={BOSS} />)
+    const select = await picker()
+    const local = within(select).getByRole('option', { name: `Local (llama3.1:8b) - ${HINT}` }) as HTMLOptionElement
+    expect(local.disabled).toBe(false)
+    expect(local).toHaveAttribute('title', HINT)
+    // a model without a hint: only its name, as before
+    expect(within(select).getByRole('option', { name: 'Groq backup' })).not.toHaveAttribute('title')
+
+    fireEvent.change(select, { target: { value: 'local' } })
+    const pill = (await picker()).closest('label')!
+    expect(pill).toHaveTextContent('Local (llama3.1:8b)')
+    expect(pill).toHaveAttribute('title', `Local (llama3.1:8b): ${HINT}`)
+    await ask()
+    expect(await screen.findByText(CARD.answer)).toBeInTheDocument()
+    expect(callsTo(fetch, '/api/ask/stream')).toEqual([{ question: QUESTION, chat_id: null, model: 'local' }])
+  })
+
+  it('not set up: greyed out with the note (not the hint) and a kept "local" asks with Auto', async () => {
+    window.localStorage.setItem('askModel', 'local')
+    const fetch = fakeFetch(replies({ '/api/models': { body: LOCAL_OFF } }))
+    renderAt('/new', <AskPage me={BOSS} />)
+    const select = await picker()
+    const local = within(select).getByRole('option',
+      { name: 'Local (llama3.1:8b) - LOCAL_LLM_URL / LOCAL_LLM_MODEL not set in .env' }) as HTMLOptionElement
+    expect(local.disabled).toBe(true)
+    expect(local).toHaveAttribute('title', 'LOCAL_LLM_URL / LOCAL_LLM_MODEL not set in .env')
+    expect(select).toHaveValue('auto')
+    await ask()
+    await waitFor(() => expect(callsTo(fetch, '/api/ask/stream')).toEqual([{ question: QUESTION, chat_id: null }]))
+  })
+
+  it('while its answer is awaited the wait says the model is slow; 5 minutes of waiting are not cut by the browser', async () => {
+    // fake timers that also move with real time (so findBy works): the 20 s / 60 s texts and 5 minutes at once
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'], shouldAdvanceTime: true })
+    try {
+      window.localStorage.setItem('askModel', 'local')
+      const live = liveStream()
+      const fetch = fakeFetch(replies({ '/api/models': { body: WITH_LOCAL }, '/api/ask/stream': live.reply }))
+      renderAt('/new', <AskPage me={BOSS} />)
+      expect(await picker()).toHaveValue('local')
+      await ask()
+
+      // before the first step: "Thinking…" with the model's hint under it
+      const note = await slowNote()
+      expect(note).toHaveTextContent(`Local (llama3.1:8b): ${HINT}…`)
+      expect(note.closest('[role="status"]')).toHaveTextContent('Thinking…')
+
+      // a step came: the hint stays, under the steps
+      live.send({ type: 'step', label: 'Write the SQL (AI)' })
+      const steps = await screen.findByRole('list', { name: 'Steps' })
+      expect(steps.closest('[role="status"]')).toHaveTextContent(HINT)
+
+      // 5 minutes later: still waiting - no "up to a minute" (wrong for this model), the History line, no new call
+      act(() => { vi.advanceTimersByTime(5 * 60 * 1000) })
+      const status = screen.getByRole('list', { name: 'Steps' }).closest('[role="status"]')!
+      expect(status).toHaveTextContent(HINT)
+      expect(status).toHaveTextContent('you can also find it in History')
+      expect(screen.queryByText(/up to a minute/)).not.toBeInTheDocument()
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+      expect(callsTo(fetch, '/api/ask/stream')).toHaveLength(1)
+      expect(callsTo(fetch, '/api/ask')).toHaveLength(0)                    // not given up and asked the plain way
+
+      // the answer still arrives and is shown
+      live.send({ type: 'done', chat: CHAT, card: CARD })
+      live.end()
+      expect(await screen.findByText(CARD.answer)).toBeInTheDocument()
+      expect(document.querySelector('[data-slow-model]')).toBeNull()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('the plain /api/ask (no stream) shows the hint too while it waits', async () => {
+    window.localStorage.setItem('askModel', 'local')
+    let answer!: () => void
+    const waited = new Promise<void>((done) => { answer = done })
+    const fake = fakeFetch(replies({
+      '/api/models': { body: WITH_LOCAL },
+      '/api/ask/stream': { status: 404, body: { detail: 'Not found.' } },
+      '/api/ask': { body: { chat: CHAT, card: CARD } },
+    }))
+    // the plain answer comes only when the test says so
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      const reply = await fake(url, init)
+      if (url === '/api/ask') await waited
+      return reply
+    }))
+    renderAt('/new', <AskPage me={BOSS} />)
+    expect(await picker()).toHaveValue('local')
+    await ask()
+    await waitFor(() => expect(callsTo(fake, '/api/ask')).toEqual([{ question: QUESTION, chat_id: null, model: 'local' }]))
+    const note = await slowNote()
+    expect(note).toHaveTextContent(`Local (llama3.1:8b): ${HINT}…`)
+    expect(note.closest('[role="status"]')).toHaveTextContent('Thinking…')
+    answer()
+    expect(await screen.findByText(CARD.answer)).toBeInTheDocument()
+  })
+
+  it('Auto shows the plain "Thinking…" with no model line', async () => {
+    const live = liveStream()
+    fakeFetch(replies({ '/api/models': { body: WITH_LOCAL }, '/api/ask/stream': live.reply }))
+    renderAt('/new', <AskPage me={BOSS} />)
+    await picker()
+    await ask()
+    expect(await screen.findByRole('status')).toHaveTextContent('Thinking…')
+    expect(document.querySelector('[data-slow-model]')).toBeNull()
+    live.send({ type: 'done', chat: CHAT, card: CARD })
+    live.end()
+    expect(await screen.findByText(CARD.answer)).toBeInTheDocument()
   })
 })

@@ -171,7 +171,7 @@ ML_RESULTS_NOTE = ("these rows are ML results on the data up to data_to. Words: 
                    "run-out. The forecast covers only the months in its rows: for a longer period (a year, a quarter) name those "
                    "months and say plainly the rest is not forecast (e.g. \"Jan 2027 to Oct 2027 of 2027 are forecast; Nov "
                    "and Dec 2027 are not forecast and have no actual sales yet\") - never give them as the period's total. The data date "
-                   "is data_to / report_date, never a period end. Write forecast amounts rounded in Cr (e.g. about INR 53.5 Cr, range 49.8 - 57.1 Cr) - the "
+                   "is data_to / report_date, never a period end. Write forecast amounts rounded in Cr (e.g. 123,456,789.00 = about INR 12.3 Cr, range 11.1 - 13.6 Cr) - the "
                    "exact numbers are in the table. Dates count from the data date, not today: a run-out date before today = "
                    "would have run out by then (before today) unless new stock arrived. A list cut short: give its "
                    "total (count column or the app's totals) and the rows shown, e.g. \"118 High-risk customers; the "
@@ -303,13 +303,13 @@ Rules for the SQL:
    Words around a month: "since / from Oct 2026" = on or after the month's FIRST day (MIN(sales_period_start) of 'Oct 2026' = 21-Sep-2026); "after Oct 2026" = after its LAST day (MAX(sales_period_end)); "before Oct 2026" = before its first day; "until / up to Oct 2026" = up to its last day.
    No period at all (no month, quarter, year, dates, "this / last ...") in a question about sales amounts, e.g. "top customer in Japan", "net sales by state": use all the invoice data (no date filter) and also return (SELECT MIN(invoice_date) FROM fact_invoice_lines) AS data_from and (SELECT MAX(invoice_date) FROM fact_invoice_lines) AS data_to, so the answer can name the dates.
 5. "Sales", "net sales", "revenue", "turnover", "billing" and "invoice value" = ROUND(SUM(fact_invoice_lines.net_taxable_value), 2) - credit notes are already negative there, so do not filter document_type for sales totals. Units sold = SUM(net_quantity). Average selling price = SUM(net_taxable_value) / SUM(net_quantity) - never AVG(unit_price).
-6. Financial year (FY): '2627' = FY 2026-27 = 01-Apr-2026 to 31-Mar-2027. A FY total filters or groups by c.financial_year. A FY split into sales months filters c.sales_year = '2627' and orders by c.sales_period_no. Months of more than one FY (e.g. all the data): GROUP BY and ORDER BY c.sales_year, c.sales_period_no - sales_period_no alone puts Jan 2026 next to Jan 2027.
+6. Financial year (FY): '2627' = FY 2026-27 = 01-Apr-2026 to 31-Mar-2027. A FY total filters or groups by c.financial_year. A FY split into sales months filters c.sales_year = '2627' and orders by c.sales_period_no. Never turn a FY into dates with sales_period_start / sales_period_end (a FY and the sales months do not line up). Months of more than one FY (e.g. all the data): GROUP BY and ORDER BY c.sales_year, c.sales_period_no - sales_period_no alone puts Jan 2026 next to Jan 2027.
 7. Sales order numbers restart every FY: count orders with COUNT(DISTINCT s.so_number, c.financial_year) and find one order by so_number + financial year.
 8. Stock value on a date = SUM(cumulative_value) of the 'Closing balance' rows (dim_stock_movement_types.movement_type) of that report_date - never SUM every stock ledger row. Always SELECT the report_date you used, so the answer can name the stock report. Balance rows have no warehouse_code (only movement rows do): for stock by warehouse give the total and a MISSING line.
 9. Follow the business rules and example SQL in the documents below. When an example answers the same question, use its SQL.
 10. Money: ROUND(..., 2). Top N: ORDER BY ... DESC LIMIT N. Give computed columns clear snake_case names with the unit, e.g. net_sales_inr.
 11. Never use a reserved word as an alias (lines, rows, order, group, year, range, rank, key, values): use short aliases like il, s, c, cu, p, sl, t, sp, f.
-12. Text values are exact (case matters): status 'Open' / 'Closed' / 'Canceled'; document_type 'INVOICE' / 'CREDIT_NOTE' / 'DEBIT_NOTE'; movement_type 'Closing balance' / 'Opening Balance'; sale_type 'Domestic' / 'Export' / 'Service'; item_group 'Finished goods' / 'Raw material' / 'Consumables' / 'Capital Item'; financial_year '2425' / '2526' / '2627' (the FY before '2627' is '2526').
+12. Text values are exact (case matters): status 'Open' / 'Closed' / 'Canceled'; document_type 'INVOICE' / 'CREDIT_NOTE' / 'DEBIT_NOTE'; movement_type 'Closing balance' / 'Opening Balance'; sale_type 'Domestic' / 'Export' / 'Service'; item_group 'Finished goods' / 'Raw material' / 'Consumables' / 'Capital Item'; financial_year '2425' / '2526' / '2627' (the FY before '2627' is '2526'); is_active / is_current 'Y' / 'N' (never 1 / 0).
 13. Names the user types (customer, product, sales person) are often partial or spelt differently: match them with LIKE '%words%', GROUP BY the matching customer / product / person so every match is its own row, and add COUNT(*) OVER () AS matches. Never add several matches into one number; never compare names with = to the user's words.
 14. MySQL uses only_full_group_by: in a SELECT with SUM / COUNT / MIN / MAX and no GROUP BY, every other column must also be inside MIN() / MAX() (or be in a GROUP BY).
 15. "Which category / type / state / territory / sales person ... is the highest": return the top 5 groups (LIMIT 5), not only 1 - a 'Not classified' / 'Not given' / Unknown group can be the biggest and must not hide the top real one.
@@ -531,17 +531,18 @@ class ReplyCutOff(AIUnavailable):
 
 
 class RequestTooLarge(AIUnavailable):
-    """Groq's 413: the request alone is more than the model's tokens per minute (8,000 on the free tier)."""
+    """Groq's 413: the request alone is more than the model's tokens per minute (8,000 on the free tier).
+    20-Nov: message = the local model's own text (its context is too small - lc.llm.LOCAL_TOO_SMALL)."""
 
-    def __init__(self):
-        super().__init__(AI_ERROR)
+    def __init__(self, message=None):
+        super().__init__(message or AI_ERROR)
 
 
 class ModelBusy(AIUnavailable):
-    """A model's per-minute limit (429): the next model of the chain is tried."""
+    """A model's per-minute limit (429): the next model of the chain is tried (20-Nov: message = the local model's)."""
 
-    def __init__(self):
-        super().__init__(AI_BUSY)
+    def __init__(self, message=None):
+        super().__init__(message or AI_BUSY)
 
 
 class MinuteLimit(ModelBusy):
@@ -557,16 +558,16 @@ class ModelDown(AIUnavailable):
     """A model could not be reached: network, timeout or a server error (busy=True: 503, e.g. Groq's "over
     capacity"). The next model of the chain is tried."""
 
-    def __init__(self, busy=False):
-        super().__init__(AI_DOWN)
+    def __init__(self, busy=False, message=None):
+        super().__init__(message or AI_DOWN)
         self.busy = busy
 
 
 class ModelFailed(AIUnavailable):
     """Any other error of a model (a wrong key, an unknown model, a bad request): the next model is tried."""
 
-    def __init__(self):
-        super().__init__(AI_ERROR)
+    def __init__(self, message=None):
+        super().__init__(message or AI_ERROR)
 
 
 class StreamBroken(AIUnavailable):
@@ -1552,6 +1553,13 @@ def limit_note(result):
             f"never call these the full list or say there are only {limit}")
 
 
+def cut_at_row_limit(sql):
+    """True when the AI's own SQL has no LIMIT at its end, or one of 500 or more: with 500 rows back, the SQL guard's
+    LIMIT 500 cut the list and there can be more (20-Nov; sql_page.run counts a capped query the same way)."""
+    found = _LAST_LIMIT.search((sql or "").strip())
+    return not found or int(found.group(1)) >= warehouse.MAX_ROWS
+
+
 def highest_lowest(result, max_columns=3, seen=FALLBACK_ROWS_FOR_ANSWER):
     """'highest net_sales_inr: Jan 2027 = 3,958,025,198.88; lowest net_sales_inr: Aug 2026 = 5,440,490.00'
     for up to 3 amount columns, worked out here from ALL the rows: the model named the wrong lowest month of 15 rows
@@ -2386,7 +2394,185 @@ def month_text_ranges(sql):
     return None
 
 
-FORECAST_AMOUNT_COLUMNS = ("forecast_inr", "low_inr", "high_inr")  # only ml_sales_forecast has these names
+# 20-Nov: "How many active customers did we invoice in October 2026?" (the local model) filtered cu.is_active = 1, but
+# dim_customers.is_active is CHAR(1) 'Y' / 'N': 1 matches no row, and the answer said 0 active customers (707 were).
+# The 'Y' / 'N' columns come from docs/data_dictionary.md (a column whose meaning names 'Y'), never a list typed here.
+YES_NO_PROBLEM = ("{column} is CHAR(1) with the text values 'Y' / 'N' (not a number, not TRUE / FALSE), so {wrong} "
+                  "does not pick the rows you mean. Write {column} = 'Y' (or = 'N').")
+_YES_NO_MEANING = re.compile(r"'Y'")
+
+
+def yes_no_columns():
+    """{table: {column, ...}} of the 'Y' / 'N' columns of docs/data_dictionary.md (lc.memory.data_dictionary)."""
+    from ..lc.memory import data_dictionary  # imported here: portal/lc/ imports this module
+
+    found = {}
+    for table, columns in data_dictionary().items():
+        names = {column for column, meaning in columns.items() if _YES_NO_MEANING.search(meaning)}
+        if names:
+            found[table] = names
+    return found
+
+
+def _like_a_number(value):
+    """True for 1 / 0 / TRUE / FALSE / '1' / '0' - what a 'Y' / 'N' column never holds."""
+    return isinstance(value, exp.Boolean) or (isinstance(value, exp.Literal) and value.this in ("0", "1"))
+
+
+def yes_no_numbers(sql):
+    """(the column, the wrong part) when the SQL compares a 'Y' / 'N' column with 1 / 0 / TRUE / FALSE / '1' / '0'
+    (=, <>, !=, IN, IS) or uses it alone as a condition (WHERE cu.is_active); else None (also for SQL that cannot
+    be read). A column counts when its table (by alias, or any table of the query for a column with no alias) has it
+    as 'Y' / 'N' in the data dictionary."""
+    columns = yes_no_columns()
+    lowered = (sql or "").lower()
+    if not any(name in lowered for names in columns.values() for name in names):
+        return None
+    try:
+        tree = sqlglot.parse_one(sql, read="mysql")
+    except (sqlglot.errors.ParseError, sqlglot.errors.TokenError):
+        return None
+    if tree is None:
+        return None
+    tables = {table.alias_or_name.lower(): table.name.lower() for table in tree.find_all(exp.Table)}
+
+    def yes_no(node):
+        if not isinstance(node, exp.Column):
+            return False
+        name = node.name.lower()
+        if node.table:
+            return name in columns.get(tables.get(node.table.lower(), ""), ())
+        return any(name in columns.get(table, ()) for table in tables.values())
+
+    for node in tree.find_all(exp.EQ, exp.NEQ, exp.In, exp.Is):
+        if isinstance(node, exp.In):
+            column, values = node.this, node.expressions
+        else:
+            column, values = next(((c, [v]) for c, v in ((node.this, node.expression), (node.expression, node.this))
+                                   if isinstance(c, exp.Column)), (None, []))
+        if yes_no(column) and any(_like_a_number(value) for value in values):
+            return column.sql(dialect="mysql"), node.sql(dialect="mysql")
+    for column in tree.find_all(exp.Column):
+        if yes_no(column) and isinstance(column.parent, (exp.Where, exp.And, exp.Or, exp.Not)):
+            return column.sql(dialect="mysql"), f"{column.sql(dialect='mysql')} on its own as a condition"
+    return None
+
+
+# 23-Nov (local model): "Which products' stock dropped the most between the last two stock reports?" took the two
+# newest reports as (SELECT report_date FROM fact_stock_ledger ... ORDER BY report_date DESC LIMIT 2) and the older
+# one with LIMIT 1 OFFSET 1 - a stock report has a row per item, so both gave 31-Oct-2026 and every drop was 0. A
+# SELECT of only a period column (a *_date column, a month / year / quarter name) of many rows per period, ordered,
+# with LIMIT 2+ or an OFFSET, and without DISTINCT / GROUP BY, repeats the newest period. Sent back on every try but
+# the last.
+_PERIOD_COLUMN = re.compile(r"^(?!full_date$)\w*_date$|^(?:sales_month|month_year|financial_year|sales_year|"
+                            r"fiscal_quarter|sales_period_(?:start|end))$", re.I)
+REPEATED_PERIOD_PROBLEM = ("{part} takes the newest values of {column} from rows that repeat it (every {column} has "
+                           "many rows), so LIMIT / OFFSET gives the same newest {column} again. Take the distinct "
+                           "values: SELECT DISTINCT {column} ... ORDER BY {column} DESC LIMIT n (or GROUP BY "
+                           "{column}).")
+
+
+# 23-Nov (local model): "How many of our active customers have not bought anything this financial year?" failed 3
+# times with MySQL 1140 (only_full_group_by: fy.fy_start of a one-row CTE selected next to SUM(...) without GROUP BY) -
+# the bare MySQL message did not tell the model how to fix it. The retry now says it, naming the column of the error.
+_GROUP_BY_ERROR = re.compile(r"\((?:1140|1055)\).*?(?:column|expression)\s+'([^']+)'", re.I | re.S)
+GROUP_BY_HINT = (" Fix: {column} is a plain column next to SUM / COUNT / MIN / MAX without GROUP BY - write "
+                 "MIN({column}) (or ANY_VALUE({column})), or add it to GROUP BY.")
+
+
+def mysql_error_hint(message):
+    """The fix sentence added to a MySQL error that goes back to the AI ('' = none): only_full_group_by (1140 / 1055)
+    names the column to wrap."""
+    found = _GROUP_BY_ERROR.search(str(message or ""))
+    return GROUP_BY_HINT.format(column=found.group(1)) if found else ""
+
+
+MOST_PERIOD_PICKS = 36   # "the last N reports / months": a bigger LIMIT is a list, not a pick
+
+
+def _whole_number(node):
+    """The int of a LIMIT / OFFSET literal (None when it is not one)."""
+    value = node.args.get("expression") if node is not None else None
+    try:
+        return int(value.this) if isinstance(value, exp.Literal) else None
+    except (TypeError, ValueError):
+        return None
+
+
+def repeated_period_values(sql):
+    """(the column, the part) of a SELECT that takes the 2nd / Nth newest period from rows that repeat it: one
+    period column selected, ORDER BY, LIMIT 2+ or OFFSET 1+, no DISTINCT and no GROUP BY; else None (also for SQL
+    that cannot be read)."""
+    if not re.search(r"\b(?:limit\s+(?:[2-9]|\d\d)|offset\s+[1-9])", sql or "", re.I):
+        return None
+    try:
+        tree = sqlglot.parse_one(sql, read="mysql")
+    except (sqlglot.errors.ParseError, sqlglot.errors.TokenError):
+        return None
+    for select in (tree.find_all(exp.Select) if tree is not None else []):
+        if (select.args.get("distinct") or select.args.get("group") or not select.args.get("order")
+                or len(select.expressions) != 1 or not isinstance(select.expressions[0].unalias(), exp.Column)):
+            continue
+        column = select.expressions[0].unalias()
+        source = (select.args.get("from_") or select.args.get("from"))
+        if not _PERIOD_COLUMN.match(column.name) or source is None or not isinstance(source.this, exp.Table):
+            continue
+        limit, offset = _whole_number(select.args.get("limit")), _whole_number(select.args.get("offset"))
+        if 2 <= (limit or 0) <= MOST_PERIOD_PICKS or (offset or 0) >= 1:  # not the guard's LIMIT 500
+            part = (f"SELECT {column.sql(dialect='mysql')} FROM {source.this.name} ... "
+                    + (f"LIMIT {limit}" if limit is not None else "") + (f" OFFSET {offset}" if offset else ""))
+            return column.name, part.strip()
+    return None
+
+
+# 20-Nov: "Which customers bought in FY 2024-25 but not in FY 2025-26?" took each year's limits as
+# (SELECT MIN(sales_period_start) ... WHERE financial_year = '2425') to (SELECT MAX(sales_period_end) ...): a FY's days
+# lie in sales months from 21-Mar to 20-Apr, so the two years overlapped by a month (439 customers, truly 489).
+FY_SALES_PERIODS_PROBLEM = ("the query takes a financial year's date limits from MIN(sales_period_start) / "
+                            "MAX(sales_period_end) of its dim_calendar days, but a financial year (1-Apr to 31-Mar) does "
+                            "not line up with the sales months (21st to 20th): those limits run from 21-Mar to 20-Apr, so "
+                            "two financial years overlap by a month. Filter the financial year directly: JOIN dim_calendar "
+                            "c on the date key and c.financial_year = '<the FY>' (e.g. '2526'), or invoice_date BETWEEN "
+                            "the 1-Apr and the 31-Mar of that year.")
+_SALES_PERIOD_LIMITS = ("sales_period_start", "sales_period_end")
+_MORE_EXACT_FILTERS = ("sales_month", "sales_period", "sales_year", "month_year", "full_date", "date_id")
+
+
+def fy_from_sales_periods(sql):
+    """True when a WITH part or a subquery turns a financial_year filter into date limits with sales_period_start /
+    sales_period_end: MIN / MAX of them with no GROUP BY, or the plain column in a subquery compared with a date
+    (invoice_date >= (SELECT sales_period_start ... LIMIT 1)); else False (also for SQL that cannot be read).
+    Never flagged: the main SELECT's own columns (fy_period_dates fixes those), a list grouped by sales month, a
+    WHERE that also picks a sales month / sales year / day, and sales years (sales_year) with sales periods."""
+    lowered = (sql or "").lower()
+    if "financial_year" not in lowered or "sales_period_" not in lowered:
+        return False
+    try:
+        tree = sqlglot.parse_one(sql, read="mysql")
+    except (sqlglot.errors.ParseError, sqlglot.errors.TokenError):
+        return False
+    if tree is None:
+        return False
+    for select in tree.find_all(exp.Select):
+        where = select.args.get("where")
+        if where is None or select.args.get("group") or select.find_ancestor(exp.Subquery, exp.CTE) is None:
+            continue
+        filtered = [c.name.lower() for c in where.find_all(exp.Column)]
+        if "financial_year" not in filtered or any(name.startswith(_MORE_EXACT_FILTERS) for name in filtered):
+            continue
+        for item in select.expressions:
+            if not any(c.name.lower() in _SALES_PERIOD_LIMITS for c in item.find_all(exp.Column)):
+                continue
+            if item.find(exp.Min, exp.Max):
+                return True
+            outer = select.parent
+            if isinstance(outer, exp.Subquery) and isinstance(outer.parent, (exp.Between, exp.GT, exp.GTE, exp.LT,
+                                                                             exp.LTE)):
+                return True
+    return False
+
+
+FORECAST_AMOUNT_COLUMNS =("forecast_inr", "low_inr", "high_inr")  # only ml_sales_forecast has these names
 FORECAST_MONTH_COLUMNS = ("sales_month", "period_start", "period_end", "forecast_id")
 FORECAST_SUM_PROBLEM = ("ml_sales_forecast.forecast_inr is per sales month - never add months up: return one row per "
                         "forecast month (sales_month, period_start, period_end, forecast_inr, low_inr, high_inr, "
@@ -3104,8 +3290,8 @@ def models_in_order(chosen="", answered_by=""):
     key is better than the weaker backup."""
     from ..lc import llm  # imported here: portal/lc/ imports this module
 
-    if chosen:
-        return [entry for entry in llm.chain_models() if entry.id == chosen]
+    if chosen:  # 20-Nov: the local model can be chosen even when it is not in the chain (llm.choosable_models)
+        return [entry for entry in llm.choosable_models() if entry.id == chosen]
     base = llm.chain_models()
     order = [entry for entry in base if entry.id == chosen or not resting(entry.id)] or base
     if not any(entry.full_request for entry in order):
@@ -3183,14 +3369,21 @@ def _ask_one(request, max_tokens, effort, entry, streamed, switch=False):
         return calls.chat(smaller, max_tokens, effort, entry.model, key_env=entry.key_env, **streamed)
 
 
-def chosen_failed(chosen, kind):
+def chosen_failed(chosen, kind, detail=""):
     """The error card's message when the model an admin chose (lc.llm.MODEL_IDS) cannot answer - 18-Nov: a chosen
     model is the only one asked, so the admin is told plainly why instead of another model answering quietly.
-    kind = _failure's kind ('busy', 'daily', 'down', 'key', 'error') or 'missing' (not set up / not in the chain)."""
+    kind = _failure's kind ('busy', 'daily', 'down', 'key', 'error') or 'missing' (not set up / not in the chain).
+    20-Nov: the local model's own message (detail = str() of its error, lc.calls.chat) is shown as it is."""
     from ..lc import llm  # imported here: portal/lc/ imports this module
 
     name = llm.SHORT_NAMES.get(chosen, chosen)
     name = name[:1].upper() + name[1:]          # "the Groq backup model" -> "The Groq backup model"
+    if chosen == llm.LOCAL_ID:
+        if kind in ("missing", "key"):
+            return f"{llm.LOCAL_MISSING} Choose another model, or Auto."
+        if detail.startswith("The local"):
+            return detail
+        return f"{name} returned an error. Try again, or choose Auto."
     setting = {"groq-main-2": llm.KEY_2, "groq-backup": "GROQ_FALLBACK_MODEL"}.get(chosen, llm.KEY)
     if kind == "missing" and chosen in llm.known_models():
         return f"{name} is not in AI_MODEL_CHAIN (.env). Choose another model, or Auto."
@@ -3221,14 +3414,14 @@ def _ask_models(request, max_tokens, effort, order, reasons=None, on_token=None,
     streamed = {"on_token": on_token} if on_token else {}  # only then: calls.chat stays as it was for the rest
     reasons = {} if reasons is None else reasons
     kinds, messages = [], []
-    if chosen and not order:  # the chosen model is not set up (no key) or not in AI_MODEL_CHAIN
+    if chosen and not order:  # the chosen model is not set up (no key, no LOCAL_LLM_URL) or not in the chain
         raise AIUnavailable(chosen_failed(chosen, "missing"))
     queue, put_back = list(order), set()  # put_back: keys asked again (they wait) after their per-minute limit
     while queue:
         entry = queue.pop(0)
         switch = (not chosen and entry.full_request and entry.id not in put_back
                   and any(other.full_request and other.model == entry.model and not resting(other.id)
-                          for other in queue))
+                          and not other.is_local for other in queue))  # 20-Nov: a local model is not a Groq key
         asked = request(entry) if callable(request) else request
         _waited.secs = 0.0
         started = time.perf_counter()
@@ -3250,9 +3443,9 @@ def _ask_models(request, max_tokens, effort, order, reasons=None, on_token=None,
             if chosen:  # an admin's choice: no other model - the error card says why (a request too large keeps
                 # RequestTooLarge: graph.write_sql may still send it smaller)
                 log.warning("%s (%s), chosen by an admin, did not answer: %s", entry.id, entry.model, why)
-                if kind == "too_large":
-                    raise RequestTooLarge() from None
-                raise AIUnavailable(chosen_failed(chosen, kind)) from None
+                if kind == "too_large":  # its own message kept (20-Nov: the local model's context is too small)
+                    raise RequestTooLarge(str(exc)) from None
+                raise AIUnavailable(chosen_failed(chosen, kind, str(exc))) from None
             log.warning("%s (%s) did not answer: %s - the next model is tried", entry.id, entry.model, why)
             continue
         finally:
@@ -3298,6 +3491,9 @@ def model_note(chosen, answered, reasons):
     if answered.id == "groq-main-2":
         note = (f"{why} - " if why else "") + "the second Groq key answered"
         return note if len(note) <= 200 else "the second Groq key answered"
+    if answered.id == llm.LOCAL_ID:  # 20-Nov: the local model listed in AI_MODEL_CHAIN after Groq
+        note = (f"{why} - " if why else "") + "the local AI model answered"
+        return note if len(note) <= 200 else "the local AI model answered"
     return why[:200]
 
 
@@ -3390,6 +3586,7 @@ _QUANTITY = re.compile(r"(^|_)(qty|quantity)(_|$)", re.I)
 def format_value(value, column=""):
     """(text, is_number) for one value: amounts get thousands separators and keep their decimals;
     rates drop their extra zeros (1.800000 -> 1.80), quantities all of them (2462.000 -> 2,462, 12.500 -> 12.5);
+    any other whole number with 3+ zero decimals is shown whole (units_in_stock 191.000 -> 191, 20-Nov);
     dates read like the answers (21-Dec-2025)."""
     if value is None:
         return "-", False
@@ -3403,6 +3600,10 @@ def format_value(value, column=""):
             places = max(2, -value.normalize().as_tuple().exponent)
         elif places and _QUANTITY.search(column or ""):
             places = max(0, -value.normalize().as_tuple().exponent)
+        elif places > 2 and value == value.to_integral_value():
+            # 20-Nov: units_on_open_orders 31.000 was answered "31.000 units" - a whole number with 3+ zero decimals
+            # (a quantity of any name) is shown whole; money (2 decimals) and real decimals (12.500) stay as they are
+            places = 0
         return f"{value:,.{places}f}", True
     if isinstance(value, float):
         return f"{value:,.2f}", True

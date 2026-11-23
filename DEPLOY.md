@@ -41,6 +41,34 @@ smaller one.
   it is busy or used up the card says so and suggests Auto. Auto keeps the whole chain. `groq-main-2` is only
   listed when `GROQ_API_KEY_2` is set. Other users always get Auto.
 
+### Company local LLM (optional)
+
+The company's own model on a CPU server (any OpenAI-compatible server, e.g. Ollama) can be used as one more
+model, id `local`. It is NOT part of Auto: it answers only when an admin picks "Local (...)" in the chat's model
+dropdown. In `.env`:
+
+    LOCAL_LLM_URL=http://10.x.x.x:11434/v1      (the base URL, ending in /v1 - this one is Ollama's)
+    LOCAL_LLM_MODEL=llama3.1:8b                 (the model name on that server)
+    LOCAL_LLM_API_KEY=...                       (only if the server needs a key)
+    LOCAL_LLM_TIMEOUT=300                       (seconds for one AI call; default 300)
+    LOCAL_LLM_THINKING=off                      (default off: a thinking model like Qwen3 answers at once;
+                                                 with thinking on it can spend every token thinking)
+
+Without `LOCAL_LLM_URL` / `LOCAL_LLM_MODEL` the dropdown shows "Local" greyed out with the reason.
+
+Check it (sends one tiny message, shows the reply and the seconds it took):
+
+    venv\Scripts\python.exe manage.py check_local_llm                (laptop)
+    docker compose exec mi-web python manage.py check_local_llm      (office PC)
+
+- The server's context must be at least 16,000 tokens - the app's requests are big. Ollama: set `num_ctx`
+  for the model, or `OLLAMA_CONTEXT_LENGTH=16384` for the Ollama server.
+- On a CPU an answer can take a few minutes. The page says so while it waits, and it does not give up by
+  itself; the answer is saved in History when it is ready. A proxy in front of the site (section 5) may need a
+  longer `proxy_read_timeout` (e.g. `900s`) for the local model.
+- Keys and addresses only in `.env` (never in chat or git).
+- After a `.env` change on the office PC: `docker compose up -d` (the containers read `.env` when they start).
+
 For the website in production:
 
 - `DJANGO_SECRET_KEY` - a long random value; the site does not start without it when DEBUG is off.

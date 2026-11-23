@@ -17,7 +17,22 @@ Kept conservative - a false send-back costs a whole extra AI call. It fires only
 - the SQL does filter by a calendar year: YEAR(...) / EXTRACT(YEAR ...) / DATE_FORMAT(..., '%Y') / LEFT(..., 4)
   compared with something, calendar_year compared with something, an 01-Jan or 31-Dec date ('2026-01-01',
   '%Y-01-01', CONCAT(YEAR(...), '-01-01')), MAKEDATE(..., 1), DAYOFYEAR(...), or LIKE '2026%'.
+
+20-Nov-2026 (the company's local model): "this financial year" / "this year" / "so far" questions got
+c.financial_year = '2526' (FY 2025-26, LAST year) while FY 2026-27 ('2627') was running - no calendar year at all, so
+the check above stayed quiet. past_fy_problem() sends such a query back once too (the same fy_check_used: at most one
+send-back for either mix-up). It fires only when ALL of these hold:
+- the question says this year / this financial year / current year / this FY, or (with no shorter period such as this
+  month, a month name, last 3 months, today) "so far" / YTD / year to date / till date;
+- the question names no year itself (2026, '26, FY 2025-26, FY26, a date, "calendar");
+- the SQL reads no ml_ table;
+- the SQL's financial_year / sales_year filters (= '2526', IN ('2526', ...), and financial_year_label = 'FY 2025-26')
+  name only financial years BEFORE the one of today - none of today's or a later one;
+- a question that also says last year / previous year (a comparison) is sent back only when the SQL shows no sign of
+  the current year either (no date from its 01-Apr on, no CURDATE() / NOW()).
+The FY of today comes from today (agent.today()), never a fixed year.
 """
+import datetime
 import re
 
 # the question: "this year" (this / current / present) and "last year" (last / previous / prior)
@@ -142,7 +157,14 @@ def _fy(first):
 
 def problem(question, sql, today):
     """The text that sends the query back ('' = nothing wrong): the question says "this year" / "last year", and
-    the SQL filters by a calendar year instead of the financial year. today = the app's date (agent.today())."""
+    the SQL filters by a calendar year instead of the financial year - or (20-Nov) the question says this year /
+    this financial year / so far, and the SQL filters only past financial years. today = the app's date
+    (agent.today())."""
+    return calendar_year_problem(question, sql, today) or past_fy_problem(question, sql, today)
+
+
+def calendar_year_problem(question, sql, today):
+    """The calendar-year send-back text of problem() ('' = none)."""
     words = year_words(question)
     if not words:
         return ""
@@ -167,3 +189,111 @@ def problem(question, sql, today):
                  + ("" if only_last else f" {label} is not over yet: count only up to today (CURDATE()).")
                  + " Use calendar_year only when the user says \"calendar year\".")
     return "; ".join(parts[:-1]) + ". " + parts[-1]
+
+
+# ------------------------------------------------------------------ 20-Nov: "this year" filtered as a PAST financial year
+_THIS_FY = re.compile(r"\b(?:this|current|present)\s+(?:financial\s+|fiscal\s+)?(?:year|yr)\b|\b(?:this|current)\s+fy\b",
+                      re.I)
+_SO_FAR = re.compile(r"\b(?:so\s+far|ytd|year[\s-]+to[\s-]+date|till\s+date)\b", re.I)
+# a year the user names himself: a calendar year (2026, '26, "calendar"), a FY (FY 2025-26, FY26) or a date
+_YEAR_NAMED = re.compile(r"calendar|\b(?:19|20)\d\d\b|'\d\d\b|\bFY\s*'?\d{2,4}\b"
+                         r"|\b\d{1,2}\s*[-/.]\s*\d{1,2}\s*[-/.]\s*\d{2,4}\b", re.I)
+# a shorter period: then "so far" belongs to it ("this month so far"), not to the year
+_SHORTER = re.compile(
+    rf"\b(?:{_MONTHS})\b|\b(?:in|of|since|from|until|till|to|for|during)\s+may\b"
+    r"|\b(?:this|current|last|previous|past|prior|recent|next)\s+(?:\d+\s+)?(?:sales\s+)?(?:months?|quarters?|weeks?|days?)\b"
+    r"|\b\d+\s+(?:months?|weeks?|days?)\b|\b(?:today|yesterday|tomorrow|mtd|qtd|q[1-4])\b", re.I)
+_LAST_FY = re.compile(r"\b(?:last|previous|prior)\s+(?:financial\s+|fiscal\s+)?(?:year|yr|fy)\b", re.I)
+# the FY codes a query filters by: financial_year / sales_year = '2526' or IN ('2526', ...), either side of the =
+_FY_FILTER = re.compile(r"\b(financial_year|sales_year)\s*(?:=\s*'(\d{4})'|IN\s*\(([^)]*)\))", re.I)
+_FY_FILTER_BEFORE = re.compile(r"'(\d{4})'\s*=\s*(?:\w+\.)?(financial_year|sales_year)\b", re.I)
+_FY_LABEL_FILTER = re.compile(r"\bfinancial_year_label\s*(?:=|IN\s*\()([^)\n]*)", re.I)
+_TODAY_SIGN = re.compile(r"\b(?:CURDATE|CURRENT_DATE|NOW|SYSDATE|CURRENT_TIMESTAMP|UTC_DATE)\b", re.I)
+_DATE_VALUE = re.compile(r"'((?:19|20)\d\d)-(\d\d)-(\d\d)")
+
+
+def names_a_year(question):
+    """True when the question names a year itself: a calendar year (2026, '26, "calendar"), a FY (FY 2025-26) or a
+    date - then "so far" / "this year" may belong to that year: no FY note and no send-back."""
+    return bool(_YEAR_NAMED.search(question or ""))
+
+
+def last_year_said(question):
+    """True when the question says last / previous / prior (financial) year and names no year itself."""
+    return bool(_LAST_FY.search(question or "")) and not names_a_year(question)
+
+
+def this_year_words(question):
+    """The words of the question that mean the current financial year ('' = none, or the user named a year or a
+    shorter period himself): "this financial year", "this year", "current year", "so far", "YTD" ..."""
+    text = question or ""
+    said = _THIS_FY.search(text)
+    so_far = _SO_FAR.search(text)
+    if not (said or so_far) or names_a_year(text):
+        return ""
+    if not said and _SHORTER.search(text):
+        return ""
+    return " ".join((said or so_far).group(0).split())
+
+
+def _fy_code(code):
+    """'2526' -> 2025 (its first year); None for a value that is not a FY code ('2530', '2026')."""
+    if not re.fullmatch(r"\d{4}", code or ""):
+        return None
+    first, second = int(code[:2]), int(code[2:])
+    return 2000 + first if second == (first + 1) % 100 else None
+
+
+def fy_filters(sql):
+    """[(column, code, first year)] of the FY codes the SQL filters by (financial_year / sales_year = or IN, and
+    financial_year_label = 'FY 2025-26'), in order, each once."""
+    found = []
+    for match in _FY_FILTER.finditer(sql or ""):
+        codes = [match.group(2)] if match.group(2) else re.findall(r"'(\d{4})'", match.group(3) or "")
+        found += [(match.group(1).lower(), code) for code in codes]
+    found += [(m.group(2).lower(), m.group(1)) for m in _FY_FILTER_BEFORE.finditer(sql or "")]
+    for match in _FY_LABEL_FILTER.finditer(sql or ""):
+        found += [("financial_year_label", f"{a[-2:]}{b[-2:]}")
+                  for a, b in re.findall(r"'FY\s*(\d{2,4})\s*-\s*(\d{2,4})'", match.group(1), flags=re.I)]
+    result = []
+    for column, code in found:
+        first = _fy_code(code)
+        if first is not None and (column, code, first) not in result:
+            result.append((column, code, first))
+    return result
+
+
+def _shows_current_year(sql, first):
+    """True when the SQL has any sign of the FY that starts in `first`: today (CURDATE() ...) or a date from its
+    01-Apr on."""
+    if _TODAY_SIGN.search(sql or ""):
+        return True
+    for year, month, day in _DATE_VALUE.findall(sql or ""):
+        try:
+            if datetime.date(int(year), int(month), int(day)) >= datetime.date(first, 4, 1):
+                return True
+        except ValueError:
+            continue
+    return False
+
+
+def past_fy_problem(question, sql, today):
+    """The send-back text when a "this year" question's SQL filters only financial years before today's ('' = none)."""
+    words = this_year_words(question)
+    if not words or not (sql or "").strip() or _ML_TABLE.search(sql):
+        return ""
+    filters = fy_filters(sql)
+    first = financial_year(today)
+    if not filters or any(year >= first for _, _, year in filters):
+        return ""
+    if _LAST_FY.search(question or "") and _shows_current_year(sql, first):  # a comparison: this year may be in dates
+        return ""
+    label, code, start, end = _fy(first)
+    last_label, last_code, _, _ = _fy(first - 1)
+    used = ", ".join(f"{column} = '{used_code}' = {_fy(year)[0]}" for column, used_code, year in filters)
+    return (f"the question says \"{words}\", but your query filters only a past financial year ({used}). Per the "
+            f"business rules \"this year\" / \"this financial year\" / \"so far\" means the current financial year "
+            f"{label} ({start} to {end}; dim_calendar.financial_year = '{code}', the financial_year of CURDATE()); "
+            f"'{last_code}' ({last_label}) is last year. Filter c.financial_year = '{code}' (split by sales month: "
+            f"c.sales_year = '{code}'), counted only up to today (CURDATE()); keep last year only where the question "
+            f"also asks for it.")

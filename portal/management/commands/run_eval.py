@@ -6,7 +6,7 @@ python manage.py run_eval full            all questions - once a week; it stops 
                                           run again the same week, goes on where it stopped
 python manage.py run_eval grade FILE      grade a saved run again (no AI)
 python manage.py run_eval truth           the right values from our own SQL (no AI)
-options: --model main|second|backup|groq-main|groq-main-2|groq-backup  --cap auto|N  --ids Q38 N02  --out FILE
+options: --model main|second|backup|local|groq-main|groq-main-2|groq-backup  --cap auto|N  --ids Q38 N02  --out FILE
          --memory-store (Qdrant off)
 
 - Nothing goes into History: every question runs inside a transaction that is rolled back.
@@ -14,7 +14,8 @@ options: --model main|second|backup|groq-main|groq-main-2|groq-backup  --cap aut
   eval runs of the last 24 hours count); the other 30 % stay for the people using the app.
 - Only the chosen model is asked (as an admin's model choice: agent.ask(model=...)): no other model of the
   chain during the run. main = groq-main, second = groq-main-2 (19-Nov: the same model on the second Groq key,
-  GROQ_API_KEY_2), backup = groq-backup.
+  GROQ_API_KEY_2), backup = groq-backup, local = the company's local model (20-Nov: LOCAL_LLM_URL / LOCAL_LLM_MODEL;
+  no Groq tokens, so --cap auto sets no cap - and it is slow: minutes per question on a CPU).
 - The answers of a run go to eval_results/<set>_<model>_....json (not in git); every run adds one
   score line to eval_results/scores.csv (in git), so we see if answers get better or worse.
 """
@@ -52,7 +53,8 @@ ESTIMATE, ESTIMATE_FOLLOW_UP = 7_000, 11_000   # Groq tokens of one question (a 
 SETS = {"quick": QUICK, "ml": ML_QUICK}        # full = every question
 # --model: the chain's ids (lc/llm.py), and the old names main / backup (also the answers files' names)
 MODEL_ALIASES = {"main": "groq-main", "second": "groq-main-2", "backup": "groq-backup"}
-FILE_LABELS = {"groq-main": "main", "groq-main-2": "second", "groq-backup": "backup"}
+FILE_LABELS = {"groq-main": "main", "groq-main-2": "second", "groq-backup": "backup", llm.LOCAL_ID: "local"}
+NO_CAP = 10 ** 12             # the local model: no Groq tokens to keep for the people
 
 
 def pick_items(set_name, ids=()):
@@ -93,10 +95,12 @@ def tokens_last_24h(model):
 def chosen_model(name):
     """--model -> the chain's ChainModel (lc.llm) to ask; CommandError when it is not set up in .env."""
     model_id = MODEL_ALIASES.get(name, name)
-    entry = next((model for model in llm.chain_models() if model.id == model_id), None)
-    if entry is None:   # as for an admin's choice: only a model of the chain can be asked
+    # as for an admin's choice: a model of the chain, or the local model (20-Nov: set up = it can be chosen)
+    entry = next((model for model in llm.choosable_models() if model.id == model_id), None)
+    if entry is None:
         raise CommandError(f"{model_id} is not set up in .env (Groq backup: GROQ_FALLBACK_MODEL; "
-                           f"the second Groq key: {llm.KEY_2}) or not in AI_MODEL_CHAIN")
+                           f"the second Groq key: {llm.KEY_2}; the local model: {llm.LOCAL_URL} and "
+                           f"{llm.LOCAL_MODEL}) or not in AI_MODEL_CHAIN")
     return entry
 
 
@@ -123,7 +127,7 @@ class Command(BaseCommand):
         parser.add_argument("file", nargs="?", help="grade: the saved run (.json)")
         parser.add_argument("--model", choices=[*MODEL_ALIASES, *llm.MODEL_IDS], default="main",
                             help="the one model asked: main (= groq-main), second (= groq-main-2), "
-                                 "backup (= groq-backup)")
+                                 "backup (= groq-backup), local (the company's local model)")
         parser.add_argument("--cap", default="auto", help="token cap of this run: auto (70%% rule) or a number")
         parser.add_argument("--ids", nargs="+", default=[], help="only these questions, e.g. Q38 N02")
         parser.add_argument("--out", help="the answers file (default: eval_results/<set>_<model>_<date>.json)")
@@ -154,7 +158,10 @@ class Command(BaseCommand):
         out = Path(opts["out"] or RESULTS_DIR / f"{set_name}_{label}_{stamp}.json")
         results = json.loads(out.read_text(encoding="utf-8")) if out.exists() else {}
         used = sum(saved.get("tokens") or 0 for saved in results.values())
-        if opts["cap"] == "auto":   # what is left of the test share (this file's own tokens are counted again below)
+        if opts["cap"] == "auto" and entry.is_local:   # 20-Nov: the company's own server - no Groq budget
+            cap = NO_CAP
+            self.stdout.write(f"budget {only}: the local model uses no Groq tokens - no cap")
+        elif opts["cap"] == "auto":   # what is left of the test share (this file's own tokens are counted again below)
             app, evals = tokens_last_24h(only)
             cap = TEST_SHARE - app - evals - SAFETY + used
             self.stdout.write(f"budget {only}: app {app:,} + eval runs {evals:,} in the last 24 h -> cap {cap:,}")
