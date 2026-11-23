@@ -128,8 +128,8 @@ def test_the_mcp_user_cannot_log_in():
 
 def test_example_questions_come_from_the_docs():
     questions = mcp_server.example_questions()
-    # 20-Nov: 64 examples (+ 7 from the local model eval, see test_retrieval)
-    assert len(questions) == 64 and "Which items are below their minimum inventory level right now?" in questions
+    # 20-Nov: 64 examples (+ 7 from the local model eval, see test_retrieval); 23-Nov: 65 (+ two charts in one question)
+    assert len(questions) == 65 and "Which items are below their minimum inventory level right now?" in questions
 
 
 @pytest.mark.parametrize("key", ["", "short"])

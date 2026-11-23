@@ -20,7 +20,9 @@ Now our code does it and gives the result as a fact line, only for the questions
   - (23-Nov) a profit / margin of one period (not a profit % between two periods) -> not in ss_gold: NO_DATA when the
     question asks only for that;
   - (23-Nov) active customers -> dim_customers.is_active; items with no sales -> every item of the master;
-    exact calendar dates named (01-May-2026) -> used as given, never widened to sales periods.
+    exact calendar dates named (01-May-2026) -> used as given, never widened to sales periods;
+  - (23-Nov) two or more charts in one question -> ONE value column for all of them, a series column naming each
+    chart, a different label on every row of a chart (the shape the page splits into one chart per series).
 - Answer request (the block goes at the very end, after the rows):
   - a forecast (forecast words, or SQL on ml_sales_forecast) -> forecast amounts rounded in Cr (the sentence of
     agent.ML_RESULTS_NOTE, with an example worked out from the result's own first row);
@@ -91,6 +93,17 @@ _EACH_PERIOD = re.compile(r"\b(quarter|month|year)s?[\s-]*(?:by|on|to)[\s-]*(?:q
 # 23-Nov: exact calendar dates named in the question (01-May-2026, 1 May 2026, 2026-05-01)
 _DAY_DATE = re.compile(r"\b(\d{1,2})(?:st|nd|rd|th)?[-\s/.]*(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?"
                        r"[-\s/.,]*(\d{4})\b|\b(\d{4})-(\d{2})-(\d{2})\b", re.I)
+# 23-Nov: two or more charts / graphs in one question ("2 line charts", "two graphs", "another chart", "one chart for
+# ... and another for ...", typos like "chsrt" / "chrt" / "chat"); only a kind word may stand between the number and
+# the chart ("2 line charts"; "the last 3 months chart" is one chart), and a number needs the plural ("top 5 bar chart")
+_CHART = r"(?:ch[a-z]?r?ts?|gra?pha?s?|grpahs?|plots?|diagrams?|visuals?)\b"
+_CHARTS = r"(?:ch[a-z]?r?ts|gra?pha?s|grpahs|plots|diagrams|visuals)\b"
+_KINDS = (r"(?:(?:line|bar|pie|column|area|donut|scatter|stacked|grouped|horizontal|vertical|separate|different|"
+          r"individual)[\s-]+){0,2}")
+_MANY_CHARTS = re.compile(r"\b(?:[2-6]|two|three|four|five|six|multiple|several|separate|couple\s+of)\s+" + _KINDS
+                          + _CHARTS + r"|\b(?:another|second|2nd)\s+" + _KINDS + _CHART, re.I)
+_ONE_AND_ANOTHER = re.compile(r"\bone\b.{0,80}?\banother\b", re.I | re.S)
+_ANY_CHART = re.compile(r"\b" + _CHART, re.I)
 MOST_PERIOD_ROWS = 8    # more rows than this: the highest and the lowest (the answer rule), the rest in the table
 
 _FORECAST_WORDS = re.compile(r"\b(?:fore?ca?st\w*|predict\w*|projection\w*|outlook)\b", re.I)
@@ -369,12 +382,25 @@ def exact_dates_line(question):
             "(sales_period_start / sales_period_end).")
 
 
+def charts_line(question):
+    """The 'one value column, a series per chart' line when the question asks for two or more charts ('' = none).
+    23-Nov (local model): "Create 2 line charts: one for last 6 months sales and another for last month day-wise
+    sales" came back as label | period_start | period_end | net_sales_inr | daily_sales_inr - one value column per
+    chart (each half empty) and the month name repeated as the label of every daily row, so the page could not split
+    it into two charts."""
+    text = question or ""
+    if not (_MANY_CHARTS.search(text) or (_ANY_CHART.search(text) and _ONE_AND_ANOTHER.search(text))):
+        return ""
+    return ("- several charts: ONE value column for all (UNION ALL), each chart's name in a series column, a different "
+            "label on every row of a chart (e.g. month or date); CHART line: value / label / series = these.")
+
+
 def sql_notes(question, today, end_of_data=None):
     """The lines of the SQL request's "For this question:" block ([] = none)."""
     end_of_data = end_of_data or (lambda: data_end(today))
     lines = ([fy_line(question, today)] + month_lines(question, today, end_of_data)
              + [product_line(question), stock_line(question), profit_line(question), active_line(question),
-                no_sales_line(question), exact_dates_line(question)])
+                no_sales_line(question), exact_dates_line(question), charts_line(question)])
     return [line for line in lines if line]
 
 

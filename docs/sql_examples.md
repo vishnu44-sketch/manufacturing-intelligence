@@ -1743,3 +1743,54 @@ LIMIT 50;
 
 Why: run-out = the stock of the latest stock report (report_date) divided by the recent average daily sales (ml_stock_runout, an estimate): soonest first, with the estimated runout_date counted from report_date, not today: days_from_today < 0 = the run-out date is already past - say the item would have run out by then (before today) unless new stock arrived. 'Out of stock' items have run out already (counted apart); 'No recent sales' items are not running out. Always keep the count columns (items_under_30_days ...) - the list is cut at 50, so the answer says e.g. "349 items are under 30 days; the 50 soonest are shown", never "the full list". Always say the report_date.
 Expected: (run of 17-Nov-2026, data to 31-Oct-2026) stock report 31-Oct-2026: 349 items under 30 days, 357 under 90 days, 0 out of stock; first FG00966 Coolant pump GX-597-1B 3.7kW (stock 4, 0.600 sold a day, 6.7 days, runs out 06-Nov-2026 = days_from_today -11 on 17-Nov-2026: already past); 50 rows shown of 349 + 357.
+
+## Q: Show two line charts: the last 6 months' sales and last month's sales day by day
+
+Also asked as: create 2 line charts, one for the last 6 months sales and another for last month day-wise sales; two charts in one answer; one graph of monthly sales and another of daily sales; a chart for each of two periods.
+
+```sql
+WITH data_end AS (
+  SELECT MAX(invoice_date) AS data_to FROM fact_invoice_lines
+),
+last6 AS (
+  SELECT DISTINCT c.sales_month, c.sales_period_start, c.sales_period_end
+  FROM dim_calendar c
+  CROSS JOIN data_end d
+  WHERE c.sales_period_end <= d.data_to
+  ORDER BY c.sales_period_start DESC
+  LIMIT 6
+),
+last_month AS (
+  SELECT p.sales_month, p.sales_period_start, p.sales_period_end
+  FROM dim_calendar t
+  JOIN dim_calendar p ON p.full_date = t.sales_period_start - INTERVAL 1 DAY
+  WHERE t.full_date = CURDATE()
+),
+last_month_days AS (
+  SELECT lm.sales_month, c.full_date
+  FROM last_month lm
+  CROSS JOIN data_end d
+  JOIN dim_calendar c ON c.full_date BETWEEN lm.sales_period_start AND LEAST(lm.sales_period_end, d.data_to)
+)
+SELECT 'last 6 months' AS series,
+       m.sales_month AS label,
+       m.sales_period_start AS period_start,
+       m.sales_period_end AS period_end,
+       ROUND(COALESCE(SUM(il.net_taxable_value), 0), 2) AS net_sales_inr
+FROM last6 m
+LEFT JOIN fact_invoice_lines il ON il.invoice_date BETWEEN m.sales_period_start AND m.sales_period_end
+GROUP BY m.sales_month, m.sales_period_start, m.sales_period_end
+UNION ALL
+SELECT CONCAT('last month by day (', md.sales_month, ')'),
+       DATE_FORMAT(md.full_date, '%Y-%m-%d'),
+       md.full_date,
+       md.full_date,
+       ROUND(COALESCE(SUM(il.net_taxable_value), 0), 2)
+FROM last_month_days md
+LEFT JOIN fact_invoice_lines il ON il.invoice_date = md.full_date
+GROUP BY md.sales_month, md.full_date
+ORDER BY series, period_start;
+```
+
+Why: two (or more) charts in one question = ONE result with ONE value column for all the charts (UNION ALL of the parts), the chart's name in a `series` column and a `label` that differs on every row of a chart - here the sales month for one chart and the invoice date (YYYY-MM-DD) for the other - never one value column per chart (net_sales_inr for one, daily_sales_inr for the other, half empty) and never the month name repeated on the daily rows. The page draws one chart per series; the CHART line names those columns: "CHART: line | value: net_sales_inr | label: label | series: series". "The last 6 months" = the last 6 COMPLETE sales months (21st to 20th) up to the data end, MAX(invoice_date); "last month" = the sales month before today's (CURDATE()), as in "What were last month's sales" - its days run only up to the data end, and days without invoices show 0 (dim_calendar days, LEFT JOIN). The whole union is sorted by series and period_start (no LIMIT, so no part is cut); a part with its own ORDER BY / LIMIT goes in parentheses. The answer names both periods with their dates and says the data ends on the last day shown.
+Expected: (23-Nov-2026, data to 31-Oct-2026) 17 rows: 'last 6 months' May 2026 459,457,491.70; Jun 2026 514,347,284.15; Jul 2026 434,659,336.50; Aug 2026 466,556,045.75; Sep 2026 472,683,542.23; Oct 2026 517,494,492.75; 'last month by day (Nov 2026)' 11 days 2026-10-21 11,592,826.00 to 2026-10-31 15,608,278.00 (2026-10-25 0.00, highest 2026-10-26 41,466,448.00; the 11 days add up to 189,269,525.00 - the month has data only up to 31-Oct-2026).

@@ -267,6 +267,35 @@ def test_a_profit_of_one_period_gets_the_not_in_data_line(question, wanted):
     assert any("profit / margin is not in ss_gold" in line and "NO_DATA" in line for line in lines) is wanted
 
 
+# ---------- 23-Nov: two or more charts in one question ----------
+
+@pytest.mark.parametrize("question, wanted", [
+    ("Create 2 line charts: one for last 6 months sales and another for last month day-wise sales", True),
+    ("show two line chsrts: monthly sales and daily sales", True),                 # a typo
+    ("give me 2 graphs of sales", True),
+    ("one chart for Japan sales and another for India", True),
+    ("a bar chart of top customers and another chart of top products", True),
+    ("3 separate bar charts by region", True),
+    ("Show a line chart of the last 6 months sales", False),                       # one chart
+    ("Show the last 3 months sales chart", False),                                 # "3 months", not 3 charts
+    ("top 5 bar chart of customers", False),
+    ("Compare two customers in a bar chart", False),
+    ("sales of Japan and other countries in one pie chart", False),
+    ("top 10 products", False),
+])
+def test_several_charts_get_one_value_column_and_a_series_per_chart(question, wanted):
+    """23-Nov (local model): "Create 2 line charts ..." came back with one value column per chart (net_sales_inr for
+    the months, daily_sales_inr for the days, each half empty) and 'Nov 2026' as the label of every daily row - the
+    page could not draw one chart per series."""
+    lines = [line for line in qn.sql_notes(question, NOV_20, ends(DATA_END)) if "several charts" in line]
+    assert bool(lines) is wanted
+    if wanted:
+        assert "ONE value column for all" in lines[0] and "series column" in lines[0]
+        assert "different label on every row of a chart" in lines[0]
+        assert "CHART line: value / label / series" in lines[0]
+        assert len(lines[0]) < 220                                     # about 40 tokens
+
+
 # ---------- the answer request ----------
 
 FORECAST_TABLE = ("sales_month | forecast_inr | low_inr | high_inr | mape_pct\n"
