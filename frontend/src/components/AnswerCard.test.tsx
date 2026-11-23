@@ -3,7 +3,7 @@
 // a general answer (not about the company) shows its chip, a "not from company data" label and its lists.
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeAll, describe, expect, it, onTestFinished, vi } from 'vitest'
-import { CATEGORY_SALE_TYPE } from '../charts/testRows'
+import { CATEGORY_SALE_TYPE, OWN_VALUE_COLUMNS } from '../charts/testRows'
 import { charts, lastChart } from '../test/fakeEcharts'
 import { callsTo, fakeFetch } from '../test/fakeFetch'
 import { renderAt } from '../test/render'
@@ -278,6 +278,16 @@ describe('AnswerCard chart wish', () => {
 
     expect(await screen.findByText("This answer can't be drawn as a chart.")).toBeInTheDocument()
     expect(screen.getByText('Pune')).toBeInTheDocument()
+  })
+
+  it('draws one chart per series when each series has its own value column (no "cannot be drawn" note)', async () => {
+    fakeFetch({ '/api/questions/7/rows': { body: { ...OWN_VALUE_COLUMNS, row_count: 16, truncated: false, rows_error: '' } } })
+    const text = 'Create 2 line charts: one for last 6 months sales and another for last month day-wise sales'
+    render(<AnswerCard card={{ ...OK, text, chart_kind: 'line' }} autoRows />)
+
+    expect(await screen.findByRole('group', { name: '2 charts, one per series' })).toBeInTheDocument()
+    expect(screen.queryByText(/no chart can be drawn|can't be drawn as a chart/)).not.toBeInTheDocument()
+    expect(charts.filter((c) => !c.disposed).map((c) => c.option!.xAxis.data.length)).toEqual([6, 10])
   })
 
   it('adds no note when no chart was asked for, or when the AI can draw the chart', async () => {

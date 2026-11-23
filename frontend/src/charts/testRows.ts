@@ -95,3 +95,29 @@ export const SALES_RETURNS = table(
     .flatMap(([month, sales, returns]) => [['Sales', month, sales], ['Returns', month, returns]]),
 )
 export const SALES_RETURNS_COLUMNS = { value: 'amount_inr', label: 'month_name', series: 'kind' }
+
+// 23-Nov (real, local model): "Create 2 line charts: one for last 6 months sales and another for last month
+// day-wise sales" - one result where each series has its OWN value column (the other one null, '-' in the table):
+// last_6_months fills net_sales_inr (labels May..Oct 2026), last_month fills daily_sales_inr (its label repeats
+// 'Nov 2026', the day is in period_start). Null cells come as '-' with num false, as the server sends them.
+const SIX_MONTHS: [string, string, string, string][] = [
+  ['May 2026', '2026-04-21', '2026-05-20', '459,457,491.70'], ['Jun 2026', '2026-05-21', '2026-06-20', '514,347,284.15'],
+  ['Jul 2026', '2026-06-21', '2026-07-20', '434,659,336.50'], ['Aug 2026', '2026-07-21', '2026-08-20', '466,556,045.75'],
+  ['Sep 2026', '2026-08-21', '2026-09-20', '472,683,542.23'], ['Oct 2026', '2026-09-21', '2026-10-20', '517,494,492.75'],
+]
+const LAST_MONTH_DAYS: [string, string][] = [
+  ['2026-10-21', '11,592,826.00'], ['2026-10-22', '14,555,036.00'], ['2026-10-23', '17,611,305.50'],
+  ['2026-10-24', '15,529,002.00'], ['2026-10-26', '41,466,448.00'], ['2026-10-27', '13,662,908.50'],
+  ['2026-10-28', '20,957,202.00'], ['2026-10-29', '17,462,856.50'], ['2026-10-30', '20,823,662.50'],
+  ['2026-10-31', '15,608,278.00'],
+]
+const OWN_VALUE_TABLE = table(
+  [['chart_type', false], ['label', false], ['period_start', false], ['period_end', false],
+    ['net_sales_inr', true], ['daily_sales_inr', true]],
+  [...SIX_MONTHS.map(([month, start, end, sales]) => ['last_6_months', month, start, end, sales, '-']),
+    ...LAST_MONTH_DAYS.map(([day, sales]) => ['last_month', 'Nov 2026', day, day, '-', sales])],
+)
+export const OWN_VALUE_COLUMNS = {
+  headers: OWN_VALUE_TABLE.headers,
+  rows: OWN_VALUE_TABLE.rows.map((row) => row.map((cell) => (cell.text === '-' ? { text: '-', num: false } : cell))),
+}

@@ -11,7 +11,7 @@ import { Suspense, lazy, type ReactNode, useCallback, useEffect, useMemo, useRef
 import { ChartColumnBig, Check, ChevronRight, Copy, ExternalLink, Info, Table2 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { ApiError, AuthError, api, problemText } from '../api'
-import { chartAskedFromText, chartWish, namesChartKind, pickChart, unusualChartFromText, uprightWish } from '../charts/pickChart'
+import { chartAskedFromText, chartWish, namesChartKind, pickChart, splitSeries, unusualChartFromText, uprightWish } from '../charts/pickChart'
 import type { AiChartReply, Card, Rows, Status } from '../types'
 import { copyText } from '../lib/clipboard'
 import { ExcelLink } from './common'
@@ -250,8 +250,10 @@ export default function AnswerCard({ card, autoRows = false, staff = false }:
   const view = picked ?? (card.chart_kind === 'none' ? 'table' : 'chart')
   // 19-Nov: the columns the AI named to draw (card.chart_columns) - pickChart uses them when the rows have them
   const chartColumns = card.chart_columns ?? null
+  // 23-Nov: or one chart per series (splitSeries), e.g. each series with its own value column
   const hasChart = useMemo(
-    () => !!loaded && !loaded.rows_error && pickChart(loaded.headers, loaded.rows, null, null, false, chartColumns) !== null,
+    () => !!loaded && !loaded.rows_error && (pickChart(loaded.headers, loaded.rows, null, null, false, chartColumns) !== null
+      || splitSeries(loaded.headers, loaded.rows, null, false, chartColumns) !== null),
     [loaded, chartColumns])
   const wish = `${card.text} ${card.understood_as}`
   // the kind to draw: the one the AI named (card.chart_kind), else the one the words ask for, else pickChart's best

@@ -74,13 +74,15 @@ def test_docs_folder_gives_the_expected_chunks():
 
     # 50 examples (16-Nov: new customers this month so far and last month; 17-Nov: 8 on the ML results), each with
     # its SQL and its expected result
-    assert len(EXAMPLES) == 64  # 18-Nov: + "What will our total sales be in 2027?", + Aug 2027 forecast / top customer;
+    assert len(EXAMPLES) == 65  # 18-Nov: + "What will our total sales be in 2027?", + Aug 2027 forecast / top customer;
     # 19-Nov: + "Which products have the most stock right now?" (returns report_date);
     # 20-Nov: + active customers invoiced in a month (a count), customers of FY 2024-25 not in FY 2025-26,
     # credit notes as a % of sales for the last 6 complete sales months;
     # 20-Nov (local model eval): + export sales in INR / JPY this FY, one state's total in a FY, purchase value in the
     # latest stock report, quarter-by-quarter growth of the last two FYs, customers making half of the sales,
     # highest / lowest month ever, finished goods with stock but no sales in the last 90 days (+ the total)
+    # 23-Nov: + two charts in one question (the last 6 months and last month by day: ONE value column, a series
+    # column, a different label on every row of a chart)
     for c in EXAMPLES:
         assert c["heading"].startswith("Q: ")
         assert "```sql" in c["text"] and "\nExpected: " in c["text"]

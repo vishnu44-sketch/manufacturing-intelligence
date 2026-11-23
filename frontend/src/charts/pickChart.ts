@@ -626,14 +626,80 @@ function apart(a: SeriesFacts, b: SeriesFacts, scaled: boolean): boolean {
   return Math.max(a.scale, b.scale) / Math.min(a.scale, b.scale) > SCALE_GAP
 }
 
+// a column that ends a range (period_end, end_date, data_to): a label only when no other column fits
+const RANGE_END = /(^|_)(end|to|till|until|upto)(_|$)/i
+
+/** The kind to ask for one chart of one series: a kind that needs several series becomes its one-series look. */
+const oneSeriesKind = (want: ChartKind | null) => (want && want in ONE_SERIES ? ONE_SERIES[want] ?? null : want)
+
+/** 23-Nov: each series has its own value column ("last 6 months" fills net_sales_inr, "last month" fills
+ *  daily_sales_inr, the other column empty on its rows): one chart per series, drawn from its own value column, so
+ *  a column of nulls is never a line. The series: a text column with 2 to MAX_SPLIT values of 2+ rows each (the AI's
+ *  series column first). The rule holds only when every series has exactly one amount column with numbers on its
+ *  rows and the series do not all use the same one - an answer with two filled amounts (invoices and credit notes
+ *  per month) is not this shape. The label of each series: the first column filled on all its rows with a different
+ *  value on each - the AI's label first, then text columns, then helper dates (period_start), then number labels
+ *  (period_no), a range end (period_end) last. null when the rows are not this shape or a part cannot be drawn. */
+function ownValueParts(headers: Header[], rows: Cell[][], want: ChartKind | null, upright: boolean,
+  columns: ChartColumns | null): SeriesPart[] | null {
+  const textAt = (r: number, i: number) => (rows[r][i]?.text ?? '').trim()
+  const hasNumber = (i: number, rs: number[]) => rs.some((r) => parseNumber(textAt(r, i)) !== null)
+  const all = rows.map((_, r) => r)
+  const idLike = (i: number) => PLAIN_INT.test(headers[i].name) || NOT_AN_AMOUNT.test(headers[i].name) ||
+    isYearColumn(filled(all.map((r) => textAt(r, i))))
+  const indexes = headers.map((_, i) => i)
+  const amounts = indexes.filter((i) => headers[i].num && !idLike(i) && hasNumber(i, all))
+  if (amounts.length < 2) return null
+  const named = (name: unknown) => (typeof name === 'string' && name.trim()
+    ? indexes.find((i) => columnKey(headers[i].name) === columnKey(name)) ?? -1 : -1)
+  const aiSeries = named(columns?.series)
+  const aiLabel = named(columns?.label)
+  const candidates = indexes.filter((i) => !headers[i].num && !HELPER.test(headers[i].name))
+    .sort((a, b) => Number(b === aiSeries) - Number(a === aiSeries))
+  // the label columns in the order they are tried
+  const labelRank = (i: number) => (i === aiLabel ? 0 : RANGE_END.test(headers[i].name) ? 4 : headers[i].num ? 3
+    : HELPER.test(headers[i].name) ? 2 : 1)
+
+  for (const seriesAt of candidates) {
+    const groups = new Map<string, number[]>()
+    rows.forEach((_, r) => groups.set(textAt(r, seriesAt), [...(groups.get(textAt(r, seriesAt)) ?? []), r]))
+    if (groups.size < 2 || groups.size > MAX_SPLIT || [...groups.values()].some((g) => g.length < 2)) continue
+    // each series' own value column: the only amount with numbers on its rows
+    const own = [...groups.values()].map((rs) => amounts.filter((i) => hasNumber(i, rs)))
+    if (own.some((cols) => cols.length !== 1) || new Set(own.map(([i]) => i)).size < 2) continue
+    const labelsTried = indexes.filter((i) => i !== seriesAt && !amounts.includes(i) && (!headers[i].num || idLike(i)))
+      .sort((a, b) => labelRank(a) - labelRank(b))
+    const parts: SeriesPart[] = []
+    for (const [j, [name, rs]] of [...groups].entries()) {
+      const labelAt = labelsTried.find((i) => {
+        const texts = rs.map((r) => textAt(r, i))
+        return filled(texts).length === texts.length && new Set(texts).size === texts.length
+      })
+      if (labelAt === undefined) break
+      parts.push({
+        name: name || '(blank)',
+        rows: rs.map((r) => rows[r]),
+        columns: { value: headers[own[j][0]].name, label: headers[labelAt].name },
+        kind: oneSeriesKind(want),
+      })
+    }
+    if (parts.length === groups.size &&
+      parts.every((p) => pickChart(headers, p.rows, p.kind, null, upright, p.columns) !== null)) return parts
+  }
+  return null
+}
+
 /** The charts to draw instead of one when the answer's series do not belong on one chart (each with its own axis
  *  and y-scale, the series that do belong together kept together), else null (one chart, as before).
- *  The series: the second label of a pivot (the AI's series column, or the one the rules find) - every rule
+ *  First: each series with its own value column (ownValueParts) - one chart per series. Else the series: the
+ *  second label of a pivot (the AI's series column, or the one the rules find) - every rule
  *  above counts; or, when the rows have one label, a text column with 2-4 values whose labels are of different
  *  kinds (dates for one, months for another) - only that rule counts there, so customers by region stay one chart.
  *  2 to MAX_SPLIT series, each with 2 rows at least, each part drawable - else null. */
 export function splitSeries(headers: Header[], rows: Cell[][], want: ChartKind | null = null, upright = false,
   columns: ChartColumns | null = null): SeriesPart[] | null {
+  const byValue = ownValueParts(headers, rows, want, upright, columns)
+  if (byValue) return byValue
   const t = readTable(headers, rows, columns)
   if (!t) return null
   const at = (name: string) => headers.findIndex((h) => h.name === name)
@@ -678,7 +744,7 @@ export function splitSeries(headers: Header[], rows: Cell[][], want: ChartKind |
     if (clusters.length < 2) continue
     const parts = clusters.map((c): SeriesPart => {
       const many = c.length > 1
-      const kind = want && !many && want in ONE_SERIES ? ONE_SERIES[want] ?? null : want
+      const kind = many ? want : oneSeriesKind(want)
       const kept = new Set(c.flatMap((f) => f.rows))
       return {
         name: c.map((f) => f.name || '(blank)').join(' and '),

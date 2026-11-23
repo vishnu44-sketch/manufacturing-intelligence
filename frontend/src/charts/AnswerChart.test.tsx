@@ -8,8 +8,8 @@ import AnswerChart, { describe as describeChart } from './AnswerChart'
 import { buildOption, chartSubtitle, labelFits, percent, readColours } from './chartOption'
 import { pickChart, shortIndian } from './pickChart'
 import {
-  CATEGORY_SALE_TYPE, DAILY_MONTHLY, DAILY_MONTHLY_COLUMNS, MONTHLY, SALE_TYPES, SALES_RETURNS, SALES_RETURNS_COLUMNS,
-  TOP5, TWO_YEARS, TWO_YEARS_COLUMNS, table,
+  CATEGORY_SALE_TYPE, DAILY_MONTHLY, DAILY_MONTHLY_COLUMNS, MONTHLY, OWN_VALUE_COLUMNS, SALE_TYPES, SALES_RETURNS,
+  SALES_RETURNS_COLUMNS, TOP5, TWO_YEARS, TWO_YEARS_COLUMNS, table,
 } from './testRows'
 
 vi.mock('./echarts', () => import('../test/fakeEcharts'))
@@ -454,5 +454,52 @@ describe('AnswerChart: one chart per series when they do not belong on one chart
     expect(live()).toHaveLength(1)
     expect(lastChart().types()).toEqual(['bar'])
     expect(screen.queryByRole('group', { name: /one per series/ })).toBeNull()
+  })
+})
+
+describe('AnswerChart: each series with its own value column', () => {
+  const live = () => charts.filter((c) => !c.disposed)
+
+  it.each([
+    ['without', null],
+    ['with', { value: 'net_sales_inr', label: 'label', series: 'chart_type' }],
+  ])("the real 'last 6 months + last month day-wise' answer: 2 line charts, each from its own value column (%s the AI's columns)",
+    (_, columns) => {
+      const { headers, rows } = OWN_VALUE_COLUMNS
+      render(<AnswerChart headers={headers} rows={rows} title="Sales" kind="line" columns={columns}
+        onShowTable={() => {}} />)
+      expect(screen.getByRole('group', { name: '2 charts, one per series' })).toBeInTheDocument()
+      expect(live()).toHaveLength(2)
+      expect(live().map((c) => c.types())).toEqual([['line'], ['line']])
+      const [months, days] = live().map((c) => c.option!)
+      expect(months.xAxis.data).toEqual(['May 2026', 'Jun 2026', 'Jul 2026', 'Aug 2026', 'Sep 2026', 'Oct 2026'])
+      expect(days.xAxis.data).toEqual(['2026-10-21', '2026-10-22', '2026-10-23', '2026-10-24', '2026-10-26', '2026-10-27',
+        '2026-10-28', '2026-10-29', '2026-10-30', '2026-10-31'])
+      // one line each, from its own column - never the other (null) column
+      expect(live().map((c) => c.option!.series.map((s: { name: string }) => s.name)))
+        .toEqual([['Net sales (INR)'], ['Daily sales (INR)']])
+      expect(months.series[0].data).toEqual([459457491.7, 514347284.15, 434659336.5, 466556045.75, 472683542.23, 517494492.75])
+      expect(days.series[0].data).toHaveLength(10)
+      expect(days.series[0].data[0]).toBe(11592826)
+      expect(days.series[0].data.every((v: unknown) => typeof v === 'number')).toBe(true)
+      expect(screen.getByText('last_6_months')).toBeInTheDocument()
+      expect(screen.getByText('last_month')).toBeInTheDocument()
+      expect(screen.getAllByRole('img').map((img) => img.getAttribute('aria-label'))).toEqual([
+        expect.stringMatching(/^Line chart of net_sales_inr by label, 6 points from May 2026 to Oct 2026/),
+        expect.stringMatching(/^Line chart of daily_sales_inr by period_start, 10 points from 2026-10-21 to 2026-10-31/),
+      ])
+      expect(screen.getAllByRole('button', { name: 'Download PNG' })).toHaveLength(2)
+      expect(screen.getAllByRole('button', { name: 'Table' })).toHaveLength(1)
+    })
+
+  it('two amounts filled on the same months (invoices and credit notes): one chart with 2 lines', () => {
+    const both = table([['month', false], ['invoice_value_inr', true], ['credit_note_value_inr', true]], [
+      ['May 2026', '45,000,000.00', '1,200,000.00'], ['Jun 2026', '51,000,000.00', '900,000.00'],
+      ['Jul 2026', '43,000,000.00', '1,500,000.00'], ['Aug 2026', '46,500,000.00', '1,100,000.00']])
+    render(<AnswerChart headers={both.headers} rows={both.rows} kind="line" />)
+    expect(screen.queryByRole('group', { name: /one per series/ })).toBeNull()
+    expect(live()).toHaveLength(1)
+    expect(lastChart().option!.series.map((s: { name: string }) => s.name)).toEqual(['Invoice value (INR)', 'Credit note value (INR)'])
+    expect(lastChart().option!.xAxis.data).toEqual(['May 2026', 'Jun 2026', 'Jul 2026', 'Aug 2026'])
   })
 })

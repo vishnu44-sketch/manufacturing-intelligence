@@ -7,8 +7,8 @@ import {
 } from './pickChart'
 import type { Cell, ChartColumns, Header } from '../types'
 import {
-  CATEGORY_SALE_TYPE, DAILY_MONTHLY, DAILY_MONTHLY_COLUMNS, MONTHLY, SALE_TYPES, SALES_RETURNS, SALES_RETURNS_COLUMNS,
-  TOP5, TWO_YEARS, TWO_YEARS_COLUMNS, table,
+  CATEGORY_SALE_TYPE, DAILY_MONTHLY, DAILY_MONTHLY_COLUMNS, MONTHLY, OWN_VALUE_COLUMNS, SALE_TYPES, SALES_RETURNS,
+  SALES_RETURNS_COLUMNS, TOP5, TWO_YEARS, TWO_YEARS_COLUMNS, table,
 } from './testRows'
 
 describe('parseNumber', () => {
@@ -775,5 +775,78 @@ describe('splitSeries: series that do not belong on one chart', () => {
       ['Shree Auto', 'North', '100.00'], ['Tata AutoComp', 'North', '90.00'],
       ['Lucas TVS', 'South', '80.00'], ['Mahindra CIE', 'South', '5.00']])
     expect(splitSeries(regions.headers, regions.rows)).toBeNull()
+  })
+})
+
+describe('splitSeries: each series with its own value column', () => {
+  const { headers, rows } = OWN_VALUE_COLUMNS
+  const MONTHS = ['May 2026', 'Jun 2026', 'Jul 2026', 'Aug 2026', 'Sep 2026', 'Oct 2026']
+  const DAYS = ['2026-10-21', '2026-10-22', '2026-10-23', '2026-10-24', '2026-10-26', '2026-10-27', '2026-10-28',
+    '2026-10-29', '2026-10-30', '2026-10-31']
+  const drawn = (part: { rows: Cell[][]; columns: ChartColumns; kind: ChartKind | null }) =>
+    pickChart(headers, part.rows, part.kind, null, false, part.columns)!
+
+  it('the real answer (last 6 months + last month day-wise) is no one chart: 2 charts, one per series', () => {
+    expect(pickChart(headers, rows)).toBeNull() // before: "This answer can't be drawn as a chart."
+    const parts = splitSeries(headers, rows, 'line')!
+    expect(parts.map((p) => [p.name, p.rows.length, p.kind])).toEqual([['last_6_months', 6, 'line'], ['last_month', 10, 'line']])
+    // the value column each series fills; the label: 'label' for the months, period_start for the days ('label'
+    // repeats 'Nov 2026' there)
+    expect(parts.map((p) => p.columns)).toEqual([
+      { value: 'net_sales_inr', label: 'label' }, { value: 'daily_sales_inr', label: 'period_start' }])
+    const [months, days] = parts.map(drawn)
+    expect(months).toMatchObject({ kind: 'line', x: 'label', ys: ['net_sales_inr'], time: true })
+    expect(days).toMatchObject({ kind: 'line', x: 'period_start', ys: ['daily_sales_inr'], time: true })
+    expect(months.data.map((p) => p.label)).toEqual(MONTHS)
+    expect(days.data.map((p) => p.label)).toEqual(DAYS)
+    expect(months.data.map((p) => p.values)).toEqual([[459457491.7], [514347284.15], [434659336.5], [466556045.75],
+      [472683542.23], [517494492.75]])
+    expect(days.data[0].values).toEqual([11592826]) // only its own column: no null line
+    expect([...months.data, ...days.data].every((p) => p.values.length === 1 && p.values[0] !== null)).toBe(true)
+  })
+
+  it("the same with or without the AI's columns, and with dates as the server writes them (21-Oct-2026)", () => {
+    const want = (columns: ChartColumns | null) => splitSeries(headers, rows, null, false, columns)!.map((p) => [p.name, p.columns])
+    const expected = [['last_6_months', { value: 'net_sales_inr', label: 'label' }],
+      ['last_month', { value: 'daily_sales_inr', label: 'period_start' }]]
+    expect(want(null)).toEqual(expected)
+    expect(want({ value: 'net_sales_inr', label: 'label', series: 'chart_type' })).toEqual(expected)
+    expect(want({ value: 'daily_sales_inr', label: 'period_start' })).toEqual([
+      ['last_6_months', { value: 'net_sales_inr', label: 'period_start' }],
+      ['last_month', { value: 'daily_sales_inr', label: 'period_start' }]])
+    const iso = /^(\d{4})-(\d{2})-(\d{2})$/
+    const names = ['', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+    const written = rows.map((row) => row.map((cell) => {
+      const m = iso.exec(cell.text)
+      return m ? { ...cell, text: `${m[3]}-${names[Number(m[2])]}-${m[1]}` } : cell
+    }))
+    const parts = splitSeries(headers, written, 'line')!
+    expect(parts.map((p) => p.columns.label)).toEqual(['label', 'period_start'])
+    expect(drawn(parts[1]).data.map((p) => p.label)).toEqual(['21-Oct-2026', '22-Oct-2026', '23-Oct-2026', '24-Oct-2026',
+      '26-Oct-2026', '27-Oct-2026', '28-Oct-2026', '29-Oct-2026', '30-Oct-2026', '31-Oct-2026'])
+  })
+
+  it('a start column is the label before an end column, whatever their order', () => {
+    const order = [0, 3, 2, 1, 4, 5] // chart_type, period_end, period_start, label, ...
+    const moved = { headers: order.map((i) => headers[i]), rows: rows.map((row) => order.map((i) => row[i])) }
+    expect(splitSeries(moved.headers, moved.rows)!.map((p) => p.columns.label)).toEqual(['label', 'period_start'])
+  })
+
+  it('two amounts filled on the same rows (invoices and credit notes per month): a normal 2-line chart, no split', () => {
+    const both = table([['month', false], ['invoice_value_inr', true], ['credit_note_value_inr', true]], [
+      ['May 2026', '45,000,000.00', '1,200,000.00'], ['Jun 2026', '51,000,000.00', '900,000.00'],
+      ['Jul 2026', '43,000,000.00', '1,500,000.00'], ['Aug 2026', '46,500,000.00', '1,100,000.00']])
+    expect(splitSeries(both.headers, both.rows, 'line')).toBeNull()
+    expect(pickChart(both.headers, both.rows, 'line')).toMatchObject({
+      kind: 'line', x: 'month', ys: ['invoice_value_inr', 'credit_note_value_inr'] })
+    // the same with a series column (two plants) whose rows fill both amounts: not split by value column
+    const plants = table([['plant', false], ['month', false], ['invoice_value_inr', true], ['credit_note_value_inr', true]],
+      ['Plant A', 'Plant B'].flatMap((plant) => both.rows.map(([month, inv, cn]) => [plant, month.text, inv.text, cn.text])))
+    expect(splitSeries(plants.headers, plants.rows, 'line')).toBeNull()
+    // one series fills both, the other only one: not "each series has its own value column"
+    const mixed = table([['kind', false], ['month', false], ['a_inr', true], ['b_inr', true]], [
+      ['x', 'May 2026', '10.00', '5.00'], ['x', 'Jun 2026', '12.00', '6.00'],
+      ['y', 'May 2026', '-', '7.00'], ['y', 'Jun 2026', '-', '8.00']])
+    expect(splitSeries(mixed.headers, mixed.rows)).toBeNull()
   })
 })
