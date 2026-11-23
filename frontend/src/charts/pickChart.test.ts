@@ -1,11 +1,15 @@
 // pickChart: which chart (or none) the answer rows get, from the texts the table shows.
 import { describe, expect, it } from 'vitest'
 import {
-  chartAskedFromText, chartKindFromText, chartWish, isCatchAll, isChartKind, namesChartKind, parseNumber, pickChart,
-  shortIndian, uprightWish,
+  type ChartKind, chartAskedFromText, chartKindFromText, chartWish, isCatchAll, isChartKind, labelKind, namesChartKind,
+  parseNumber, pickChart, shortIndian, splitSeries, uprightWish,
   unusualChartFromText,
 } from './pickChart'
-import { CATEGORY_SALE_TYPE, MONTHLY, SALE_TYPES, TOP5, table } from './testRows'
+import type { Cell, ChartColumns, Header } from '../types'
+import {
+  CATEGORY_SALE_TYPE, DAILY_MONTHLY, DAILY_MONTHLY_COLUMNS, MONTHLY, SALE_TYPES, SALES_RETURNS, SALES_RETURNS_COLUMNS,
+  TOP5, TWO_YEARS, TWO_YEARS_COLUMNS, table,
+} from './testRows'
 
 describe('parseNumber', () => {
   it('reads the numbers as the table shows them', () => {
@@ -693,5 +697,83 @@ describe('the columns the AI names (chart_columns)', () => {
     expect(pickChart(rows.headers, rows.rows)).toBeNull() // order_no reads as a number of a document
     expect(pickChart(rows.headers, rows.rows, null, null, false, { value: 'order_no', label: 'product_code' }))
       .toMatchObject({ x: 'product_code', ys: ['order_no'] })
+  })
+})
+
+describe('splitSeries: series that do not belong on one chart', () => {
+  const labels = (headers: Header[], rows: Cell[][], columns: ChartColumns, want: ChartKind | null = null) =>
+    pickChart(headers, rows, want, null, false, columns)!.data.map((p) => p.label)
+
+  it('labelKind: dates, months, years, quarters, periods, numbers, text', () => {
+    expect(['2026-10-21', '21-Oct-2026', '31/10/2026'].map(labelKind)).toEqual(['date', 'date', 'date'])
+    expect(['May 2026', 'Oct', 'Sep-26', '2026-01'].map(labelKind)).toEqual(['month', 'month', 'month', 'month'])
+    expect(['2026', 'FY 2025-26', '2025-26'].map(labelKind)).toEqual(['year', 'year', 'year'])
+    expect(['Q1', 'Q2 FY 2026-27', 'Week 12', '42', 'Coolant pumps'].map(labelKind))
+      .toEqual(['quarter', 'quarter', 'period', 'number', 'text'])
+  })
+
+  it('daily + monthly rows (dates vs months, no label in common, 10x apart): 2 charts, each with only its own labels', () => {
+    const { headers, rows } = DAILY_MONTHLY
+    // one chart before: 17 points, dates and months on one axis
+    expect(pickChart(headers, rows, 'line', null, false, DAILY_MONTHLY_COLUMNS)!.data).toHaveLength(17)
+    const parts = splitSeries(headers, rows, 'line', false, DAILY_MONTHLY_COLUMNS)!
+    expect(parts.map((p) => [p.name, p.rows.length, p.kind])).toEqual([['daily', 11, 'line'], ['monthly', 6, 'line']])
+    expect(parts[0].columns).toEqual({ value: 'net_sales_inr', label: 'period_label' })
+    const [daily, monthly] = parts.map((p) => labels(headers, p.rows, p.columns, p.kind))
+    expect(daily).toEqual(['2026-10-21', '2026-10-22', '2026-10-23', '2026-10-24', '2026-10-25', '2026-10-26',
+      '2026-10-27', '2026-10-28', '2026-10-29', '2026-10-30', '2026-10-31'])
+    expect(monthly).toEqual(['May 2026', 'Jun 2026', 'Jul 2026', 'Aug 2026', 'Sep 2026', 'Oct 2026'])
+    expect(pickChart(headers, parts[1].rows, 'line', null, false, parts[1].columns)).toMatchObject({ kind: 'line', ys: ['net_sales_inr'] })
+  })
+
+  it("the same rows without the AI's columns: the label kinds (dates vs months) still split them", () => {
+    const parts = splitSeries(DAILY_MONTHLY.headers, DAILY_MONTHLY.rows)!
+    expect(parts.map((p) => [p.name, p.rows.length])).toEqual([['daily', 11], ['monthly', 6]])
+  })
+
+  it('this year vs last year per month (the same labels and size): one chart, as before', () => {
+    expect(splitSeries(TWO_YEARS.headers, TWO_YEARS.rows, 'line', false, TWO_YEARS_COLUMNS)).toBeNull()
+    expect(splitSeries(TWO_YEARS.headers, TWO_YEARS.rows, null, false, TWO_YEARS_COLUMNS)).toBeNull()
+    expect(pickChart(TWO_YEARS.headers, TWO_YEARS.rows, 'line', null, false, TWO_YEARS_COLUMNS))
+      .toMatchObject({ kind: 'line', ys: ['FY 2025-26', 'FY 2026-27'], group: 'fy' })
+  })
+
+  it('the same labels but values over 10x apart: a chart each (own y-scale) - not for a stacked view', () => {
+    const { headers, rows } = SALES_RETURNS
+    const parts = splitSeries(headers, rows, null, false, SALES_RETURNS_COLUMNS)!
+    expect(parts.map((p) => [p.name, p.rows.length])).toEqual([['Sales', 4], ['Returns', 4]])
+    expect(parts.map((p) => labels(headers, p.rows, p.columns))).toEqual([['Apr', 'May', 'Jun', 'Jul'], ['Apr', 'May', 'Jun', 'Jul']])
+    // a stacked chart adds them up: they stay together
+    expect(splitSeries(headers, rows, 'stacked', false, SALES_RETURNS_COLUMNS)).toBeNull()
+    // grouped bars asked: each chart of one series is drawn as bars
+    expect(splitSeries(headers, rows, 'grouped', false, SALES_RETURNS_COLUMNS)!.map((p) => p.kind)).toEqual(['bar', 'bar'])
+  })
+
+  it('keeps the series that belong together on one chart (two years together, the daily one apart)', () => {
+    const daily = table([['fy', false], ['month_name', false], ['net_sales_inr', true]],
+      DAILY_MONTHLY.rows.slice(0, 11).map(([, day]) => ['daily', day.text, '42,000,000.00']))
+    const rows = [...TWO_YEARS.rows, ...daily.rows]
+    const parts = splitSeries(TWO_YEARS.headers, rows, 'line', false, TWO_YEARS_COLUMNS)!
+    expect(parts.map((p) => [p.name, p.rows.length, p.columns.series])).toEqual([
+      ['FY 2025-26 and FY 2026-27', 8, 'fy'], ['daily', 11, undefined]])
+    expect(pickChart(TWO_YEARS.headers, parts[0].rows, 'line', null, false, parts[0].columns))
+      .toMatchObject({ kind: 'line', ys: ['FY 2025-26', 'FY 2026-27'] })
+  })
+
+  it('no series, too many series, a series of 1 row, or text labels only: no split (one chart, as before)', () => {
+    expect(splitSeries(MONTHLY.headers, MONTHLY.rows)).toBeNull()
+    expect(splitSeries(TOP5.headers, TOP5.rows)).toBeNull()
+    expect(splitSeries(SALE_TYPES.headers, SALE_TYPES.rows)).toBeNull()
+    expect(splitSeries(CATEGORY_SALE_TYPE.headers, CATEGORY_SALE_TYPE.rows)).toBeNull() // Service has 1 row
+    // 5 series of dates vs months: more than MAX_SPLIT stays one chart
+    const five = table([['series', false], ['label', false], ['v', true]],
+      ['a', 'b', 'c', 'd', 'e'].flatMap((s, i) => (i % 2 ? ['May 2026', 'Jun 2026'] : ['2026-10-21', '2026-10-22'])
+        .map((label, j) => [s, label, String(100 * (i + 1) + j)])))
+    expect(splitSeries(five.headers, five.rows, null, false, { value: 'v', label: 'label', series: 'series' })).toBeNull()
+    // one label, customers in different regions (no label in common, but the same kind of label): one chart
+    const regions = table([['customer_name', false], ['region', false], ['sales_inr', true]], [
+      ['Shree Auto', 'North', '100.00'], ['Tata AutoComp', 'North', '90.00'],
+      ['Lucas TVS', 'South', '80.00'], ['Mahindra CIE', 'South', '5.00']])
+    expect(splitSeries(regions.headers, regions.rows)).toBeNull()
   })
 })

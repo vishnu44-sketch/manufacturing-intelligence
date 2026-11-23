@@ -59,3 +59,39 @@ export const SALE_TYPES = table(
     ['Service', '72,852,034.65', '21-Dec-2025', '31-Mar-2027'],
   ],
 )
+
+// 23-Nov: "2 line charts: last 6 months sales and last month day-wise" came back as ONE result: a series column
+// (daily / monthly), labels mixing dates and months, daily 1-4 Cr vs monthly 43-52 Cr
+const DAYS: [string, string][] = [
+  ['2026-10-21', '12,450,300.00'], ['2026-10-22', '18,005,222.15'], ['2026-10-23', '23,330,410.00'],
+  ['2026-10-24', '31,118,900.75'], ['2026-10-25', '9,700,001.00'], ['2026-10-26', '25,980,450.00'],
+  ['2026-10-27', '40,442,120.30'], ['2026-10-28', '15,005,600.00'], ['2026-10-29', '33,870,245.10'],
+  ['2026-10-30', '28,120,000.00'], ['2026-10-31', '36,450,980.20'],
+]
+const SALES_MONTHS: [string, string][] = [
+  ['May 2026', '432,100,000.00'], ['Jun 2026', '455,800,250.00'], ['Jul 2026', '498,300,000.00'],
+  ['Aug 2026', '521,450,600.00'], ['Sep 2026', '470,005,000.00'], ['Oct 2026', '512,880,400.00'],
+]
+export const DAILY_MONTHLY = table(
+  [['series', false], ['period_label', false], ['net_sales_inr', true]],
+  [...DAYS.map(([day, sales]) => ['daily', day, sales]), ...SALES_MONTHS.map(([month, sales]) => ['monthly', month, sales])],
+)
+export const DAILY_MONTHLY_COLUMNS = { value: 'net_sales_inr', label: 'period_label', series: 'series' }
+
+// this year vs last year per month: the same labels, the same size - one chart
+export const TWO_YEARS = table(
+  [['fy', false], ['month_name', false], ['net_sales_inr', true]],
+  [['Apr', '41,200,000.00', '45,800,000.00'], ['May', '43,900,000.00', '47,100,000.00'],
+    ['Jun', '40,150,000.00', '49,300,000.00'], ['Jul', '44,700,000.00', '51,000,000.00']]
+    .flatMap(([month, last, now]) => [['FY 2025-26', month, last], ['FY 2026-27', month, now]]),
+)
+export const TWO_YEARS_COLUMNS = { value: 'net_sales_inr', label: 'month_name', series: 'fy' }
+
+// sales vs returns per month: the same labels, values ~25x apart
+export const SALES_RETURNS = table(
+  [['kind', false], ['month_name', false], ['amount_inr', true]],
+  [['Apr', '52,000,000.00', '2,100,000.00'], ['May', '49,500,000.00', '1,800,000.00'],
+    ['Jun', '55,250,000.00', '2,400,000.00'], ['Jul', '51,000,000.00', '1,950,000.00']]
+    .flatMap(([month, sales, returns]) => [['Sales', month, sales], ['Returns', month, returns]]),
+)
+export const SALES_RETURNS_COLUMNS = { value: 'amount_inr', label: 'month_name', series: 'kind' }

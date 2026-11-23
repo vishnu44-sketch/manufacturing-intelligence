@@ -582,6 +582,117 @@ export function pickChart(headers: Header[], rows: Cell[][], want: ChartKind | n
   }
 }
 
+// 23-Nov: one answer can hold series that do not belong on one chart ("2 line charts: the last 6 months and last
+// month day-wise" came back as one result: series daily / monthly, labels mixing dates and months, values 1-4 Cr vs
+// 43-52 Cr - one shared axis drew the daily line flat at zero). Such series are drawn as separate charts.
+export const MAX_SPLIT = 4 // more series than this stay one chart
+const SCALE_GAP = 10 // series whose biggest values differ more than this many times get their own y-scale
+// kinds that add the series together (parts of a whole) or colour them on one scale: a scale gap is no reason to split
+const ONE_SCALE: ChartKind[] = ['stacked', 'stackedArea', 'treemap', 'heatmap']
+// a kind that needs several series, for a chart of one series: the same look with one series
+const ONE_SERIES: Partial<Record<ChartKind, ChartKind | null>> = { stacked: 'bar', grouped: 'bar', stackedArea: 'area', heatmap: null }
+
+/** One of the charts an answer is split into: its title (the series name, or names), its rows and columns. */
+export interface SeriesPart {
+  name: string
+  rows: Cell[][]
+  columns: ChartColumns // value + label (+ series when several series stay together)
+  kind: ChartKind | null // the kind to ask for this chart
+}
+
+/** What a label is: a date, a month, a year, a quarter, a period / week, a number or other text. */
+export function labelKind(text: string): string {
+  const t = text.trim()
+  const ym = /^(\d{4})-(\d{2})$/.exec(t)
+  if (ym) return (Number(ym[1].slice(2)) + 1) % 100 === Number(ym[2]) ? 'year' : 'month' // 2025-26 = FY, 2026-01 = Jan
+  if (/^\d{4}-\d{2}-\d{2}/.test(t) || /^\d{1,2}[/-]\d{1,2}[/-]\d{2,4}$/.test(t) || TIME_VALUE[1].test(t)) return 'date'
+  if (TIME_VALUE[0].test(t)) return 'month'
+  if (/^\d{4}$/.test(t) && (isYear(Number(t)) || isFyCode(t))) return 'year'
+  if (TIME_VALUE[4].test(t)) return 'year'
+  if (TIME_VALUE[5].test(t) || TIME_VALUE[6].test(t)) return 'quarter'
+  if (TIME_VALUE[7].test(t)) return 'period'
+  if (parseNumber(t) !== null) return 'number'
+  return 'text'
+}
+
+interface SeriesFacts { name: string; rows: number[]; labels: Set<string>; kind: string; scale: number }
+
+/** The series do not belong on one chart: no label in common, labels of another kind (dates vs months), or
+ *  (scaled = true) their biggest values more than SCALE_GAP times apart. */
+function apart(a: SeriesFacts, b: SeriesFacts, scaled: boolean): boolean {
+  if (![...a.labels].some((label) => b.labels.has(label))) return true
+  if (a.kind !== b.kind) return true
+  if (!scaled || !(a.scale > 0) || !(b.scale > 0)) return false
+  return Math.max(a.scale, b.scale) / Math.min(a.scale, b.scale) > SCALE_GAP
+}
+
+/** The charts to draw instead of one when the answer's series do not belong on one chart (each with its own axis
+ *  and y-scale, the series that do belong together kept together), else null (one chart, as before).
+ *  The series: the second label of a pivot (the AI's series column, or the one the rules find) - every rule
+ *  above counts; or, when the rows have one label, a text column with 2-4 values whose labels are of different
+ *  kinds (dates for one, months for another) - only that rule counts there, so customers by region stay one chart.
+ *  2 to MAX_SPLIT series, each with 2 rows at least, each part drawable - else null. */
+export function splitSeries(headers: Header[], rows: Cell[][], want: ChartKind | null = null, upright = false,
+  columns: ChartColumns | null = null): SeriesPart[] | null {
+  const t = readTable(headers, rows, columns)
+  if (!t) return null
+  const at = (name: string) => headers.findIndex((h) => h.name === name)
+  const labelAt = at(t.x)
+  const value = t.pivot ? t.amount : t.ys[0]
+  if (labelAt < 0 || at(value) < 0 || (!t.pivot && t.ys.length !== 1)) return null
+  const textAt = (r: number, i: number) => (rows[r][i]?.text ?? '').trim()
+
+  // the series column: the pivot's, else a text column with 2-4 values (not the label, not a helper column)
+  const groupsOf = (i: number) => {
+    const groups = new Map<string, number[]>()
+    rows.forEach((_, r) => groups.set(textAt(r, i), [...(groups.get(textAt(r, i)) ?? []), r]))
+    return groups
+  }
+  const candidates = t.pivot ? [at(t.group)]
+    : headers.map((_, i) => i).filter((i) => i !== labelAt && !headers[i].num && !HELPER.test(headers[i].name))
+  const valueAt = at(value)
+  for (const seriesAt of candidates) {
+    if (seriesAt < 0) continue
+    const groups = groupsOf(seriesAt)
+    if (groups.size < 2 || groups.size > MAX_SPLIT || [...groups.values()].some((g) => g.length < 2)) continue
+    const facts: SeriesFacts[] = [...groups].map(([name, rs]) => {
+      const kinds = new Set(rs.map((r) => labelKind(textAt(r, labelAt))))
+      const values = rs.map((r) => parseNumber(textAt(r, valueAt))).filter((v): v is number => v !== null)
+      return {
+        name, rows: rs, labels: new Set(rs.map((r) => textAt(r, labelAt))),
+        kind: kinds.size === 1 ? [...kinds][0] : 'mixed', scale: Math.max(0, ...values.map(Math.abs)),
+      }
+    })
+    // the whole answer's kind: a stacked / heatmap view keeps series of different sizes together
+    const whole = t.pivot ? pickChart(headers, rows, want, null, upright, columns)?.kind ?? null : null
+    const scaled = t.pivot && !(whole && ONE_SCALE.includes(whole))
+    // one chart per group of series that belong together (each series joins the first group it fits)
+    const clusters: SeriesFacts[][] = []
+    for (const f of facts) {
+      const home = t.pivot
+        ? clusters.find((c) => c.every((g) => !apart(f, g, scaled)))
+        : clusters.find((c) => c.every((g) => g.kind === f.kind)) // one label: only another kind of label splits
+      if (home) home.push(f)
+      else clusters.push([f])
+    }
+    if (clusters.length < 2) continue
+    const parts = clusters.map((c): SeriesPart => {
+      const many = c.length > 1
+      const kind = want && !many && want in ONE_SERIES ? ONE_SERIES[want] ?? null : want
+      const kept = new Set(c.flatMap((f) => f.rows))
+      return {
+        name: c.map((f) => f.name || '(blank)').join(' and '),
+        rows: rows.filter((_, r) => kept.has(r)),
+        columns: { value, label: t.x, ...(many ? { series: headers[seriesAt].name } : {}) },
+        kind,
+      }
+    })
+    // every part must be a chart of its own (a part that is not stays in one chart with the rest)
+    if (parts.every((p) => pickChart(headers, p.rows, p.kind, null, upright, p.columns) !== null)) return parts
+  }
+  return null
+}
+
 /** Indian short numbers for the axis: 1.2 Cr, 35 L, 12 K, 950. */
 export function shortIndian(n: number): string {
   const abs = Math.abs(n)

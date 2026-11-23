@@ -111,14 +111,16 @@ def editable_question(user, pk):
     return get_object_or_404(Question.objects.visible(), pk=pk, user=user, replaced_by__isnull=True)
 
 
-def edit_question(user, old, text):
+def edit_question(user, old, text, model=""):
     """Edit an old question (like ChatGPT): the edited (checked) text is asked again and its new answer
     takes the old question's place in the chat. The old version is hidden from the chat but stays in
     History, marked "edited". Editing the chat's first question also retitles a chat that was not
-    renamed. Returns (the new saved Question, its chat or None)."""
+    renamed. model = the AI model to try first, as in answer_in_chat (23-Nov: an edit used Auto only).
+    Returns (the new saved Question, its chat or None)."""
     chat = old.conversation if old.conversation and old.conversation.user_id == user.id else None
     context = ChatHistory.for_chat(chat, before=old) if chat else None  # the chat's memory before the edited question
-    saved = agent.ask(text, user, context=context, mode=chat_mode(chat)).question  # in the chat's own mode
+    chosen = {"model": model} if model else {}  # only when chosen: auto is ask()'s own default
+    saved = agent.ask(text, user, context=context, mode=chat_mode(chat), **chosen).question  # the chat's own mode
     Question.objects.filter(pk=saved.pk).update(conversation=chat, chat_order=old.chat_order or old.created_at)
     Question.objects.filter(pk=old.pk).update(replaced_by=saved)
     saved.refresh_from_db()

@@ -190,13 +190,13 @@ export default function AskPage({ me }: { me: Me }) {
     againDone.current = state
     const { id, text } = state.again
     window.history.replaceState(null, '', window.location.pathname) // a refresh does not ask again
-    run(text, () => api.askAgain(id), null, text)
+    run(text, async () => api.askAgain(id, await choice.current()), null, text) // the chosen model (23-Nov)
   }, [route, state]) // eslint-disable-line react-hooks/exhaustive-deps
 
   /** Edit an old question: '' when done, else the message to show under its box. */
   async function edit(card: Card, text: string): Promise<string> {
     try {
-      const reply = await api.edit(card.id, text)
+      const reply = await api.edit(card.id, text, await choice.current()) // the chosen model (23-Nov)
       setNotices((old) => ({ ...old, [reply.card.id]: reply.card.token_notice }))
       setJustAsked(reply.card.id)
       setDetail((old) => old && {

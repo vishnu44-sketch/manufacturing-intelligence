@@ -6,6 +6,8 @@
 // the other groups can be compared; a button shows it again.
 // Drawn with Tailwind + shadcn/ui (it shows only on the Ask page); chart.css is still loaded for the
 // ECharts tooltip. The colours follow the theme (light / dark): when it changes the chart is drawn again.
+// 23-Nov: series that do not belong on one chart (no label in common, dates vs months, values 10x apart - see
+// splitSeries) are drawn as one chart per series, one under the other, each with its own axes, title and PNG.
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { ChartColumnBig, Download, Table2 } from 'lucide-react'
 import { Button } from '../components/ui/button'
@@ -14,7 +16,7 @@ import type { Cell, ChartColumns, Header } from '../types'
 import { ANIMATION_MS, buildOption, catchAllText, chartSubtitle, cutText, describe, downloadPng, NARROW, pngName, readColours } from './chartOption'
 import EChart from './EChart'
 import type { EChartsType } from './echarts'
-import { type ChartKind, pickChart } from './pickChart'
+import { type ChartKind, pickChart, splitSeries } from './pickChart'
 import useThemeName from './useThemeName'
 import './chart.css'
 
@@ -30,7 +32,22 @@ export interface AnswerChartProps {
   columns?: ChartColumns | null // the value / label / series columns the AI named (used when the rows have them)
 }
 
-export default function AnswerChart({ headers, rows, title = '', onShowTable, kind = null, upright = false,
+export default function AnswerChart(props: AnswerChartProps) {
+  const { headers, rows, onShowTable, kind = null, upright = false, columns = null } = props
+  const parts = useMemo(() => splitSeries(headers, rows, kind, upright, columns), [headers, rows, kind, upright, columns])
+  if (!parts) return <OneChart {...props} />
+  // one chart per series (or per group of series that belong together); the Chart / Table switch on the first one
+  return (
+    <div className="flex min-w-0 flex-col gap-3" role="group" aria-label={`${parts.length} charts, one per series`}>
+      {parts.map((part, i) => (
+        <OneChart key={part.name} headers={headers} rows={part.rows} title={part.name} kind={part.kind}
+          upright={upright} columns={part.columns} onShowTable={i === 0 ? onShowTable : undefined} />
+      ))}
+    </div>
+  )
+}
+
+function OneChart({ headers, rows, title = '', onShowTable, kind = null, upright = false,
   columns = null }: AnswerChartProps) {
   const [hide, setHide] = useState<boolean | null>(null) // the catch-all group: null = hidden when it is over 70%
   const pick = useMemo(() => pickChart(headers, rows, kind, hide, upright, columns),

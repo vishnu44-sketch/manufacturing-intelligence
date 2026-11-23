@@ -148,8 +148,12 @@ const STREAM_LOST = 'The connection was lost while the answer was being written.
 export function askBody(question: string, chatId: number | null, mode?: AskMode, model?: string) {
   const body: { question: string; chat_id: number | null; mode?: AskMode; model?: string } = { question, chat_id: chatId }
   if (mode) body.mode = mode
-  if (model && model !== 'auto') body.model = model
-  return body
+  return { ...body, ...modelPart(model) }
+}
+
+/** "model" for a request body: only when an administrator chose one (none or "auto" = the server picks). */
+export function modelPart(model?: string): { model?: string } {
+  return model && model !== 'auto' ? { model } : {}
 }
 
 /** Asks with the answer streamed (/api/ask/stream): onEvent gets each step and each piece of the answer as it
@@ -238,8 +242,11 @@ export const api = {
   askStream,
   // the AI models an administrator can choose for a question (staff only)
   models: () => request<ModelList>('GET', '/api/models'),
-  askAgain: (id: number) => request<AskResponse>('POST', `/api/questions/${id}/again`, {}),
-  edit: (id: number, question: string) => request<EditResponse>('POST', `/api/questions/${id}/edit`, { question }),
+  // 23-Nov: "Ask again" and an edited question go with the model chosen in the question box, as a new question does
+  askAgain: (id: number, model?: string) =>
+    request<AskResponse>('POST', `/api/questions/${id}/again`, modelPart(model)),
+  edit: (id: number, question: string, model?: string) =>
+    request<EditResponse>('POST', `/api/questions/${id}/edit`, { question, ...modelPart(model) }),
   question: (id: number) => request<SavedAnswer>('GET', `/api/questions/${id}`),
   rows: (url: string) => request<Rows>('GET', url),
   // a chart the app cannot draw itself (a sankey, a gauge ...), made by the AI from the rows - uses AI tokens

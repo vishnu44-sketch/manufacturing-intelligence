@@ -424,8 +424,9 @@ def _ask_lines(request, chat, question, mode="", model=""):
 
 @api_view(["POST"])
 def question_edit(request, pk):
-    """{question} -> the edited question is asked again; its new card takes the old one's place in the
-    chat (replaced = the old card's id). Only the owner's own, not yet edited questions (else 404)."""
+    """{question, model} -> the edited question is asked again; its new card takes the old one's place in the
+    chat (replaced = the old card's id). Only the owner's own, not yet edited questions (else 404).
+    23-Nov: model = the model chosen in the question box, as on /api/ask (staff only; anyone else: Auto)."""
     old = services.editable_question(request.user, pk)
     data = _body(request)
     if data is None:
@@ -434,7 +435,10 @@ def question_edit(request, pk):
     problem = services.question_problem(text, empty="Type the edited question first.")
     if problem:
         return _error(400, problem)
-    saved, chat = services.edit_question(request.user, old, text)
+    model, refused = _chosen_model(request)
+    if refused:
+        return refused
+    saved, chat = services.edit_question(request.user, old, text, model)
     audit.record(request, "question_edited", f"question {old.pk}", new_question=saved.pk,
                  chat=chat.pk if chat else None)
     return JsonResponse({**_answered(saved, chat), "replaced": old.pk})
@@ -443,15 +447,19 @@ def question_edit(request, pk):
 @api_view(["POST"])
 def question_again(request, pk):
     """History's "Ask again": one of the user's own questions is asked again in a new chat (as it was
-    understood, for a follow-up such as "and for Sep?")."""
+    understood, for a follow-up such as "and for Sep?"). 23-Nov: {model} = the model chosen in the question box,
+    as on /api/ask (staff only; anyone else: Auto)."""
     old = get_object_or_404(Question.objects.visible(), pk=pk, user=request.user)
     question = (old.understood_as or old.text).strip()
     problem = services.question_problem(question)
     if problem:
         return _error(400, problem)
+    model, refused = _chosen_model(request)
+    if refused:
+        return refused
     # a question of an ML Insights chat is asked again in a new ML Insights chat
     mode = old.conversation.mode if old.conversation_id else ""
-    saved, chat = services.answer_in_chat(request.user, None, question, mode)
+    saved, chat = services.answer_in_chat(request.user, None, question, mode, model)
     audit.record(request, "ask_again", f"question {old.pk}", new_question=saved.pk, chat=chat.pk)
     return JsonResponse(_answered(saved, chat))
 

@@ -593,6 +593,89 @@ def test_the_ai_chart_takes_the_choice_too(monkeypatch, client, staff, chain):
     assert fake.keys == [KEY, KEY_2, KEY, KEY]
 
 
+# ---------- 23-Nov: editing a question and "Ask again" use the chosen model too (they used Auto only) ----------
+
+def edit_or_again(client, name, old, model=None):
+    """POST /api/questions/<id>/edit ({question}) or /again, with "model" when given."""
+    data = {"question": "Top customers in Aug 2026?"} if name == "api_edit" else {}
+    if model is not None:
+        data["model"] = model
+    return client.post(reverse(name, args=[old.pk]), data=json.dumps(data), content_type="application/json")
+
+
+def old_question(owner):
+    return Question.objects.create(user=owner, text="Top customers in Jul 2026?", answer="A", status="ok")
+
+
+@pytest.mark.parametrize("name", ["api_edit", "api_again"])
+def test_edit_and_ask_again_take_the_chosen_model(monkeypatch, client, mysql, staff, chain, name):
+    mysql.results = [ROWS]
+    fake = use_fake_ai(monkeypatch, [GOOD_SQL, ANSWER])
+    client.force_login(staff)
+    old = old_question(staff)
+
+    r = edit_or_again(client, name, old, "groq-main-2")
+
+    assert r.status_code == 200, r.content
+    assert fake.keys == [KEY_2, KEY_2]                                    # the chosen key, not Auto's first key
+    assert r.json()["card"]["model_note"] == "chosen by you"
+    assert Question.objects.get(pk=r.json()["card"]["id"]).model_note == "chosen by you"
+
+
+@pytest.mark.parametrize("model", [None, "auto"])
+@pytest.mark.parametrize("name", ["api_edit", "api_again"])
+def test_edit_and_ask_again_without_a_choice_use_auto(monkeypatch, client, mysql, staff, chain, name, model):
+    mysql.results = [ROWS]
+    fake = use_fake_ai(monkeypatch, [GOOD_SQL, ANSWER])
+    client.force_login(staff)
+
+    r = edit_or_again(client, name, old_question(staff), model)
+
+    assert r.status_code == 200, r.content
+    assert fake.keys == [KEY, KEY] and r.json()["card"]["model_note"] == ""
+
+
+@pytest.mark.parametrize("name", ["api_edit", "api_again"])
+def test_a_users_choice_on_edit_and_ask_again_is_ignored(monkeypatch, client, mysql, user, chain, name):
+    mysql.results = [ROWS]
+    fake = use_fake_ai(monkeypatch, [GOOD_SQL, ANSWER])
+    client.force_login(user)
+
+    r = edit_or_again(client, name, old_question(user), "groq-main-2")
+
+    assert r.status_code == 200 and fake.keys == [KEY, KEY]              # not an administrator: always Auto
+    assert r.json()["card"]["model_note"] == ""
+
+
+@pytest.mark.parametrize("name", ["api_edit", "api_again"])
+def test_a_wrong_model_id_on_edit_and_ask_again_is_400(monkeypatch, client, staff, chain, name):
+    fake = use_fake_ai(monkeypatch, [])
+    client.force_login(staff)
+    old = old_question(staff)
+
+    r = edit_or_again(client, name, old, "gpt-5")
+
+    assert r.status_code == 400
+    assert r.json()["detail"] == "model must be one of: auto, groq-main, groq-main-2, groq-backup, local."
+    assert fake.calls == [] and Question.objects.count() == 1           # nothing asked, nothing saved
+    assert Question.objects.get(pk=old.pk).replaced_by_id is None       # the old question is not replaced
+
+
+@pytest.mark.parametrize("name", ["api_edit", "api_again"])
+def test_an_unavailable_chosen_model_on_edit_and_ask_again_says_so(monkeypatch, client, staff, chain, name):
+    monkeypatch.delenv(KEY_2)
+    fake = use_fake_ai(monkeypatch, [GOOD_SQL, ANSWER])
+    client.force_login(staff)
+
+    r = edit_or_again(client, name, old_question(staff), "groq-main-2")
+
+    assert r.status_code == 200, r.content
+    card = r.json()["card"]
+    assert fake.models == [] and card["status"] == "error"               # never another model in its place
+    assert card["answer"] == ("The second Groq key is not set up (GROQ_API_KEY_2 missing). Choose another model, "
+                              "or Auto.")
+
+
 # ---------- GET /api/models ----------
 
 def test_the_models_list_is_for_staff_only(client, user, chain):
