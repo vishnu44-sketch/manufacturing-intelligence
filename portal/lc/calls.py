@@ -15,6 +15,10 @@ moves on to the next model after each of these errors - 19-Nov: on either Groq k
 - network error                 -> try once more after 3 s, then ModelDown ("could not be reached")
 - a timeout / server error (5xx, e.g. 503 "over capacity") -> ModelDown at once
 - any other error (a wrong key, an unknown model, a bad request) -> ModelFailed ("returned an error")
+20-Nov, the company's local model (key_env LOCAL_LLM_API_KEY, lc/llm.py): the same exceptions, each with its own plain
+message (llm.LOCAL_*): could not be reached / did not answer within LOCAL_LLM_TIMEOUT / its context is too small
+(RequestTooLarge) / busy (a 429 or 503 of that server - no daily or per-minute logic: it is not Groq) / 404 = a
+wrong model name or address / any other error.
 A streamed reply (the final answer on the streamed Ask page) follows the same rules until its first piece is
 shown; an error after that is StreamBroken (the answer step then shows the rows without a summary).
 """
@@ -24,6 +28,7 @@ from dataclasses import dataclass, field
 
 import openai
 
+from .. import question_notes
 from ..rag import agent
 from . import chains, llm
 
@@ -48,10 +53,13 @@ class LcRequest:
 
     def inputs(self):
         """The template's inputs: the values, plus the earlier tries for the SQL chain (and for an answer the app's
-        answer check sent back once: its first answer + the correction, answer_verify.py)."""
+        answer check sent back once: its first answer + the correction, answer_verify.py).
+        20-Nov: an SQL / answer request also gets the question's notes the app works out first ("this year" = the FY
+        of today with its code, the last 3 complete sales months ...; question_notes.py) - none needed: as before."""
+        values = question_notes.with_notes(self.chain, self.values)
         if self.chain != "sql" and not self.retries:
-            return dict(self.values)
-        return {**self.values, "retries": list(self.retries)}
+            return dict(values)
+        return {**values, "retries": list(self.retries)}
 
 
 BACKUP_SQL_NOTES = 2           # notes pieces the backup's SQL request keeps (the main model gets agent.TOP_K = 5)
@@ -88,8 +96,9 @@ def for_backup(request, smallest=False):
 
 
 # a context-length error of a request that is too big for the model (OpenAI-style: "context_length_exceeded",
-# "maximum context length is ... tokens")
-TOO_LONG = re.compile(r"context.length|context window|maximum context", re.I)
+# "maximum context length is ... tokens"; 20-Nov, local servers: llama.cpp "exceeds the available context size"
+# (exceed_context_size_error), LM Studio "context overflow")
+TOO_LONG = re.compile(r"context.length|context.size|context window|maximum context|context overflow", re.I)
 
 
 def chat(request, max_tokens, effort, model=None, on_token=None, key_env=llm.KEY, switch=False):
@@ -102,7 +111,8 @@ def chat(request, max_tokens, effort, model=None, on_token=None, key_env=llm.KEY
     ChainModel.key_env). switch=True (19-Nov): the other Groq key may take this call at once, so a per-minute limit
     is not waited for - MinuteLimit (with minute_reset's seconds) is raised instead."""
     model = model or agent.model_name()
-    waits = model == agent.model_name()  # only the main Groq model (either key) waits for a per-minute limit
+    local = key_env == llm.LOCAL_KEY     # 20-Nov: the company's local model - its own plain messages
+    waits = not local and model == agent.model_name()  # only the main Groq model (either key) waits a minute limit
     attempt = 0
     while True:
         attempt += 1
@@ -114,6 +124,9 @@ def chat(request, max_tokens, effort, model=None, on_token=None, key_env=llm.KEY
             _log_usage(request.chain, message, model)
             return text, tokens, cut_off
         except openai.RateLimitError as exc:
+            if local:  # a local server has no Groq limits: a 429 just means it is busy
+                log.warning("The local model %s said it is busy (429)", model)
+                raise agent.ModelBusy(llm.LOCAL_BUSY) from None
             if agent.DAILY_LIMIT.search(str(exc)):  # e.g. "tokens per day (TPD): Limit 200000, Used ..."
                 log.warning("Daily limit reached for %s", model)
                 raise agent.DailyLimitReached(model) from None
@@ -131,23 +144,42 @@ def chat(request, max_tokens, effort, model=None, on_token=None, key_env=llm.KEY
             agent._wait(wait)
         except openai.APITimeoutError:  # a hanging call: the next model, not another wait
             log.warning("%s did not answer in time", model)
-            raise agent.ModelDown() from None
-        except openai.APIConnectionError:  # network
+            slow = llm.LOCAL_SLOW.format(secs=llm.local_timeout()) if local else None
+            raise agent.ModelDown(message=slow) from None
+        except openai.APIConnectionError:  # network (a local server: refused, a wrong address / name)
             if attempt >= 2:
-                raise agent.ModelDown() from None
+                if local:
+                    log.warning("The local model could not be reached at %s", llm.LOCAL_URL)
+                raise agent.ModelDown(message=llm.LOCAL_DOWN if local else None) from None
             agent._wait(3)
         except openai.InternalServerError as exc:  # 500 / 502 / 503 / 504: busy or down at the provider
             log.warning("%s is busy or down (%s)", model, exc.status_code)
-            raise agent.ModelDown(busy=exc.status_code == 503) from None
+            if local and TOO_LONG.search(str(exc)):  # some local servers say "context" with a 500
+                raise agent.RequestTooLarge(llm.LOCAL_TOO_SMALL) from None
+            down = _local_message(exc) if local else None
+            raise agent.ModelDown(busy=exc.status_code == 503, message=down) from None
         except openai.APIStatusError as exc:  # 400 / 401 / 404 / 413 ...: retrying the same will not help
             if exc.status_code == 413 or TOO_LONG.search(str(exc)):  # a smaller request may go
                 log.warning("Request too large for %s (%s)", model, exc.status_code)
-                raise agent.RequestTooLarge() from None
+                raise agent.RequestTooLarge(llm.LOCAL_TOO_SMALL if local else None) from None
             log.warning("%s error %s: %s", model, exc.status_code, str(exc)[:300])
-            raise agent.ModelFailed() from None
+            raise agent.ModelFailed(_local_message(exc) if local else None) from None
         except openai.OpenAIError as exc:
             log.warning("%s error: %s", model, str(exc)[:300])
-            raise agent.ModelFailed() from None
+            raise agent.ModelFailed(llm.LOCAL_ERROR.format(status="no answer") if local else None) from None
+
+
+def _local_message(exc):
+    """The plain message of the local model's HTTP error (20-Nov): 404 = a wrong model name or address, 401 / 403 =
+    the key, 503 = busy, else "returned an error (<status>)"."""
+    status = getattr(exc, "status_code", None)
+    if status == 404:
+        return llm.LOCAL_NOT_FOUND
+    if status in (401, 403):
+        return llm.LOCAL_BAD_KEY.format(status=status)
+    if status == 503:
+        return llm.LOCAL_BUSY
+    return llm.LOCAL_ERROR.format(status=f"HTTP {status}" if status else "no answer")
 
 
 # Groq's x-ratelimit-reset-* headers: '7.66s', '2m59.56s', '500ms'

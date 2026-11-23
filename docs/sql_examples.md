@@ -275,6 +275,33 @@ ORDER BY c.sales_period_no;
 Why: JPY = INR x dim_fx_rates.exchange_rate of the window holding the invoice date (fact_invoice_lines.fx_rate_id); each window is one sales month.
 Expected: 8 rows - Apr 2026 rate 1.69, 855,336,581.65 JPY; ...; Oct 2026 rate 1.79, 926,315,142.02 JPY; Nov 2026 (21-31 Oct only) rate 1.74, 329,328,973.50 JPY.
 
+## Q: How much did we invoice in foreign currency this year, and what is it in INR?
+
+Also asked as: export invoices in foreign currency; how much did we bill foreign customers this year; export sales in INR and in yen; foreign currency sales this financial year; how much of our billing is in foreign currency.
+
+```sql
+WITH fy AS (
+  SELECT financial_year, financial_year_label FROM dim_calendar WHERE full_date = CURDATE()
+)
+SELECT fy.financial_year_label,
+       MIN(il.invoice_date) AS data_from,
+       MAX(il.invoice_date) AS data_to,
+       COUNT(DISTINCT CASE WHEN il.document_type = 'INVOICE' THEN il.invoice_number END) AS export_invoices,
+       ROUND(SUM(il.net_taxable_value), 2) AS export_sales_inr,
+       ROUND(SUM(il.net_taxable_value * f.exchange_rate), 2) AS export_sales_jpy,
+       ROUND(SUM(CASE WHEN f.exchange_rate IS NULL THEN il.net_taxable_value ELSE 0 END), 2) AS inr_without_jpy_rate
+FROM fact_invoice_lines il
+JOIN dim_calendar c ON c.date_id = il.invoice_date_id
+JOIN fy ON fy.financial_year = c.financial_year
+JOIN dim_fx_rates f ON f.fx_rate_id = il.fx_rate_id
+WHERE il.sale_type = 'Export'
+  AND il.invoice_date <= CURDATE()
+GROUP BY fy.financial_year_label;
+```
+
+Why: ss_gold keeps every amount in INR - there is no invoice currency column - so "invoiced in foreign currency" = the export sales (fact_invoice_lines.sale_type = 'Export'), never all sales. "This year" = the current FY (financial_year of CURDATE()), counted up to today; data_from / data_to say which dates it covers. The only rate in the data is INR to JPY (dim_fx_rates of each invoice date's window), so export_sales_jpy is that conversion; the currency each export invoice was billed in (USD, JPY ...) is not stored - the answer gives the INR value and the JPY conversion and says so. inr_without_jpy_rate = export sales on dates with no rate window.
+Expected: (20-Nov-2026) FY 2026-27, 01-Apr-2026 to 31-Oct-2026: 1,585 export invoices, 680,651,545.30 INR = 1,167,107,151.21 JPY; 0.00 INR without a rate.
+
 ## Q: Are there invoice or sales order lines with an Unknown customer or Unknown product?
 
 Also asked as: unknown customer check; lines with missing master data (-1 keys); data quality of customer and product codes.
@@ -328,6 +355,29 @@ ORDER BY segment;
 
 Why: the client's country segment is dim_customers.country_segment, joined through fact_invoice_lines.customer_id.
 Expected: 2.ASIA 2,789,541,998.28; 1.JAPAN 213,926,499.25; 3.AMERICA 111,981,011.30; 5.MIDDLE EAST 109,561,715.25; 4.EUROPE 54,629,344.00; 8.OTHER 29,753,438.50; Unknown 50,623,602.50.
+
+## Q: What were the sales of the state Karnataka in FY 2026-27?
+
+Also asked as: karnataka sales how much in fy 26-27; how much did Tamil Nadu buy this year; total sales of one state in a financial year; sales to the customers of a state (one total, not per customer).
+
+```sql
+SELECT cu.state,
+       MIN(il.invoice_date) AS data_from,
+       MAX(il.invoice_date) AS data_to,
+       COUNT(DISTINCT il.customer_id) AS customers,
+       ROUND(SUM(il.net_taxable_value), 2) AS net_sales_inr,
+       COUNT(*) OVER () AS states_matched
+FROM fact_invoice_lines il
+JOIN dim_calendar c ON c.date_id = il.invoice_date_id
+JOIN dim_customers cu ON cu.customer_id = il.customer_id
+WHERE c.financial_year = '2627'
+  AND il.invoice_date <= CURDATE()
+  AND cu.state LIKE '%Karnataka%'
+GROUP BY cu.state;
+```
+
+Why: a state's sales = the customer's bill-to state, dim_customers.state (full names; never place_of_supply_state). "How much" asks for a total: ONE row per matching state - GROUP BY cu.state, never by customer (a list of customers is not the state's total). LIKE '%...%' matches the typed name; states_matched says how many states matched. "fy 26-27" = financial_year '2627'; for "this year" use the FY of today: `c.financial_year = (SELECT financial_year FROM dim_calendar WHERE full_date = CURDATE())`. A FY that is not over counts up to today (invoice_date <= CURDATE()); data_from / data_to say which dates the total covers.
+Expected: Karnataka, FY 2026-27 (01-Apr-2026 to 31-Oct-2026): 313 customers, net sales 481,946,947.50; 1 state matched.
 
 ## Q: How much did OEM and after-market (AFT) customers buy in FY 2026-27?
 
@@ -557,6 +607,28 @@ GROUP BY r.report_date;
 Why: "now" / "current" = the newest stock report (MAX(report_date)); COGS = movements with movement_type 'COGS', value SUM(-transaction_value). The LEFT JOIN from the report date returns one row even when that report has no COGS rows (then 0).
 Expected: report 2026-10-31 - 638 COGS rows, 7,918.000 units, 253,254,756.67 INR, 31,984.69 per unit.
 
+## Q: What was the purchase value in the latest stock report?
+
+Also asked as: purchases in the newest stock report; how much stock did we buy; value of stock purchases (PD, PU, PC) now; purchase value in the 30-Sep-2026 stock report (use that report_date instead of MAX).
+
+```sql
+SELECT r.report_date,
+       COUNT(sl.stock_ledger_id) AS purchase_rows,
+       MIN(sl.posting_date) AS first_purchase_date,
+       MAX(sl.posting_date) AS last_purchase_date,
+       ROUND(COALESCE(SUM(sl.quantity), 0), 3) AS purchased_qty,
+       ROUND(COALESCE(SUM(sl.transaction_value), 0), 2) AS purchase_value_inr
+FROM (SELECT MAX(report_date) AS report_date FROM fact_stock_ledger) r
+LEFT JOIN fact_stock_ledger sl
+       ON sl.report_date = r.report_date
+      AND sl.movement_type_id IN (SELECT t.movement_type_id FROM dim_stock_movement_types t
+                                  WHERE t.movement_type = 'Purchase')
+GROUP BY r.report_date;
+```
+
+Why: purchase value = what came INTO stock by purchase in that report: SUM(transaction_value) of the movement rows with movement_type 'Purchase' (document prefixes PD / PU / PC). It is NOT the stock value: the closing stock value (cumulative_value of the 'Closing balance' rows) is what is in stock on the report date, not what was bought - never answer a purchase question with it. "Latest" = the newest report (MAX(report_date)). Purchase orders, suppliers and purchase prices are not in ss_gold, only these stock purchase movements. The answer names the report date and the posting dates of the purchases (first_purchase_date to last_purchase_date); the LEFT JOIN gives one row (0) when the report has no purchases.
+Expected: report 2026-10-31 - 377 purchase rows posted 01-Oct-2026 to 05-Oct-2026, 129,971.000 units, purchase value 263,060,245.40 INR (the closing stock value of the same report, 595,717,536.93, is a different number).
+
 ## Q: When was the data last loaded, and how many rows did that load add?
 
 Also asked as: last data load; when was ss_gold refreshed; what did the last load add, update or skip; data freshness; load history.
@@ -659,6 +731,109 @@ CROSS JOIN same_dates sd;
 Why: "this year" / "last year" = the current and the previous FY. The query gives BOTH: each FY's total with the dates the data covers (the current FY is not over), and a fair growth % on the SAME dates in both years (the dates where both years have data, shifted by one year), calculated in SQL (revenue_growth_pct). The answer gives the two FY totals with their dates first, then the same-dates growth. When the user said "profit %", the reply also has the line "MISSING: true profit - the SS Manufacturing data has selling prices but not the cost of the items sold", and the answer calls the % revenue growth, never profit.
 Expected: (17-Nov-2026) FY 2025-26 5,169,611,634.51 (01-Apr-2025 to 31-Mar-2026); FY 2026-27 3,360,017,609.08 (01-Apr-2026 to 31-Oct-2026); same dates 01-Apr..31-Oct: 2,798,457,848.67 last year vs 3,360,017,609.08 this year = +20.07%.
 
+## Q: How did our sales grow quarter by quarter over the last two financial years?
+
+Also asked as: quarterly sales growth; sales of each quarter this year and last year; quarter-wise sales and growth compared with the same quarter a year before; year-on-year growth by quarter.
+
+```sql
+WITH this_fy AS (
+  SELECT t.financial_year AS this_fy,
+         (SELECT p.financial_year FROM dim_calendar p WHERE p.full_date = t.full_date - INTERVAL 1 YEAR) AS last_fy
+  FROM dim_calendar t
+  WHERE t.full_date = CURDATE()
+),
+data_end AS (
+  SELECT LEAST(MAX(invoice_date), CURDATE()) AS data_to FROM fact_invoice_lines
+),
+quarters AS (
+  SELECT c.financial_year, c.financial_year_label, c.fiscal_quarter,
+         MIN(c.full_date) AS quarter_from, MAX(c.full_date) AS quarter_to
+  FROM dim_calendar c
+  CROSS JOIN this_fy f
+  WHERE c.financial_year IN (f.this_fy, f.last_fy)
+  GROUP BY c.financial_year, c.financial_year_label, c.fiscal_quarter
+),
+q AS (
+  SELECT qu.financial_year, qu.financial_year_label, qu.fiscal_quarter, qu.quarter_from, qu.quarter_to,
+         LEAST(qu.quarter_to, d.data_to) AS data_to
+  FROM quarters qu
+  CROSS JOIN data_end d
+  WHERE qu.quarter_from <= d.data_to
+),
+sales AS (
+  SELECT q.financial_year, q.fiscal_quarter,
+         SUM(CASE WHEN il.invoice_date BETWEEN q.quarter_from AND q.data_to
+                  THEN il.net_taxable_value ELSE 0 END) AS sales_inr,
+         SUM(CASE WHEN il.invoice_date BETWEEN q.quarter_from - INTERVAL 1 YEAR AND q.data_to - INTERVAL 1 YEAR
+                  THEN il.net_taxable_value ELSE 0 END) AS year_before_inr
+  FROM q
+  JOIN fact_invoice_lines il ON il.invoice_date BETWEEN q.quarter_from - INTERVAL 1 YEAR AND q.data_to
+  GROUP BY q.financial_year, q.fiscal_quarter
+)
+SELECT q.financial_year_label,
+       q.fiscal_quarter,
+       q.quarter_from,
+       q.quarter_to,
+       q.data_to,
+       CASE WHEN q.data_to = q.quarter_to THEN 'complete' ELSE 'not complete - data only up to data_to' END AS quarter_status,
+       ROUND(s.sales_inr, 2) AS net_sales_inr,
+       q.quarter_from - INTERVAL 1 YEAR AS year_before_from,
+       q.data_to - INTERVAL 1 YEAR AS year_before_to,
+       ROUND(s.year_before_inr, 2) AS same_quarter_year_before_inr,
+       ROUND((s.sales_inr - s.year_before_inr) / NULLIF(s.year_before_inr, 0) * 100, 2) AS growth_pct
+FROM q
+JOIN sales s ON s.financial_year = q.financial_year AND s.fiscal_quarter = q.fiscal_quarter
+ORDER BY q.quarter_from;
+```
+
+Why: "the last two financial years" = the current FY (financial_year of CURDATE()) and the FY before it (the FY of the same day one year earlier) - never fixed years. A quarter is the FY quarter by calendar dates (dim_calendar.fiscal_quarter: Q1 = 1-Apr to 30-Jun), one row per quarter that has started, in date order, net sales = SUM(net_taxable_value). Each quarter's growth is against the SAME quarter one year before (its dates shifted by one year, so the FY before the two years is read too), calculated in SQL - never one same-dates window for the whole year and never quarter against the previous quarter unless the user asks for that. The quarter the data ends in is not complete: quarter_status and data_to say so, and it is compared with the same dates a year before (year_before_from to year_before_to), never with a whole quarter. growth_pct is already a percent (19.14 = 19.14 %). The answer names each quarter with its dates.
+Expected: (20-Nov-2026) 7 rows: FY 2025-26 Q1 1,188,876,440.05 (+30.46 %), Q2 1,169,698,400.80 (+9.95 %), Q3 1,317,411,325.36 (+11.30 %), Q4 1,493,625,468.30 (+19.14 %); FY 2026-27 Q1 1,425,059,543.35 (+19.87 %), Q2 1,407,578,536.48 (+20.34 %), Q3 not complete (01-Oct-2026 to 31-Oct-2026) 527,379,529.25 vs 439,883,007.82 on 01-Oct-2025 to 31-Oct-2025 (+19.89 %).
+
+## Q: How many customers make up half of our sales this financial year?
+
+Also asked as: how many customers give us 50 % of our revenue; customer concentration; how many top customers make 80 % of sales (change total_inr / 2 to total_inr * 0.8); Pareto of customers; do a few customers make most of our sales.
+
+```sql
+WITH fy AS (
+  SELECT financial_year, financial_year_label FROM dim_calendar WHERE full_date = CURDATE()
+),
+period_lines AS (
+  SELECT il.customer_id, il.invoice_date, il.net_taxable_value
+  FROM fact_invoice_lines il
+  JOIN dim_calendar c ON c.date_id = il.invoice_date_id
+  JOIN fy ON fy.financial_year = c.financial_year
+  WHERE il.invoice_date <= CURDATE()
+),
+per_customer AS (
+  SELECT customer_id, SUM(net_taxable_value) AS sales_inr
+  FROM period_lines
+  WHERE customer_id <> -1
+  GROUP BY customer_id
+),
+ranked AS (
+  SELECT customer_id, sales_inr,
+         ROW_NUMBER() OVER (ORDER BY sales_inr DESC, customer_id) AS rank_no,
+         SUM(sales_inr) OVER (ORDER BY sales_inr DESC, customer_id ROWS UNBOUNDED PRECEDING) AS running_inr,
+         SUM(sales_inr) OVER () AS total_inr
+  FROM per_customer
+)
+SELECT fy.financial_year_label,
+       (SELECT MIN(invoice_date) FROM period_lines) AS data_from,
+       (SELECT MAX(invoice_date) FROM period_lines) AS data_to,
+       MIN(CASE WHEN r.running_inr >= r.total_inr / 2 THEN r.rank_no END) AS customers_making_half,
+       COUNT(*) AS customers_buying,
+       ROUND(MIN(CASE WHEN r.running_inr >= r.total_inr / 2 THEN r.rank_no END) * 100 / COUNT(*), 2) AS pct_of_customers,
+       ROUND(MAX(r.total_inr), 2) AS customers_sales_inr,
+       ROUND(MAX(r.total_inr) / 2, 2) AS half_of_sales_inr,
+       (SELECT ROUND(COALESCE(SUM(net_taxable_value), 0), 2) FROM period_lines WHERE customer_id = -1) AS unknown_customer_sales_inr
+FROM ranked r
+CROSS JOIN fy
+GROUP BY fy.financial_year_label;
+```
+
+Why: "how many customers make up half of the sales" = rank the customers by their sales (biggest first), add them up with a running SUM() OVER (ORDER BY ...) and count how many it takes to reach half of the total: ONE summary row with that count (customers_making_half) - never a list of the top customers, and it can be calculated (never MISSING). "This financial year" = the FY of CURDATE(), counted up to today. The Unknown customer (-1) is not a customer: it is left out of the ranking and its sales are shown apart (unknown_customer_sales_inr). pct_of_customers is already a percent. The answer says e.g. "189 of the 2,643 customers who bought in FY 2026-27 (01-Apr-2026 to 31-Oct-2026) make up half of the sales".
+Expected: (20-Nov-2026) FY 2026-27, 01-Apr-2026 to 31-Oct-2026: 189 of 2,643 customers (7.15 %) make up half (1,679,678,522.04) of 3,359,357,044.08 INR; Unknown customer 660,565.00 left out.
+
 ## Q: How many new customers did we get in FY 2026-27, and how much did they buy?
 
 Also asked as: new customers this year and their revenue; how many customers bought from us for the first time; first-time customers this year; revenue from new customers.
@@ -700,7 +875,7 @@ Expected: 01-Apr-2026 to 31-Mar-2027, invoice_history_starts 02-Apr-2024: 876 ne
 
 ## Q: Which customers stopped buying from us?
 
-Also asked as: customers who have not bought for a while; lapsed or inactive customers; customers with no orders in the last 3 months; which customers we lost.
+Also asked as: customers who have not bought for a while; lapsed or inactive customers; customers with no orders in the last 3 months; which customers we lost; which of last year's top 20 customers have not bought in the last 3 months (keep only the previous FY's top 20 customers by net sales - same cut-off from MAX(invoice_date)).
 
 ```sql
 WITH latest AS (
@@ -909,6 +1084,57 @@ ORDER BY c.sales_period_start;
 Why: a range of named months is a range of sales months (21st to 20th), one row per sales month: 'Jan 2026' starts on 21-Dec-2025 and 'Oct 2026' ends on 20-Oct-2026. The first and last month are looked up by name (no date arithmetic). period_start / period_end are the sales month's own dates from dim_calendar - never MIN / MAX of the invoice dates. Order by sales_period_start, never by the month text. net_taxable_value already has credit notes negative and debit notes positive. Use calendar months (c.month_year) only when the user says "calendar month" or gives exact dates.
 Expected: 10 rows from Jan 2026 (21-Dec-2025 to 20-Jan-2026) 470,037,262.50 to Oct 2026 (21-Sep-2026 to 20-Oct-2026) 517,494,492.75; highest Mar 2026 534,303,216.00; lowest Jul 2026 434,659,336.50.
 
+## Q: Which month had our highest sales ever, and which had the lowest?
+
+Also asked as: best and worst month ever; our record sales month; the month with the lowest sales; highest and lowest monthly sales in all the data; peak sales month.
+
+```sql
+WITH bounds AS (
+  SELECT MIN(invoice_date) AS data_from, LEAST(MAX(invoice_date), CURDATE()) AS data_to FROM fact_invoice_lines
+),
+months AS (
+  SELECT c.sales_month, c.sales_period_start, c.sales_period_end,
+         SUM(il.net_taxable_value) AS net_sales_inr
+  FROM fact_invoice_lines il
+  JOIN dim_calendar c ON c.date_id = il.invoice_date_id
+  WHERE il.invoice_date <= CURDATE()
+  GROUP BY c.sales_month, c.sales_period_start, c.sales_period_end
+),
+flagged AS (
+  SELECT m.*,
+         GREATEST(m.sales_period_start, b.data_from) AS data_from_in_month,
+         LEAST(m.sales_period_end, b.data_to) AS data_to_in_month,
+         CASE WHEN m.sales_period_start >= b.data_from AND m.sales_period_end <= b.data_to THEN 1 ELSE 0 END AS complete_month
+  FROM months m
+  CROSS JOIN bounds b
+),
+ranked AS (
+  SELECT f.*,
+         ROW_NUMBER() OVER (ORDER BY f.net_sales_inr DESC) AS high_no,
+         ROW_NUMBER() OVER (ORDER BY f.net_sales_inr ASC) AS low_no,
+         ROW_NUMBER() OVER (PARTITION BY f.complete_month ORDER BY f.net_sales_inr ASC) AS low_in_kind_no,
+         COUNT(*) OVER () AS months_in_data
+  FROM flagged f
+)
+SELECT CASE WHEN r.high_no = 1 THEN 'Highest month'
+            WHEN r.low_no = 1 THEN 'Lowest month'
+            ELSE 'Lowest complete month' END AS highlight,
+       r.sales_month,
+       r.sales_period_start AS period_start,
+       r.sales_period_end AS period_end,
+       r.data_from_in_month,
+       r.data_to_in_month,
+       CASE WHEN r.complete_month = 1 THEN 'complete' ELSE 'part month (data only from data_from_in_month to data_to_in_month)' END AS month_status,
+       ROUND(r.net_sales_inr, 2) AS net_sales_inr,
+       r.months_in_data
+FROM ranked r
+WHERE r.high_no = 1 OR r.low_no = 1 OR (r.complete_month = 1 AND r.low_in_kind_no = 1)
+ORDER BY CASE WHEN r.high_no = 1 THEN 1 WHEN r.low_no = 1 THEN 2 ELSE 3 END;
+```
+
+Why: "ever" = every sales month in the data (a month is the sales month, 21st to 20th), net sales = SUM(net_taxable_value). ONE query: net sales per sales month, then ROW_NUMBER() from the top and from the bottom labels the rows in a `highlight` column - never two SELECTs glued with UNION ALL, where an ORDER BY / LIMIT without brackets sorts the whole result and loses one of the two months. The first and the last month of the data can be part months (the data starts on MIN(invoice_date) and ends on MAX(invoice_date)): month_status and data_from_in_month / data_to_in_month say so, and the lowest COMPLETE month is labelled too, so the answer says e.g. "lowest Apr 2024 (a part month: data only from 02-Apr-2024); the lowest complete month was Jul 2024".
+Expected: (20-Nov-2026) 32 sales months: highest Mar 2026 (21-Feb-2026 to 20-Mar-2026) 534,303,216.00; lowest Apr 2024 140,960,488.50 (part month, data from 02-Apr-2024 to 20-Apr-2024); lowest complete month Jul 2024 (21-Jun-2024 to 20-Jul-2024) 313,099,983.63.
+
 ## Q: Which customers bought from us between Jan 2026 and Jun 2026 but have bought nothing since Oct 2026?
 
 Also asked as: customers who bought in one period but not since a month; customers who bought earlier but have not bought since Oct 2026; bought in H1 but nothing after that; customers missing since a month.
@@ -943,6 +1169,63 @@ ORDER BY pc.sales_in_period DESC;
 
 Why: month names are sales months, looked up by name: "between Jan 2026 and Jun 2026" = 21-Dec-2025 to 20-Jun-2026; "nothing since Oct 2026" = no invoice on or after the FIRST day of Oct 2026 (21-Sep-2026) - October itself counts, so never compare with the month's last day. Buying = an INVOICE line; a later credit / debit note is not a purchase. The Unknown customer (-1) is not a customer and gets no row. The answer states the three dates and matching_customers.
 Expected: 1,669 customers bought 21-Dec-2025 to 20-Jun-2026 and have no invoice on or after 21-Sep-2026; biggest Aurora Fluid Power Limited 23,158,082.50 (last invoice 17-Jul-2026).
+
+## Q: Which customers bought in FY 2024-25 but not in FY 2025-26?
+
+Also asked as: customers who bought in one financial year but not in the next; customers of one FY missing in the next; customers we had in FY 2024-25 who did not buy in FY 2025-26; how many customers did not come back the next financial year.
+
+```sql
+WITH per_customer AS (
+  SELECT il.customer_id,
+         SUM(il.document_type = 'INVOICE' AND c.financial_year = '2425') AS invoices_fy2425,
+         SUM(il.document_type = 'INVOICE' AND c.financial_year = '2526') AS invoices_fy2526,
+         SUM(CASE WHEN c.financial_year = '2425' THEN il.net_taxable_value ELSE 0 END) AS sales_fy2425,
+         MAX(CASE WHEN il.document_type = 'INVOICE' THEN il.invoice_date END) AS last_invoice_date
+  FROM fact_invoice_lines il
+  JOIN dim_calendar c ON c.date_id = il.invoice_date_id
+  WHERE il.customer_id <> -1
+  GROUP BY il.customer_id
+)
+SELECT (SELECT MIN(full_date) FROM dim_calendar WHERE financial_year = '2425') AS bought_fy_from,
+       (SELECT MAX(full_date) FROM dim_calendar WHERE financial_year = '2425') AS bought_fy_to,
+       (SELECT MIN(full_date) FROM dim_calendar WHERE financial_year = '2526') AS not_bought_fy_from,
+       (SELECT MAX(full_date) FROM dim_calendar WHERE financial_year = '2526') AS not_bought_fy_to,
+       cu.customer_name,
+       pc.last_invoice_date,
+       ROUND(pc.sales_fy2425, 2) AS sales_fy2425_inr,
+       COUNT(*) OVER () AS matching_customers
+FROM per_customer pc
+JOIN dim_customers cu ON cu.customer_id = pc.customer_id
+WHERE pc.invoices_fy2425 > 0 AND pc.invoices_fy2526 = 0
+ORDER BY pc.sales_fy2425 DESC;
+```
+
+Why: a FY is filtered with dim_calendar.financial_year ('2425' = 01-Apr-2024 to 31-Mar-2025, '2526' = 01-Apr-2025 to 31-Mar-2026) through invoice_date_id - never build its dates from MIN(sales_period_start) / MAX(sales_period_end) WHERE financial_year = ...: that gives 21-Mar-2024 to 20-Apr-2025, a month too much at each end, and the two years overlap. The FY dates in the answer are MIN / MAX(full_date). Buying = an INVOICE line; a credit / debit note is not a purchase. The Unknown customer (-1) is not a customer and gets no row. last_invoice_date is the customer's newest invoice in all the data, so a date after the second FY shows the customer came back later. Biggest FY 2024-25 sales first; matching_customers is the count of all of them (also when only the first 500 rows are shown) - "how many" questions answer with it.
+Expected: 489 customers bought in FY 2024-25 (01-Apr-2024 to 31-Mar-2025) and not in FY 2025-26 (01-Apr-2025 to 31-Mar-2026); biggest Apex Machine Tools Private Limited 10,270,782.50 (last invoice 21-Nov-2024), then Matrix Tooling Limited 7,060,100.00.
+
+## Q: How many active customers did we invoice in Oct 2026?
+
+Also asked as: active customers in Oct 2026; number of active customers who bought in a month; how many customers did we bill in a month; count of customers invoiced in a month (a "how many" question = this one count row; "which / list the customers" = one row per customer with COUNT(*) OVER () as the count).
+
+```sql
+SELECT MIN(c.sales_period_start) AS period_from,
+       MAX(c.sales_period_end) AS period_to,
+       COUNT(DISTINCT CASE WHEN il.customer_id <> -1 AND cu.is_active = 'Y' THEN il.customer_id END) AS active_customers_invoiced,
+       COUNT(DISTINCT CASE WHEN il.customer_id <> -1 AND COALESCE(cu.is_active, 'N') <> 'Y' THEN il.customer_id END) AS inactive_customers_invoiced,
+       COUNT(DISTINCT CASE WHEN il.customer_id <> -1 THEN il.customer_id END) AS customers_invoiced,
+       ROUND(SUM(CASE WHEN il.customer_id <> -1 AND cu.is_active = 'Y' THEN il.net_taxable_value ELSE 0 END), 2) AS active_customers_invoiced_inr,
+       ROUND(SUM(CASE WHEN il.customer_id = -1 THEN il.net_taxable_value ELSE 0 END), 2) AS unknown_customer_invoiced_inr,
+       ROUND(SUM(il.net_taxable_value), 2) AS invoiced_inr,
+       (SELECT COUNT(*) FROM dim_customers WHERE customer_id <> -1 AND is_active = 'Y') AS active_customers_in_master
+FROM fact_invoice_lines il
+JOIN dim_calendar c ON c.date_id = il.invoice_date_id
+JOIN dim_customers cu ON cu.customer_id = il.customer_id
+WHERE c.sales_month = 'Oct 2026'
+  AND il.document_type = 'INVOICE';
+```
+
+Why: "how many customers" is a COUNT, answered by ONE summary row - never a list of the customers (a list is cut at 500 rows, so its length is not the count). A customer is counted once with COUNT(DISTINCT il.customer_id). Active = dim_customers.is_active = 'Y' (CHAR(1) 'Y' / 'N', NULL for sheet-only customers - never 1 / 0). Invoiced = the 'INVOICE' rows (a credit note is not a sale to count). A month name is the sales month: 'Oct 2026' = 21-Sep-2026 to 20-Oct-2026. The Unknown customer (-1) is not a customer: it is left out of the counts and its invoiced value is shown separately (unknown_customer_invoiced_inr). active_customers_in_master = all active customers in the customer master, bought or not, for "how many active customers do we have".
+Expected: Oct 2026 (21-Sep-2026 to 20-Oct-2026): 707 active customers invoiced, 0 inactive, 707 customers in all (Unknown customer left out: 533,565.00); invoiced 518,622,100.00, of which active customers 518,088,535.00; 4,885 active customers in the master.
 
 ## Q: Which items had the biggest increase in stock value between 30-Jun-2026 and 31-Oct-2026?
 
@@ -1015,6 +1298,49 @@ ORDER BY u.cumulative_value DESC;
 Why: only finished goods are sold - raw materials, consumables and capital items are never invoiced, so listing them as "unsold" is noise. The rows are the finished goods in stock with no invoice in the period (biggest stock value first); the summary columns always come back (one row with empty item columns when every finished good sold), so the answer can say e.g. "all 4,097 finished goods in stock were sold in this period; the 872 other items in stock are raw materials, consumables and capital items, which are not for sale". finished_goods_sold_in_period and finished_goods_result say the same as a plain count and a sentence, so 0 without sales is never read as "no sales" (27-Oct: it was). Dates the user gives are exact dates.
 Expected: 820 finished goods in stock on 31-Oct-2026: 808 sold and 12 without sales from 01-May-2026 (biggest FG01434 Coolant Unit CP-294-1B 0.75kW, 466,320.00); 793 other items not sold.
 
+## Q: Which finished goods have stock but no sales in the last 90 days, and what is that stock worth?
+
+Also asked as: finished goods not sold in the last 90 days; value of unsold finished goods stock; dead stock of the last 3 months and its value; items in stock with no sales recently and how much they are worth (for another period change INTERVAL 90 DAY).
+
+```sql
+WITH latest AS (
+  SELECT MAX(report_date) AS report_date FROM fact_stock_ledger
+),
+stock AS (
+  SELECT sl.product_id, sl.report_date, sl.cumulative_qty, sl.cumulative_value, p.product_code, p.product_description
+  FROM fact_stock_ledger sl
+  JOIN latest l ON l.report_date = sl.report_date
+  JOIN dim_stock_movement_types t ON t.movement_type_id = sl.movement_type_id
+  JOIN dim_products p ON p.product_id = sl.product_id
+  WHERE t.movement_type = 'Closing balance'
+    AND sl.cumulative_qty > 0
+    AND p.item_group = 'Finished goods'
+),
+unsold AS (
+  SELECT st.*
+  FROM stock st
+  WHERE NOT EXISTS (SELECT 1 FROM fact_invoice_lines il
+                    WHERE il.product_id = st.product_id
+                      AND il.document_type = 'INVOICE'
+                      AND il.invoice_date BETWEEN st.report_date - INTERVAL 90 DAY AND st.report_date)
+)
+SELECT l.report_date,
+       l.report_date - INTERVAL 90 DAY AS no_sales_from,
+       (SELECT COUNT(*) FROM stock) AS finished_goods_in_stock,
+       COUNT(u.product_id) OVER () AS items_without_sales,
+       ROUND(COALESCE(SUM(u.cumulative_value) OVER (), 0), 2) AS total_stock_value_inr,
+       u.product_code,
+       u.product_description,
+       u.cumulative_qty AS stock_qty,
+       ROUND(u.cumulative_value, 2) AS stock_value_inr
+FROM latest l
+LEFT JOIN unsold u ON TRUE
+ORDER BY u.cumulative_value DESC;
+```
+
+Why: stock is counted on the newest stock report ('Closing balance' rows of MAX(report_date)), so "the last 90 days" = the 90 days up to that report date (report_date - INTERVAL 90 DAY to report_date) - never today and never sales months. Only finished goods are sold, so only they are checked; no sales = no 'INVOICE' line of the item in those days (a credit note is not a sale). One row per item, biggest stock value first, and the totals come from SQL: items_without_sales (COUNT() OVER ()) and total_stock_value_inr (SUM() OVER ()) - "what is it worth" is that total, never added up from the rows by hand. The LEFT JOIN from the report keeps one row when every finished good sold (items_without_sales 0). For dates the user gives use the example "Which items were in stock on 31-Oct-2026 but had no sales between 01-May-2026 and 31-Oct-2026?". The answer names the report date and no_sales_from.
+Expected: stock report 31-Oct-2026, no sales from 02-Aug-2026: 29 of 820 finished goods in stock, worth 2,811,795.75 in all; biggest FG01434 Coolant Unit CP-294-1B 0.75kW (415V 50Hz) 4 units 466,320.00, then FG00818 340,269.92.
+
 ## Q: How much of our net sales were invoices, credit notes and debit notes?
 
 Also asked as: were credit notes deducted from sales; net sales = invoices minus credit notes plus debit notes; how much of the sales were credit notes or sales returns; check that net sales include the credit and debit notes; how much of a customer's, territory's or month's sales were credit notes (add that filter - a customer name with LIKE, grouped by the customer as the names rule says).
@@ -1033,6 +1359,42 @@ FROM fact_invoice_lines il;
 
 Why: net sales already include the notes - net_taxable_value is negative on credit notes and positive on debit notes - so net_sales_inr = invoices_inr - credit_notes_inr + debit_notes_inr (credit notes shown as a positive amount from taxable_value). ONE summary row answers "were the notes deducted?"; never list every customer for it (thousands of rows, cut at 500). data_from / data_to say which dates the totals cover.
 Expected: 02-Apr-2024 to 31-Oct-2026: invoices 12,953,990,174.50; credit notes 11,964,477.14 (213 notes); debit notes 68,518.08 (19 notes); net sales 12,942,094,215.44 = 12,953,990,174.50 - 11,964,477.14 + 68,518.08.
+
+## Q: What were credit notes as a percent of sales, month by month, for the last 6 months?
+
+Also asked as: credit note value as a % of sales by month; sales returns as a percentage of invoices for the last 6 months; monthly credit note ratio; how big were the credit notes compared with sales each month (for the last 3 or 12 months change LIMIT 6).
+
+```sql
+WITH data_end AS (
+  SELECT MAX(invoice_date) AS data_to FROM fact_invoice_lines
+),
+last6 AS (
+  SELECT DISTINCT c.sales_month, c.sales_period_start, c.sales_period_end
+  FROM dim_calendar c
+  CROSS JOIN data_end d
+  WHERE c.sales_period_end <= d.data_to
+  ORDER BY c.sales_period_start DESC
+  LIMIT 6
+)
+SELECT m.sales_month,
+       m.sales_period_start AS period_start,
+       m.sales_period_end AS period_end,
+       ROUND(SUM(CASE WHEN il.document_type = 'INVOICE' THEN il.net_taxable_value ELSE 0 END), 2) AS invoices_inr,
+       ROUND(SUM(CASE WHEN il.document_type = 'CREDIT_NOTE' THEN il.taxable_value ELSE 0 END), 2) AS credit_notes_inr,
+       COUNT(DISTINCT CASE WHEN il.document_type = 'CREDIT_NOTE' THEN il.note_number END) AS credit_note_count,
+       ROUND(SUM(CASE WHEN il.document_type = 'CREDIT_NOTE' THEN il.taxable_value ELSE 0 END)
+             / NULLIF(SUM(CASE WHEN il.document_type = 'INVOICE' THEN il.net_taxable_value ELSE 0 END), 0) * 100, 2)
+         AS credit_notes_pct_of_invoices,
+       d.data_to
+FROM last6 m
+CROSS JOIN data_end d
+LEFT JOIN fact_invoice_lines il ON il.invoice_date BETWEEN m.sales_period_start AND m.sales_period_end
+GROUP BY m.sales_month, m.sales_period_start, m.sales_period_end, d.data_to
+ORDER BY m.sales_period_start;
+```
+
+Why: "the last 6 months" in a month-by-month report = the last 6 COMPLETE sales months (21st to 20th) up to the end of the data: the newest sales months whose last day (sales_period_end) is on or before the newest invoice date, MAX(invoice_date) - worked out from the data, never from CURDATE() and never from fixed dates; the sales month the data ends in is not over (only part of it has invoices) and is left out. One row per sales month with its own dates, ordered by sales_period_start (never by the month text). Credit notes as a positive amount = SUM(taxable_value) of the 'CREDIT_NOTE' rows (= -SUM(net_taxable_value)); the percent = credit notes / invoiced value (the 'INVOICE' rows) x 100, calculated in SQL - credit_notes_pct_of_invoices is already a percent (0.22 = 0.22 %), never multiply it by 100. The answer names the months with their dates and says the data ends on data_to.
+Expected: data to 31-Oct-2026, 6 rows May 2026 (21-Apr-2026 to 20-May-2026) to Oct 2026 (21-Sep-2026 to 20-Oct-2026): May 2026 371,982.60 of 459,811,873.00 = 0.08 %; Jun 2026 0.02 %; Jul 2026 0.03 %; Aug 2026 0.09 %; Sep 2026 0.06 %; Oct 2026 1,131,642.25 (14 notes) of 518,622,100.00 = 0.22 %.
 
 ## Q: Which dates does Q1 of FY 2026-27 cover?
 

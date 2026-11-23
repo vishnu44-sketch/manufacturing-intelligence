@@ -240,3 +240,105 @@ def test_the_fy_query_is_not_sent_back(monkeypatch, tables, user, steps):
 
 def test_graph_state_has_the_check_unused():
     assert not graph.start_state(agent.AskResult(text="x")).get("fy_check_used")
+
+
+# ---------- 20-Nov: "this year" filtered as a PAST financial year ----------
+# the local model's queries for "How many customers make up half of our sales this financial year?" (N39) and the
+# others: c.financial_year = '2526' (FY 2025-26, last year) while FY 2026-27 ('2627') was running
+
+PAST_FY_SQL = SELECT + f"WHERE {NAME} AND c.financial_year = '2526'" + GROUP
+PAST_FY_VARIANTS = [
+    PAST_FY_SQL,
+    SELECT + f"WHERE {NAME} AND c.financial_year IN ('2526', '2425')" + GROUP,
+    SELECT + f"WHERE {NAME} AND c.sales_year = '2526'" + GROUP,
+    SELECT + f"WHERE {NAME} AND '2526' = c.financial_year" + GROUP,
+    SELECT + f"WHERE {NAME} AND c.financial_year_label = 'FY 2025-26'" + GROUP,
+    SELECT + f"WHERE {NAME} AND c.financial_year = '2526' AND il.invoice_date <= CURDATE()" + GROUP,
+]
+THIS_FY_QUESTIONS = [
+    "How many customers make up half of our sales this financial year?",
+    "Who is our biggest customer in Japan this financial year?",
+    "How much of this year's sales is booked to an unknown customer?",
+    "What are the top 10 products by quantity sold this year, and how much stock do we have of each?",
+    "current year sales by state",
+    "total sales to Sakura Pump so far",
+    "YTD sales to Sakura Pump",
+    "sales this FY",
+]
+
+
+@pytest.mark.parametrize("question", THIS_FY_QUESTIONS)
+@pytest.mark.parametrize("sql", PAST_FY_VARIANTS)
+def test_this_year_filtered_as_a_past_fy_is_sent_back(question, sql):
+    text = period_check.problem(question, cleaned(sql), TODAY)
+    assert "but your query filters only a past financial year" in text
+    assert "current financial year FY 2026-27 (01-Apr-2026 to 31-Mar-2027; dim_calendar.financial_year = '2627'" in text
+    assert "'2526' (FY 2025-26) is last year" in text and "c.financial_year = '2627'" in text and "CURDATE()" in text
+
+
+def test_the_past_fy_text_names_the_filter_it_found():
+    text = period_check.problem(THIS_FY_QUESTIONS[0], cleaned(PAST_FY_SQL), TODAY)
+    assert text.startswith("the question says \"this financial year\", but your query filters only a past financial "
+                           "year (financial_year = '2526' = FY 2025-26)")
+
+
+def test_the_current_fy_comes_from_today():
+    """Nothing is fixed: on 05-Apr-2027 '2627' is last year (sent back) and '2728' is this year (fine)."""
+    day = date(2027, 4, 5)
+    old = SELECT + f"WHERE {NAME} AND c.financial_year = '2627'" + GROUP
+    text = period_check.problem("sales to Sakura Pump this financial year", cleaned(old), day)
+    assert "FY 2027-28 (01-Apr-2027 to 31-Mar-2028; dim_calendar.financial_year = '2728'" in text
+    assert "'2627' (FY 2026-27) is last year" in text
+    new = SELECT + f"WHERE {NAME} AND c.financial_year = '2728'" + GROUP
+    assert period_check.problem("sales to Sakura Pump this financial year", cleaned(new), day) == ""
+    # 10-Feb-2027 still belongs to FY 2026-27: '2627' is this year
+    assert period_check.problem("sales to Sakura Pump this financial year", cleaned(old), date(2027, 2, 10)) == ""
+
+
+@pytest.mark.parametrize("question, sql", [
+    (THIS_FY_QUESTIONS[0], FY_SQL),                                                       # the current FY
+    (THIS_FY_QUESTIONS[0], SELECT + f"WHERE {NAME} AND c.sales_year = '2627'" + GROUP),
+    (THIS_FY_QUESTIONS[0], SELECT + f"WHERE {NAME} AND c.financial_year = (SELECT financial_year FROM dim_calendar "
+                                    "WHERE full_date = CURDATE())" + GROUP),             # no FY code at all
+    (THIS_FY_QUESTIONS[0], SELECT + f"WHERE {NAME}" + GROUP),
+    ("sales to Sakura Pump this year vs last year",                                       # a comparison with both
+     SELECT + f"WHERE {NAME} AND c.financial_year IN ('2627', '2526')" + GROUP),
+    ("sales to Sakura Pump this year vs last year",                                       # this year in dates
+     "SELECT SUM(CASE WHEN il.invoice_date >= '2026-04-01' THEN il.net_taxable_value ELSE 0 END) AS this_fy_inr, "
+     "SUM(CASE WHEN c.financial_year = '2526' THEN il.net_taxable_value ELSE 0 END) AS last_fy_inr "
+     "FROM fact_invoice_lines il JOIN dim_calendar c ON c.date_id = il.invoice_date_id"),
+    ("sales to Sakura Pump last year", PAST_FY_SQL),                                      # "last year" = FY 2025-26
+    ("sales to Sakura Pump in FY 2025-26", PAST_FY_SQL),                                  # a named FY
+    ("sales to Sakura Pump in FY 2025-26 so far", PAST_FY_SQL),
+    ("sales to Sakura Pump in 2025 this year", PAST_FY_SQL),                              # a named year
+    ("sales to Sakura Pump this calendar year", PAST_FY_SQL),
+    ("sales to Sakura Pump this month so far", PAST_FY_SQL),                              # "so far" of a month
+    ("sales to Sakura Pump in Oct so far", PAST_FY_SQL),
+    ("total sales to Sakura Pump", PAST_FY_SQL),                                          # no year words
+    ("forecast for this year", "SELECT * FROM ml_sales_forecast WHERE financial_year = '2526'"),   # ML tables
+])
+def test_a_past_fy_is_not_sent_back(question, sql):
+    assert period_check.problem(question, cleaned(sql) if "ml_" not in sql else sql, TODAY) == ""
+
+
+def test_the_past_fy_query_is_sent_back_once_and_the_fy_query_is_answered(monkeypatch, tables, user, steps):
+    tables.results = [ROWS]
+    fake = use_fake_ai(monkeypatch, [fenced(PAST_FY_SQL), fenced(FY_SQL), ANSWER])
+
+    result = agent.ask("What are our total sales to Sakura Pump this financial year?", user)
+
+    assert steps == DATA_START + ["write_sql", "check_sql", "retry", "write_sql", "check_sql", "run_sql", "explain"]
+    second = fake.calls[1][-1]["content"]
+    assert second.startswith('That did not work: the question says "this financial year", but your query filters '
+                             "only a past financial year")
+    assert len(tables.calls) == 1 and "financial_year = '2627'" in tables.calls[0]      # the '2526' SQL never ran
+    assert result.status == "ok" and result.tries == 2 and result.answer == ANSWER
+
+
+def test_a_second_past_fy_query_is_not_sent_back_again(monkeypatch, tables, user, steps):
+    tables.results = [ROWS]
+    fake = use_fake_ai(monkeypatch, [fenced(PAST_FY_SQL), fenced(PAST_FY_SQL), ANSWER])
+
+    result = agent.ask("What are our total sales to Sakura Pump this financial year?", user)
+
+    assert steps.count("retry") == 1 and result.status == "ok" and len(fake.calls) == 3 and len(tables.calls) == 1

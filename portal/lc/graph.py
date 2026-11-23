@@ -54,7 +54,7 @@ from langchain_core.messages import AIMessage, HumanMessage
 from langgraph.config import get_stream_writer
 from langgraph.graph import END, START, StateGraph
 
-from .. import ai_hints, period_check
+from .. import ai_hints, period_check, union_check
 from ..rag import agent, store, warehouse
 from ..rag.sql_guard import GuardError
 from .calls import LcRequest
@@ -368,7 +368,10 @@ def check_sql(state):
     """The SQL guard, then the checks that send a wrong query back before it runs: a month written as text
     compared with BETWEEN / < / >, a quarter / month number over all years, all LIKE name matches added into
     one number, forecast months added into one number ("2027 total" = Jan 2027 only), a period not over yet
-    (FY 2026-27 on 03-Nov-2026) without "up to today". The last try runs as it is."""
+    (FY 2026-27 on 03-Nov-2026) without "up to today", a 'Y' / 'N' column compared with 1 / TRUE, a financial
+    year's date limits taken from the sales periods (20-Nov), a UNION whose last part's LIMIT cuts the whole union
+    (20-Nov, union_check.py), the 2nd / Nth newest period taken from rows that repeat it (23-Nov). The last try
+    runs as it is."""
     result = state["result"]
     with agent._timed(result, "check"):
         try:
@@ -386,6 +389,23 @@ def check_sql(state):
         column = agent.month_text_ranges(cleaned)
         if column:
             return {"problem": agent.MONTH_RANGE_PROBLEM.format(column=column), "schema_not_needed": True}
+        # 20-Nov: a CHAR(1) 'Y' / 'N' column compared with 1 / TRUE ("0 active customers"), and a FY's date limits taken
+        # from the sales periods (two FYs overlapped by a month) - sent back on every try but the last
+        wrong = agent.yes_no_numbers(cleaned)
+        if wrong:
+            return {"problem": agent.YES_NO_PROBLEM.format(column=wrong[0], wrong=wrong[1]), "schema_not_needed": True}
+        if agent.fy_from_sales_periods(cleaned):
+            return {"problem": agent.FY_SALES_PERIODS_PROBLEM, "schema_not_needed": True}
+        # 20-Nov: (SELECT ... LIMIT 1) UNION ALL SELECT ... ORDER BY ... LIMIT 1 - the last LIMIT cut the whole union
+        rows = union_check.last_part_cuts_the_union(cleaned)
+        if rows:
+            return {"problem": union_check.UNION_PROBLEM.format(rows=rows), "schema_not_needed": True}
+        # 23-Nov: the 2nd newest stock report as ORDER BY report_date DESC LIMIT 1 OFFSET 1 of the ledger's rows (the
+        # newest date again) - sent back on every try but the last
+        repeated = agent.repeated_period_values(cleaned)
+        if repeated:
+            return {"problem": agent.REPEATED_PERIOD_PROBLEM.format(column=repeated[0], part=repeated[1]),
+                    "schema_not_needed": True}
         if not state["year_check_used"]:
             column = agent.parts_without_year(cleaned)
             if column:
@@ -428,6 +448,10 @@ def run_sql(state):
     try:
         with agent._timed(result, "mysql"):
             data = warehouse.run_select(cleaned)
+        # 20-Nov: the guard caps the SQL at LIMIT 500, so MySQL never sends a 501st row and "truncated" stayed False:
+        # "Active customers in Oct 2026" listed 500 of 707 and the answer said "the full table contains all 500"
+        if len(data["rows"]) >= warehouse.MAX_ROWS and agent.cut_at_row_limit(state["sql"]):
+            data = {**data, "truncated": True}
         if (not state["values_checked"] and not state["first_answer"] and state["attempt"] < agent.MAX_TRIES
                 and agent.found_nothing(data["rows"])):
             update["values_checked"] = True
@@ -438,7 +462,8 @@ def run_sql(state):
                 return {**update, "schema_not_needed": True,
                         "problem": agent.UNKNOWN_VALUES_PROBLEM.format(wrong="; ".join(wrong))}
     except warehouse.QueryError as exc:
-        return {**update, "problem": f"MySQL returned an error: {exc}"}
+        # 23-Nov: an only_full_group_by error gets the fix with it (the bare message failed 3 tries)
+        return {**update, "problem": f"MySQL returned an error: {exc}{agent.mysql_error_hint(exc)}"}
     question = f"{result.text} {result.understood_as}"
     first = {"attempt": state["attempt"], "sql": cleaned, "data": data, "missing": state["missing"],
              "notes": list(result.notes), "chart_kind": result.chart_kind,

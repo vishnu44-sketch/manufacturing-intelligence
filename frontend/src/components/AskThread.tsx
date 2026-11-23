@@ -24,18 +24,30 @@ import { Textarea } from './ui/textarea'
 /** The card of "Thinking…" and of the streamed steps. */
 const WAIT_BOX = 'self-start max-w-full rounded-xl border border-border bg-card px-4 py-3 text-[13px] text-muted-foreground shadow-xs'
 
+/** A chosen model that is known to be slow (its /api/models item has a "hint", e.g. the company's own model on
+ *  a CPU server): its name and the hint, shown while the answer is awaited. */
+export type SlowModel = { label: string; hint: string }
+
 /** "Thinking…" under a sent question - or, while the answer streams, the steps so far (the last one is
- *  running); after 20 s and 60 s it says why it takes so long. */
-export function Thinking({ text = 'Thinking… writing the SQL and checking it', steps = [] }: { text?: string; steps?: string[] }) {
+ *  running); after 20 s and 60 s it says why it takes so long. With `model` (a slow model chosen by an
+ *  administrator) its hint shows from the start (an answer can take minutes, so it never looks stuck) and the
+ *  20 s "up to a minute" text is left out - it would be wrong. The browser never stops waiting by itself. */
+export function Thinking({ text = 'Thinking… writing the SQL and checking it', steps = [], model }:
+  { text?: string; steps?: string[]; model?: SlowModel }) {
   const [slow, setSlow] = useState(0)
   useEffect(() => {
     const first = window.setTimeout(() => setSlow(1), 20000)
     const second = window.setTimeout(() => setSlow(2), 60000)
     return () => { window.clearTimeout(first); window.clearTimeout(second) }
   }, [])
-  const slowText = slow === 1 ? 'Still working… the AI service is busy, so this can take up to a minute.'
+  const slowText = slow === 1 && !model ? 'Still working… the AI service is busy, so this can take up to a minute.'
     : slow === 2 ? <>Still working… the answer is saved as soon as it is ready - you can also find it in <Link to="/history">History</Link>.</>
     : null
+  const modelNote = model && (
+    <div data-slow-model="" className="border-t border-border pt-2 text-xs">
+      <span className="font-medium text-heading">{model.label}</span>: {model.hint.replace(/[\s.…]+$/, '')}…
+    </div>
+  )
   if (steps.length) {
     // a small progress list: a green tick on a finished step, the dots on the running one
     // (the <li> keep the class names "done" / "now")
@@ -61,7 +73,16 @@ export function Thinking({ text = 'Thinking… writing the SQL and checking it',
               </li>
             )))}
         </ol>
+        {modelNote}
         {slowText && <div className="border-t border-border pt-2 text-xs">{slowText}</div>}
+      </div>
+    )
+  }
+  if (model) {
+    return (
+      <div className={cn(WAIT_BOX, 'flex w-[min(420px,100%)] flex-col gap-2')} role="status">
+        <div className="inline-flex items-center gap-2.5"><Dots />{' '}{slowText ?? text}</div>
+        {modelNote}
       </div>
     )
   }
@@ -83,8 +104,9 @@ function LiveAnswer({ text }: { text: string }) {
   )
 }
 
-/** What the streamed answer has shown so far: the steps that started, and the answer's text. */
-export type Live = { steps: string[]; text: string }
+/** What the streamed answer has shown so far: the steps that started, and the answer's text; `model` when the
+ *  question was asked with a slow model (its hint shows while waiting). */
+export type Live = { steps: string[]; text: string; model?: SlowModel }
 
 export function scrollTo(el: HTMLElement | null, block: ScrollLogicalPosition) {
   el?.scrollIntoView?.({ block, behavior: 'smooth' }) // (jsdom has no scrollIntoView)
@@ -230,7 +252,7 @@ export function PendingQuestion({ text, live, itemRef }:
   return (
     <div className="chat-item" ref={itemRef}>
       <div className="flex flex-col items-end"><Bubble text={text} /></div>
-      {live?.text ? <LiveAnswer text={live.text} /> : <Thinking steps={live?.steps} />}
+      {live?.text ? <LiveAnswer text={live.text} /> : <Thinking steps={live?.steps} model={live?.model} />}
     </div>
   )
 }
@@ -309,9 +331,11 @@ export function useModelChoice(staff: boolean): ModelChoice {
 function ModelPicker({ choice, big }: { choice: ModelChoice; big: boolean }) {
   const models = choice.models ?? []
   const forced = choice.model !== 'auto'
-  const name = forced ? (models.find((m) => m.id === choice.model)?.label ?? choice.model) : 'Auto'
+  const picked = forced ? models.find((m) => m.id === choice.model) : undefined
+  const name = forced ? (picked?.label ?? choice.model) : 'Auto'
   return (
-    <label data-model-picker="" title="Which AI model answers (administrators only)"
+    <label data-model-picker=""
+           title={picked?.hint ? `${picked.label}: ${picked.hint}` : 'Which AI model answers (administrators only)'}
            className={cn('relative inline-flex shrink-0 cursor-pointer items-center gap-1 rounded-full px-2.5 text-xs font-medium',
              'transition-colors focus-within:ring-2 focus-within:ring-primary/30',
              forced ? 'bg-primary-soft text-primary' : 'text-muted-foreground hover:bg-secondary hover:text-foreground',
@@ -322,8 +346,11 @@ function ModelPicker({ choice, big }: { choice: ModelChoice; big: boolean }) {
       <select aria-label="AI model" value={choice.model} onChange={(e) => choice.choose(e.target.value)}
               className="absolute! inset-0 m-0! h-full! w-full! cursor-pointer appearance-none p-0! opacity-0">
         {models.map((m) => (
-          <option key={m.id} value={m.id} disabled={!m.available} title={m.note || undefined}>
-            {m.label}{!m.available && m.note ? ` - ${m.note}` : ''}
+          // greyed out: the label and why it cannot be used; a usable slow model: the label and its hint
+          // (a native <option> cannot hold smaller text, so the hint follows the name - also as its tooltip)
+          <option key={m.id} value={m.id} disabled={!m.available}
+                  title={(m.available ? m.hint : m.note) || undefined}>
+            {m.label}{!m.available && m.note ? ` - ${m.note}` : m.available && m.hint ? ` - ${m.hint}` : ''}
           </option>
         ))}
       </select>
@@ -345,7 +372,10 @@ export function useAsk(mode?: AskMode, staff = false) {
 
   /** Asks with the streamed answer, or the plain way when the stream cannot be used at all. */
   async function askLive(text: string, target: number | null): Promise<AskResponse> {
-    setLive({ steps: [], text: '' })
+    // a slow model chosen by hand (its item has a "hint"): the wait says so (no time limit in the browser)
+    const option = choice.models?.find((m) => m.id === choice.model)
+    const model = option?.hint ? { label: option.label, hint: option.hint } : undefined
+    setLive({ steps: [], text: '', model })
     try {
       return await api.askStream(text, target, (event) => {
         if (event.type === 'step') {
@@ -360,7 +390,7 @@ export function useAsk(mode?: AskMode, staff = false) {
       }, mode, choice.model)
     } catch (failure) {
       if (!(failure instanceof StreamUnavailable)) throw failure
-      setLive(null) // "Thinking…" while the plain call runs
+      setLive({ steps: [], text: '', model }) // "Thinking…" (and a slow model's hint) while the plain call runs
       return api.ask(text, target, mode, choice.model)
     }
   }

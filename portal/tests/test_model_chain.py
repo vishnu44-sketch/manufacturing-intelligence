@@ -560,7 +560,7 @@ def test_a_wrong_model_id_is_400_for_staff(monkeypatch, client, staff, chain):
     r = ask_api(client, {"question": "Top customers in Aug 2026?", "model": "gpt-5"})
 
     assert r.status_code == 400
-    assert r.json()["detail"] == "model must be one of: auto, groq-main, groq-main-2, groq-backup."
+    assert r.json()["detail"] == "model must be one of: auto, groq-main, groq-main-2, groq-backup, local."
     assert fake.calls == [] and not Question.objects.exists()
     for auto in ("auto", "", None):
         request = RequestFactory().post("/api/ask", data=json.dumps({"model": auto}), content_type="application/json")
@@ -607,7 +607,7 @@ def test_the_models_list_says_what_can_be_chosen(monkeypatch, client, staff, cha
 
     models = client.get(reverse("api_models")).json()["models"]
 
-    assert [m["id"] for m in models] == ["auto", "groq-main", "groq-main-2", "groq-backup"]
+    assert [m["id"] for m in models] == ["auto", "groq-main", "groq-main-2", "groq-backup", "local"]  # 20-Nov
     assert models[0] == {"id": "auto", "label": "Auto (recommended)", "available": True}
     assert models[1]["available"] is False and models[1]["note"].startswith("resting until ")
     assert models[1]["label"] == "Groq gpt-oss-120b" and models[1]["note"].endswith("(Groq's daily limit was reached)")

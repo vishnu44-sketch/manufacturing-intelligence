@@ -41,10 +41,14 @@ def spellings(value):
 
 
 def found(value, answer):
-    """True when the answer writes the value (a number only as a whole number, not inside a bigger one)."""
+    """True when the answer writes the value (a number only as a whole number, not inside a bigger one).
+    A whole-number truth may be written with zero decimals: 31 is found in "31.000 units" (20-Nov: quantities
+    are DECIMAL(15,3) in ss_gold), but never in "31.05"."""
+    whole = isinstance(value, int) or (isinstance(value, Decimal) and value.as_tuple().exponent >= 0)
+    zeros = r"(?:\.0+)?" if whole else ""
     for spelling in spellings(value):
         if isinstance(value, (int, Decimal, float)):
-            if re.search(r"(?<![\d.,])" + re.escape(spelling) + r"(?!\d|[.,]\d|-[A-Za-z])", answer):
+            if re.search(r"(?<![\d.,])" + re.escape(spelling) + zeros + r"(?!\d|[.,]\d|-[A-Za-z])", answer):
                 return True
         elif spelling.lower() in answer.lower():
             return True

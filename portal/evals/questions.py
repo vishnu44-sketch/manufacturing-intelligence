@@ -4,7 +4,8 @@ Keys of one item (see grading.py): id, question, must, should, must_have, must_n
 context = ids of earlier questions in the same chat (the item is then a follow-up),
 mode = 'ml' for a question asked in an ML Insights chat (agent.ask(mode='ml')).
 expect may be a list of statuses, e.g. ["general", "ok"] (either is right).
-Q.. = questions from the 09-Oct to 14-Oct evaluations, N.. = new kinds of questions (22-Oct on).
+Q.. = questions from the 09-Oct to 14-Oct evaluations, N.. = new kinds of questions (22-Oct on;
+N38-N63 = the 20-Nov role test: managing director, sales person, finance, manufacturing manager).
 QUICK = the short set to ask after every docs or prompt change (about 100,000 Groq tokens).
 ML_QUICK = the ML Insights set to ask before a demo (about 85,000 tokens).
 """
@@ -57,6 +58,26 @@ WHERE il.customer_id <> -1 AND c.sales_month = (SELECT c2.sales_month FROM dim_c
   WHERE c2.sales_period_end <= (SELECT MAX(data_to) FROM ml_sales_forecast) ORDER BY c2.full_date DESC LIMIT 1)
 GROUP BY cu.customer_id, cu.customer_name ORDER BY SUM(il.net_taxable_value) DESC LIMIT 1"""
 NOT_ANSWERED = ["you can ask me", "could not write a working query"]
+# 20-Nov role test: helpers of N38-N63
+SP = "JOIN dim_sales_people sp ON il.sales_person_id = sp.sales_person_id"
+NET_GST = ("ROUND(SUM(CASE WHEN il.document_type = 'CREDIT_NOTE' THEN -1 ELSE 1 END * (COALESCE(il.igst_amount, 0) "
+           "+ COALESCE(il.cgst_amount, 0) + COALESCE(il.sgst_amount, 0) + COALESCE(il.cess_amount, 0))), 2)")
+# FY 2025-26's top 20 customers with no invoice in the last 3 months of the data (business rule 'stopped buying')
+TOP20_FY2526_LAPSED = """WITH top20 AS (SELECT il.customer_id FROM fact_invoice_lines il
+  JOIN dim_calendar c ON c.date_id = il.invoice_date_id WHERE c.financial_year = '2526' AND il.customer_id <> -1
+  GROUP BY il.customer_id ORDER BY SUM(il.net_taxable_value) DESC LIMIT 20),
+lapsed AS (SELECT cu.customer_name, MAX(il.invoice_date) AS last_inv FROM top20 t
+  JOIN fact_invoice_lines il ON il.customer_id = t.customer_id JOIN dim_customers cu ON cu.customer_id = t.customer_id
+  GROUP BY cu.customer_id, cu.customer_name
+  HAVING MAX(il.invoice_date) < (SELECT MAX(invoice_date) - INTERVAL 3 MONTH FROM fact_invoice_lines))"""
+# closing stock value per item in the last two stock reports (items in both), drop = older - newer
+STOCK_DROP = """WITH r2 AS (SELECT DISTINCT report_date FROM fact_stock_ledger ORDER BY report_date DESC LIMIT 2),
+cb AS (SELECT sl.product_id, sl.report_date, sl.cumulative_value FROM fact_stock_ledger sl
+  JOIN dim_stock_movement_types mt ON mt.movement_type_id = sl.movement_type_id
+  WHERE mt.movement_type = 'Closing balance' AND sl.report_date IN (SELECT report_date FROM r2)),
+d AS (SELECT a.product_id, a.cumulative_value - b.cumulative_value AS drop_value FROM cb a JOIN cb b
+  ON b.product_id = a.product_id AND a.report_date = (SELECT MIN(report_date) FROM r2)
+  AND b.report_date = (SELECT MAX(report_date) FROM r2))"""
 
 ITEMS = [
     {"id": "Q38", "question": "what is last year and current year revenue",
@@ -134,10 +155,12 @@ ITEMS = [
                   JOIN dim_calendar c ON c.date_id = il.invoice_date_id
                   WHERE c.financial_year = '2627' AND c.fiscal_quarter = 3 AND il.customer_type IS NULL""",
      "must_have": ["not given"]},
+    # 23-Nov: a sale = an INVOICE line, as in N48 / N58 (a finished good whose only line in the period is a credit
+    # note had no sales; with any line it was 730 - the model's 731 was the business rule's reading)
     {"id": "Q51", "question": "Which finished goods had no sales between 01-May-2026 and 31-Oct-2026?",
      "must": """SELECT COUNT(*) FROM dim_products p WHERE p.item_group = 'Finished goods' AND NOT EXISTS
                 (SELECT 1 FROM fact_invoice_lines il WHERE il.product_id = p.product_id
-                 AND il.invoice_date BETWEEN '2026-05-01' AND '2026-10-31')""",
+                 AND il.document_type = 'INVOICE' AND il.invoice_date BETWEEN '2026-05-01' AND '2026-10-31')""",
      "must_have": ["01-may-2026", "31-oct-2026"], "must_not": ["21-apr-2026"]},
     {"id": "Q52", "question": "What was our total stock value on 31-Oct-2026, by warehouse?",
      "must": """SELECT ROUND(SUM(sl.cumulative_value), 2) FROM fact_stock_ledger sl JOIN dim_stock_movement_types t
@@ -178,20 +201,21 @@ ITEMS = [
      "must_have": ["bangalore", "sep 2026", "21-aug-2026", "20-sep-2026"],
      "must_not": ["no data was found for this question"]},
     # 14-Oct: reviewer notes typed into the bot (quarter refused, credit-note list cut at 500, months out of order)
-    {"id": "Q63", "question": "“Quarter” is ambiguous (Q3, Q6, Q14). Q1 of FY 2026-27 could mean 1-Apr to 30-Jun-2026 or the "
-                              "sales months Apr–Jun (21-Mar to 20-Jun-2026). Check which one the app chose and whether it told "
-                              "you. Both are reasonable, but choosing silently is a weakness.",
+    # 20-Nov: Q63-Q65 were the review notes themselves; now the real questions the notes describe (same truths)
+    # Q63: a quarter question must say which dates it used (1-Apr to 30-Jun-2026, not the sales months) without being asked
+    {"id": "Q63", "question": "What were our net sales in Q1 of FY 2026-27?",
      "must_have": ["apr-2026", "30-jun-2026"]},
-    {"id": "Q64", "question": "Credit and debit notes (Q4, Q5, Q9). Net sales should be invoices minus credit notes plus debit "
-                              "notes. If a customer’s or territory’s total looks too high, ask “how much of that was credit "
-                              "notes?” to find out whether the notes were left out.",
+    # Q64: were the notes taken off net sales? (invoices - credit notes + debit notes = net sales)
+    {"id": "Q64", "question": "Are credit notes and debit notes included in our net sales? How much were the invoices, "
+                              "the credit notes and the debit notes?",
      "must": """SELECT ROUND(SUM(CASE WHEN document_type = 'INVOICE' THEN net_taxable_value ELSE 0 END), 2),
                 ROUND(SUM(CASE WHEN document_type = 'CREDIT_NOTE' THEN taxable_value ELSE 0 END), 2),
                 ROUND(SUM(CASE WHEN document_type = 'DEBIT_NOTE' THEN net_taxable_value ELSE 0 END), 2),
                 ROUND(SUM(net_taxable_value), 2) FROM fact_invoice_lines""",
      "must_not": ["lowest"]},
-    {"id": "Q65", "question": "Exchange rate (Q20). The rates are monthly, so check whether the app matched each sales month to "
-                              "the correct rate month. Also confirm it converted net value and not net value plus GST.",
+    # Q65: each sales month converted with its own rate month, on the value before GST (rates never as raw 1.800000)
+    {"id": "Q65", "question": "What were our net sales before GST in Japanese yen for each sales month of FY 2026-27, "
+                              "and which exchange rate was used for each month?",
      "must_not": ["1.800000", "1.630000", "1.790000"]},
     {"id": "Q66", "question": "Q1 of FY 2026-27 means which dates - calendar dates or sales months?",
      "must_have": ["apr-2026", "30-jun-2026"]},
@@ -202,9 +226,13 @@ ITEMS = [
     {"id": "N13", "question": "What were our top 5 products by sales value in FY 2026-27?",
      "must": f"""SELECT p.product_code, ROUND(SUM(il.net_taxable_value), 2) v {FY.format(join=PROD)}
                  GROUP BY p.product_code ORDER BY v DESC LIMIT 1"""},
+    # 20-Nov: "the first one" = N13's top product, found from the data (it was a fixed code that went stale)
     {"id": "N14", "question": "who bought the most of the first one?", "context": ["N13"],
      "must": f"""SELECT cu.customer_name, ROUND(SUM(il.net_taxable_value), 2) v {FY.format(join=PROD + ' ' + CUST)}
-                 AND p.product_code = 'FG03279' GROUP BY cu.customer_name ORDER BY v DESC LIMIT 1"""},
+                 AND il.product_id = (SELECT il2.product_id FROM fact_invoice_lines il2
+                   JOIN dim_calendar c2 ON il2.invoice_date_id = c2.date_id WHERE c2.financial_year = '2627'
+                   GROUP BY il2.product_id ORDER BY SUM(il2.net_taxable_value) DESC LIMIT 1)
+                 GROUP BY cu.customer_name ORDER BY v DESC LIMIT 1"""},
     {"id": "N02", "question": "Which state bought the most from us in FY 2026-27?",
      "must": "SELECT 'Telangana'",
      "should": f"""SELECT ROUND(SUM(il.net_taxable_value), 2) {FY.format(join=CUST)} AND cu.state = 'Telangana'"""},
@@ -329,6 +357,127 @@ ITEMS = [
      "must_have": ["holt-winters"], "must_not": ["i've worked", "not in the ss manufacturing data"]},
     {"id": "N37", "question": "what does low_inr mean?", "context": ["N21"], "mode": "ml", "expect": ["general", "ok"],
      "must_have": ["range"], "must_not": ["not available", "by mistake"]},
+    # 20-Nov: role test - questions as the managing director, a sales person, finance and the manufacturing manager
+    # ask them (truths checked in MySQL on 20-Nov-2026, data to 31-Oct-2026)
+    # -- managing director
+    {"id": "N38", "question": "How did our sales grow quarter by quarter over the last two financial years?",
+     "must": """SELECT ROUND(SUM(il.net_taxable_value), 2) FROM fact_invoice_lines il
+                JOIN dim_calendar c ON c.date_id = il.invoice_date_id
+                WHERE c.financial_year = '2526' AND c.fiscal_quarter IN (3, 4)
+                GROUP BY c.fiscal_quarter ORDER BY c.fiscal_quarter""",
+     "should": "SELECT MIN(full_date), MAX(full_date) FROM dim_calendar WHERE financial_year = '2526' AND fiscal_quarter = 3"},
+    {"id": "N39", "question": "How many customers make up half of our sales this financial year?",
+     "must": f"""WITH cs AS (SELECT il.customer_id, SUM(il.net_taxable_value) v {FY.format(join='')}
+                 AND il.customer_id <> -1 GROUP BY il.customer_id),
+                 r AS (SELECT SUM(v) OVER (ORDER BY v DESC, customer_id ROWS UNBOUNDED PRECEDING) cum,
+                       SUM(v) OVER () tot, ROW_NUMBER() OVER (ORDER BY v DESC, customer_id) n FROM cs)
+                 SELECT MIN(n) FROM r WHERE cum >= tot / 2""",
+     "should": "SELECT MAX(invoice_date) FROM fact_invoice_lines"},
+    {"id": "N40", "question": "Are we on track to beat last year's total sales this financial year?",
+     "must": SAME_DATES.format(where="") + " SELECT ROUND((ty - ly) / NULLIF(ly, 0) * 100, 2), ROUND(ty, 2) FROM t",
+     "should": SAME_DATES.format(where="") + """ SELECT ROUND(ly, 2), (SELECT ROUND(SUM(il.net_taxable_value), 2)
+               FROM fact_invoice_lines il JOIN dim_calendar c ON il.invoice_date_id = c.date_id
+               WHERE c.financial_year = '2526') FROM t"""},
+    {"id": "N41", "question": "How does the sales forecast for Nov 2026 compare with what we have actually sold in Nov 2026 so far?",
+     "mode": "ml",
+     "must": f"SELECT {CR.format(col='forecast_inr')} {FORECAST_MONTH.format(m='Nov 2026')}",
+     "should": f"{MONTH.format(m='Nov 2026')} AND il.invoice_date <= CURDATE()",
+     "must_have": ["forecast"], "must_not": NOT_ANSWERED},
+    {"id": "N42", "question": "Which month of this financial year has been our best for sales so far?",
+     "must": """SELECT c.sales_month, ROUND(SUM(il.net_taxable_value), 2) v FROM fact_invoice_lines il
+                JOIN dim_calendar c ON c.date_id = il.invoice_date_id WHERE c.sales_year = '2627'
+                GROUP BY c.sales_month ORDER BY v DESC LIMIT 1""",
+     "should": "SELECT MIN(sales_period_start), MAX(sales_period_end) FROM dim_calendar WHERE sales_month = 'Oct 2026'"},
+    # -- sales person
+    {"id": "N43", "question": "Which of last year's top 20 customers have not bought anything in the last 3 months?",
+     "must": f"{TOP20_FY2526_LAPSED} SELECT customer_name FROM lapsed",
+     "should": f"{TOP20_FY2526_LAPSED} SELECT last_inv FROM lapsed"},
+    {"id": "N44", "question": "Which sales person had the highest sales this year and how many customers did they sell to?",
+     "must": f"""SELECT sp.sales_person_name, ROUND(SUM(il.net_taxable_value), 2) v,
+                 COUNT(DISTINCT CASE WHEN il.customer_id <> -1 THEN il.customer_id END) {FY.format(join=SP)}
+                 GROUP BY sp.sales_person_id, sp.sales_person_name ORDER BY v DESC LIMIT 1""",
+     "should": "SELECT MAX(invoice_date) FROM fact_invoice_lines"},
+    {"id": "N45", "question": "and how much did she sell in FY 2025-26?", "context": ["N44"],
+     "must": f"""SELECT ROUND(SUM(il.net_taxable_value), 2) {FY.format(join=SP).replace("'2627'", "'2526'")}
+                 AND sp.sales_person_name = 'Divya Nair'"""},
+    {"id": "N46", "question": "What is the value of open sales orders that are still pending?",
+     "must": """SELECT COUNT(DISTINCT s.so_number, c.financial_year), ROUND(SUM(s.total_amount), 2)
+                FROM fact_sales_order_lines s JOIN dim_calendar c ON c.date_id = s.order_date_id
+                WHERE s.status = 'Open' AND s.order_date <= CURDATE()""",
+     "should": "SELECT COUNT(*), CURDATE() FROM fact_sales_order_lines WHERE status = 'Open' AND order_date <= CURDATE()",
+     "must_have": ["before gst"]},
+    {"id": "N47", "question": "How much have we sold in Nov 2026?",   # the sales month is not over and has data to 31-Oct only
+     "must": f"{MONTH.format(m='Nov 2026')} AND il.invoice_date <= CURDATE()",
+     "should": """SELECT (SELECT MIN(sales_period_start) FROM dim_calendar WHERE sales_month = 'Nov 2026'),
+                         (SELECT MAX(invoice_date) FROM fact_invoice_lines)"""},
+    {"id": "N48", "question": "How many of our active customers have not bought anything from us this financial year?",
+     "must": """SELECT COUNT(*) FROM dim_customers cu WHERE cu.customer_id <> -1 AND cu.is_active = 'Y' AND NOT EXISTS
+                (SELECT 1 FROM fact_invoice_lines il JOIN dim_calendar c ON c.date_id = il.invoice_date_id
+                 WHERE il.customer_id = cu.customer_id AND c.financial_year = '2627' AND il.document_type = 'INVOICE')""",
+     "should": "SELECT COUNT(*) FROM dim_customers WHERE customer_id <> -1 AND is_active = 'Y'"},
+    {"id": "N49", "question": "How much did Bluefin Robotics buy from us this year?",   # no customer has that name
+     "expect": ["ok", "nodata"], "must_have": ["found"]},
+    {"id": "N50", "question": "Who is our biggest customer in Japan this financial year?",
+     "must": f"""SELECT cu.customer_name, ROUND(SUM(il.net_taxable_value), 2) v {FY.format(join=CUST)}
+                 AND cu.country = 'Japan' GROUP BY cu.customer_id, cu.customer_name ORDER BY v DESC LIMIT 1"""},
+    # -- finance
+    {"id": "N51", "question": "How much GST did we collect each month this financial year?",
+     "must": f"""SELECT {NET_GST} FROM fact_invoice_lines il JOIN dim_calendar c ON c.date_id = il.invoice_date_id
+                 WHERE c.sales_year = '2627' AND c.sales_month IN ('May 2026', 'Oct 2026')
+                 GROUP BY c.sales_month, c.sales_period_no ORDER BY c.sales_period_no""",
+     # the rule: a FY by sales month = sales_year, so Apr 2026 starts on 21-Mar-2026 (financial_year gives 42,890,074.00)
+     "should": f"""SELECT MIN(c.sales_period_start), {NET_GST} FROM fact_invoice_lines il
+                   JOIN dim_calendar c ON c.date_id = il.invoice_date_id WHERE c.sales_month = 'Apr 2026'"""},
+    {"id": "N52", "question": "How much did we invoice in foreign currency this year, and what is it in INR?",
+     # every amount in ss_gold is INR (no invoice currency): foreign currency = export sales, graded on the INR value
+     "must": f"SELECT ROUND(SUM(il.net_taxable_value), 2) {FY.format(join='')} AND il.sale_type = 'Export'"},
+    {"id": "N53", "question": "What percent of sales came back as credit notes in each quarter of FY 2025-26?",
+     "must": """SELECT ROUND(SUM(CASE WHEN il.document_type = 'CREDIT_NOTE' THEN il.taxable_value ELSE 0 END) * 100
+                / SUM(CASE WHEN il.document_type = 'INVOICE' THEN il.net_taxable_value ELSE 0 END), 2)
+                FROM fact_invoice_lines il JOIN dim_calendar c ON c.date_id = il.invoice_date_id
+                WHERE c.financial_year = '2526' GROUP BY c.fiscal_quarter ORDER BY c.fiscal_quarter"""},
+    {"id": "N54", "question": "How much of this year's sales is booked to an unknown customer?",
+     "must": f"SELECT ROUND(SUM(il.net_taxable_value), 2) {FY.format(join='')} AND il.customer_id = -1"},
+    {"id": "N55", "question": "How much money do our customers still owe us?", "expect": "nodata",
+     "must_have": ["payment"]},
+    {"id": "N56", "question": "How did export and domestic sales compare in FY 2025-26?",
+     "must": f"""SELECT ROUND(SUM(CASE WHEN il.sale_type = 'Export' THEN il.net_taxable_value ELSE 0 END), 2),
+                 ROUND(SUM(CASE WHEN il.sale_type = 'Domestic' THEN il.net_taxable_value ELSE 0 END), 2)
+                 {FY.format(join='').replace("'2627'", "'2526'")}"""},
+    {"id": "N57", "question": "What were our net sales in the calendar month of September 2026, 1st to 30th?",
+     "must": """SELECT ROUND(SUM(il.net_taxable_value), 2) FROM fact_invoice_lines il
+                JOIN dim_calendar c ON c.date_id = il.invoice_date_id WHERE c.month_year = 'Sep 2026'""",
+     "should": "SELECT MIN(full_date), MAX(full_date) FROM dim_calendar WHERE month_year = 'Sep 2026'"},
+    # -- manufacturing manager
+    {"id": "N58", "question": "Which finished goods have stock but no sales in the last 90 days, and what is that stock worth?",
+     "must": f"""SELECT COUNT(*), ROUND(SUM(sl.cumulative_value), 2) {LATEST_CLOSE} AND sl.cumulative_qty > 0
+                 AND p.item_group = 'Finished goods' AND NOT EXISTS (SELECT 1 FROM fact_invoice_lines il
+                 WHERE il.product_id = sl.product_id AND il.document_type = 'INVOICE'
+                 AND il.invoice_date BETWEEN sl.report_date - INTERVAL 90 DAY AND sl.report_date)""",
+     "should": LATEST_REPORT},
+    {"id": "N59", "question": "Which products' stock dropped the most between the last two stock reports?",
+     "must": f"{STOCK_DROP} SELECT p.product_description FROM d JOIN dim_products p ON p.product_id = d.product_id "
+             "ORDER BY d.drop_value DESC LIMIT 1",
+     "should": f"{STOCK_DROP} SELECT ROUND(MAX(d.drop_value), 2), (SELECT MIN(report_date) FROM r2) FROM d"},
+    {"id": "N60", "question": "What are the top 10 products by quantity sold this year, and how much stock do we have of each?",
+     "must": f"""SELECT p.product_code, CAST(SUM(il.net_quantity) AS SIGNED) q {FY.format(join=PROD)}
+                 GROUP BY p.product_code ORDER BY q DESC LIMIT 1""",
+     "should": f"SELECT CAST(sl.cumulative_qty AS SIGNED), sl.report_date {LATEST_CLOSE} AND p.product_code = 'FG00542'"},
+    {"id": "N61", "question": "Which raw material do we hold the most stock of by value right now?",
+     "must": f"""SELECT p.product_description, ROUND(sl.cumulative_value, 2) {LATEST_CLOSE}
+                 AND p.item_group = 'Raw material' ORDER BY sl.cumulative_value DESC LIMIT 1""",
+     "should": LATEST_REPORT},
+    {"id": "N62", "question": "How many units of FG00542 are on open sales orders, and how much of it do we have in stock?",
+     "must": f"""SELECT (SELECT CAST(SUM(s.quantity) AS SIGNED) FROM fact_sales_order_lines s
+                 JOIN dim_products op ON op.product_id = s.product_id WHERE op.product_code = 'FG00542'
+                 AND s.status = 'Open' AND s.order_date <= CURDATE()),
+                 CAST(sl.cumulative_qty AS SIGNED) {LATEST_CLOSE} AND p.product_code = 'FG00542'""",
+     "should": LATEST_REPORT},
+    {"id": "N63", "question": "What share of our FY 2025-26 sales came from Trochoid pumps?",
+     "must": f"""SELECT ROUND(SUM(CASE WHEN p.product_category = 'Trochoid pumps' THEN il.net_taxable_value ELSE 0 END)
+                 * 100 / SUM(il.net_taxable_value), 2) {FY.format(join=PROD).replace("'2627'", "'2526'")}""",
+     "should": f"""SELECT ROUND(SUM(il.net_taxable_value), 2) {FY.format(join=PROD).replace("'2627'", "'2526'")}
+                   AND p.product_category = 'Trochoid pumps'"""},
 ]
 
 # after every docs or prompt change: one question of each main kind + the bugs fixed before

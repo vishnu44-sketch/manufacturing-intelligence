@@ -27,10 +27,13 @@ export type AskMode = 'ml' | ''
 /** One AI model an administrator can choose for a question (GET /api/models, staff only). "auto" = the server
  *  picks (the main model first, the others when it is busy or its daily limit is reached). */
 export interface ModelOption {
-  id: string // 'auto' | 'groq-main' | 'groq-main-2' | 'groq-backup'
+  id: string // 'auto' | 'groq-main' | 'groq-main-2' | 'groq-backup' | 'local' (never part of Auto)
   label: string
   available: boolean // false: shown greyed out, with the note saying why
   note?: string
+  // a slow model (e.g. 'local', the company's own model on a CPU server): "Runs on the company's CPU server - an
+  // answer can take a few minutes" - shown in the dropdown and while its answer is awaited
+  hint?: string
 }
 
 export interface ModelList {

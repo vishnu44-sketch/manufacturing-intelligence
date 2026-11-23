@@ -86,6 +86,16 @@ def test_how_values_may_be_written():
     assert not grading.found(Decimal("4.5"), "it rose 4.55 %")
 
 
+def test_a_whole_number_may_be_written_with_zero_decimals():
+    """20-Nov: N62 failed with "missing 31; missing 191" although the answer said "31.000 units ... 191.000 units"
+    (quantities are DECIMAL(15,3)); a whole-number truth is found with .000 after it, but not inside another number."""
+    answer = "there are 31.000 units on open sales orders and 191.000 units in stock"
+    assert grading.found(31, answer) and grading.found(191, answer)
+    assert grading.found(Decimal("4097"), "4,097.00 items") and grading.found(31, "31 units.")
+    assert not grading.found(31, "31.05 units") and not grading.found(31, "31.500 units")
+    assert not grading.found(31, "131.000 units")
+
+
 @pytest.fixture
 def truth(monkeypatch):
     """The truth 'SQL' of a test item is the list of its values; a real golden SQL gives nothing (no MySQL)."""
