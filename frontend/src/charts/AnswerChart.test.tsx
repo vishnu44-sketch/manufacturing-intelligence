@@ -7,7 +7,10 @@ import { charts, lastChart } from '../test/fakeEcharts'
 import AnswerChart, { describe as describeChart } from './AnswerChart'
 import { buildOption, chartSubtitle, labelFits, percent, readColours } from './chartOption'
 import { pickChart, shortIndian } from './pickChart'
-import { CATEGORY_SALE_TYPE, MONTHLY, SALE_TYPES, TOP5, table } from './testRows'
+import {
+  CATEGORY_SALE_TYPE, DAILY_MONTHLY, DAILY_MONTHLY_COLUMNS, MONTHLY, SALE_TYPES, SALES_RETURNS, SALES_RETURNS_COLUMNS,
+  TOP5, TWO_YEARS, TWO_YEARS_COLUMNS, table,
+} from './testRows'
 
 vi.mock('./echarts', () => import('../test/fakeEcharts'))
 
@@ -385,5 +388,71 @@ describe('buildOption: labels that stay readable', () => {
     expect(phone.xAxis.axisLabel.formatter('Customer number 1')).toBe('Customer nu…')
     const real = buildOption(pickChart(P.headers, P.rows, 'heatmap')!, colours, false, 900).option as Record<string, any>
     expect(real.xAxis.axisLabel.rotate).toBe(0) // Domestic / Export fit side by side
+  })
+})
+
+describe('AnswerChart: one chart per series when they do not belong on one chart', () => {
+  const live = () => charts.filter((c) => !c.disposed)
+
+  it('daily + monthly rows: 2 line charts one under the other, each with its own labels, title, y-scale and PNG', () => {
+    const onShowTable = vi.fn()
+    render(<AnswerChart headers={DAILY_MONTHLY.headers} rows={DAILY_MONTHLY.rows} title="Sales" kind="line"
+      columns={DAILY_MONTHLY_COLUMNS} onShowTable={onShowTable} />)
+    expect(screen.getByRole('group', { name: '2 charts, one per series' })).toBeInTheDocument()
+    expect(live()).toHaveLength(2)
+    const [daily, monthly] = live().map((c) => c.option!)
+    expect(live().map((c) => c.types())).toEqual([['line'], ['line']])
+    expect(daily.xAxis.data).toEqual(['2026-10-21', '2026-10-22', '2026-10-23', '2026-10-24', '2026-10-25', '2026-10-26',
+      '2026-10-27', '2026-10-28', '2026-10-29', '2026-10-30', '2026-10-31'])
+    expect(monthly.xAxis.data).toEqual(['May 2026', 'Jun 2026', 'Jul 2026', 'Aug 2026', 'Sep 2026', 'Oct 2026'])
+    expect(daily.series[0].data[0]).toBe(12450300)
+    expect(monthly.series[0].data[0]).toBe(432100000)
+    expect(screen.getByText('daily')).toBeInTheDocument()
+    expect(screen.getByText('monthly')).toBeInTheDocument()
+    expect(screen.getAllByRole('img').map((img) => img.getAttribute('aria-label'))).toEqual([
+      expect.stringMatching(/^Line chart of net_sales_inr by period_label, 11 points from 2026-10-21 to 2026-10-31/),
+      expect.stringMatching(/^Line chart of net_sales_inr by period_label, 6 points from May 2026 to Oct 2026/),
+    ])
+    // its own Download PNG each; one Chart / Table switch (the table stays one table)
+    expect(screen.getAllByRole('button', { name: 'Download PNG' })).toHaveLength(2)
+    expect(screen.getAllByRole('button', { name: 'Table' })).toHaveLength(1)
+    fireEvent.click(screen.getByRole('button', { name: 'Table' }))
+    expect(onShowTable).toHaveBeenCalledTimes(1)
+    const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
+    fireEvent.click(screen.getAllByRole('button', { name: 'Download PNG' })[1])
+    expect(live()[1].getDataURL).toHaveBeenCalled()
+    expect(live()[0].getDataURL).not.toHaveBeenCalled()
+    click.mockRestore()
+  })
+
+  it('values over 10x apart on the same months: a chart each, with its own y-scale', () => {
+    render(<AnswerChart headers={SALES_RETURNS.headers} rows={SALES_RETURNS.rows} columns={SALES_RETURNS_COLUMNS} />)
+    expect(live()).toHaveLength(2)
+    expect(live().map((c) => c.option!.xAxis.data)).toEqual([['Apr', 'May', 'Jun', 'Jul'], ['Apr', 'May', 'Jun', 'Jul']])
+    expect(live().map((c) => c.option!.series.length)).toEqual([1, 1])
+    expect(screen.getByText('Sales')).toBeInTheDocument()
+    expect(screen.getByText('Returns')).toBeInTheDocument()
+  })
+
+  it('this year vs last year per month stays one chart with both lines', () => {
+    render(<AnswerChart headers={TWO_YEARS.headers} rows={TWO_YEARS.rows} title="This year vs last year" kind="line"
+      columns={TWO_YEARS_COLUMNS} onShowTable={() => {}} />)
+    expect(screen.queryByRole('group', { name: /one per series/ })).toBeNull()
+    expect(live()).toHaveLength(1)
+    expect(lastChart().option!.series.map((s: { name: string }) => s.name)).toEqual(['FY 2025-26', 'FY 2026-27'])
+    expect(lastChart().option!.xAxis.data).toEqual(['Apr', 'May', 'Jun', 'Jul'])
+    expect(screen.getByText('This year vs last year')).toBeInTheDocument()
+    expect(screen.getAllByRole('button', { name: 'Download PNG' })).toHaveLength(1)
+  })
+
+  it('charts with no series are drawn as before: one chart', () => {
+    const monthly = render(<AnswerChart headers={MONTHLY.headers} rows={MONTHLY.rows} title="Net sales by month" />)
+    expect(live()).toHaveLength(1)
+    expect(lastChart().option!.xAxis.data).toHaveLength(15)
+    monthly.unmount()
+    render(<AnswerChart headers={TOP5.headers} rows={TOP5.rows} />)
+    expect(live()).toHaveLength(1)
+    expect(lastChart().types()).toEqual(['bar'])
+    expect(screen.queryByRole('group', { name: /one per series/ })).toBeNull()
   })
 })

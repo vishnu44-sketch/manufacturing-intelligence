@@ -2,9 +2,10 @@
 // screen and under a conversation) and on ML Insights, with the models of /api/models; the chosen model goes
 // with the question as "model" (none for Auto) and is kept in this browser. Other users see no pill and the
 // models list is never asked for. fetch is a fake.
-import { act, fireEvent, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import { callsTo, fakeFetch, type Replies } from '../test/fakeFetch'
+import { RouterProvider } from '../router'
 import { ASHA, BOSS, renderAt } from '../test/render'
 import type { Card, ChatSummary } from '../types'
 import AskPage from './AskPage'
@@ -294,5 +295,71 @@ describe('the local model (company CPU server, 20-Nov)', () => {
     live.send({ type: 'done', chat: CHAT, card: CARD })
     live.end()
     expect(await screen.findByText(CARD.answer)).toBeInTheDocument()
+  })
+})
+
+// 23-Nov: editing a question and History's "Ask again" used Auto even when an administrator had chosen a model
+describe('edit and "Ask again" go with the chosen model', () => {
+  const EDITED = { ...CARD, id: 42, text: 'Top 3 customers in Sep?', answer: 'Sakura had the most.' }
+
+  async function edit(me = BOSS) {
+    const fetch = fakeFetch(replies({ '/api/questions/41/edit': { body: { chat: CHAT, card: EDITED, replaced: 41 } } }))
+    renderAt('/c/7', <AskPage me={me} />)
+    await screen.findByText(CARD.answer)
+    if (me.is_staff) await picker()
+    fireEvent.click(screen.getByRole('button', { name: 'Edit this question' }))
+    fireEvent.change(screen.getByLabelText('Edit the question'), { target: { value: EDITED.text } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save & ask' }))
+    expect(await screen.findByText(EDITED.answer)).toBeInTheDocument()
+    return callsTo(fetch, '/api/questions/41/edit')
+  }
+
+  /** Opens the Ask page the way History's "Ask again" does (the question in the page state) - it asks at once. */
+  async function askAgain(me = BOSS) {
+    const fetch = fakeFetch(replies({ '/api/questions/41/again': { body: { chat: CHAT, card: EDITED } } }))
+    window.history.pushState({ again: { id: 41, text: QUESTION } }, '', '/new')
+    render(<RouterProvider><AskPage me={me} /></RouterProvider>)
+    expect(await screen.findByText(EDITED.answer)).toBeInTheDocument()
+    return callsTo(fetch, '/api/questions/41/again')
+  }
+
+  it('an edited question goes with the kept choice', async () => {
+    window.localStorage.setItem('askModel', 'groq-backup')
+    expect(await edit()).toEqual([{ question: EDITED.text, model: 'groq-backup' }])
+  })
+
+  it('an edited question with Auto sends no "model"', async () => {
+    expect(await edit()).toEqual([{ question: EDITED.text }])
+  })
+
+  it('an edited question picks up a model chosen in the pill just before', async () => {
+    const fetch = fakeFetch(replies({ '/api/questions/41/edit': { body: { chat: CHAT, card: EDITED, replaced: 41 } } }))
+    renderAt('/c/7', <AskPage me={BOSS} />)
+    fireEvent.change(await picker(), { target: { value: 'groq-main' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Edit this question' }))
+    fireEvent.change(screen.getByLabelText('Edit the question'), { target: { value: EDITED.text } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save & ask' }))
+    expect(await screen.findByText(EDITED.answer)).toBeInTheDocument()
+    expect(callsTo(fetch, '/api/questions/41/edit')).toEqual([{ question: EDITED.text, model: 'groq-main' }])
+  })
+
+  it('"Ask again" waits for the models list and goes with the kept choice', async () => {
+    window.localStorage.setItem('askModel', 'groq-backup')
+    expect(await askAgain()).toEqual([{ model: 'groq-backup' }])
+  })
+
+  it('"Ask again" with a kept model that is unavailable today asks with Auto', async () => {
+    window.localStorage.setItem('askModel', 'groq-main-2')   // unavailable in the list
+    expect(await askAgain()).toEqual([{}])
+  })
+
+  it('other users: an edited question never sends a model', async () => {
+    window.localStorage.setItem('askModel', 'groq-main')   // e.g. left by an administrator on this browser
+    expect(await edit(ASHA)).toEqual([{ question: EDITED.text }])
+  })
+
+  it('other users: "Ask again" sends no model', async () => {
+    window.localStorage.setItem('askModel', 'groq-main')
+    expect(await askAgain(ASHA)).toEqual([{}])
   })
 })

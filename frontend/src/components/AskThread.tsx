@@ -305,13 +305,17 @@ function keepModel(id: string) {
 }
 
 /** The model choice of the question box: `models` null = no picker (not an administrator, or the list could not
- *  be read); `model` the id to ask with ("auto" unless an administrator chose an available model). */
-export type ModelChoice = { models: ModelOption[] | null; model: string; choose: (id: string) => void }
+ *  be read); `model` the id to ask with ("auto" unless an administrator chose an available model). `current()`
+ *  (23-Nov) gives the same id once the models list is read - for "Ask again" from History, which asks as soon as
+ *  the page opens (before the list came), and for an edited question. */
+export type ModelChoice = { models: ModelOption[] | null; model: string; choose: (id: string) => void
+  current: () => Promise<string> }
 
 /** The model choice for an administrator (`staff`); for everyone else no picker, no /api/models call, always Auto. */
 export function useModelChoice(staff: boolean): ModelChoice {
   const [models, setModels] = useState<ModelOption[] | null>(null)
   const [chosen, setChosen] = useState(readModel)
+  const latest = useRef(chosen) // the choice now, for current() called from an earlier render
   useEffect(() => {
     if (!staff) return
     let live = true
@@ -321,8 +325,13 @@ export function useModelChoice(staff: boolean): ModelChoice {
   const shown = staff ? models : null
   // a kept choice that is not in the list now, or not available today, asks with Auto
   const model = shown?.some((m) => m.id === chosen && m.available) ? chosen : 'auto'
-  const choose = (id: string) => { setChosen(id); keepModel(id) }
-  return { models: shown, model, choose }
+  const choose = (id: string) => { setChosen(id); latest.current = id; keepModel(id) }
+  const current = async () => {
+    if (!staff) return 'auto'
+    const list = await loadModels()
+    return list?.some((m) => m.id === latest.current && m.available) ? latest.current : 'auto'
+  }
+  return { models: shown, model, choose, current }
 }
 
 /** The small model pill in the question box (administrators only): a quiet "Auto" with a chip icon; a model

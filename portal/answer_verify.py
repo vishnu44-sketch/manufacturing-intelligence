@@ -31,7 +31,10 @@ What it flags:
    rows but gives none of their codes;
 9. (20-Nov) an amount called a total / "in all" that is one row's value of a money / quantity column whose values
    differ between the rows ("a total stock value of INR 466,320.00" = the first of 29 items) - the correction gives
-   the real total, worked out by our code.
+   the real total, worked out by our code;
+10. (23-Nov) a range ("ranging from X to Y", "between X and Y", "lowest X ... highest Y") whose ends are values of one
+   column of the rows but not its lowest and highest (worked out per series: 'monthly' and 'daily' rows in one column)
+   - the correction gives the real lowest and highest with their rows.
 What it never flags: other percentages, counts and amounts under 1,000, dates, years, FY labels, "no actual sales yet"
 (actual sales of a forecast month), claims with "beyond / after / only / other ..." ("no forecast beyond Oct 2027"),
 a month with no row ("no export sales in Sep 2026" - the missing-months note asks for that), a claim about a name
@@ -741,6 +744,210 @@ def one_row_total_problems(result, answer):
     return []
 
 
+# ------------------------------------------------------------------ check 10: a range that is not the rows' range
+# 23-Nov: "create 2 line charts, one for the last 6 months sales and another for last month's day-wise sales" got
+# (Groq) "monthly net sales ranging from INR 459,457,491.70 in May 2026 to INR 517,494,492.75 in Oct 2026" - but the
+# lowest month of the rows was Jul 2026 (434,659,336.50); the rows had both series ('monthly' and 'daily') in one
+# column. A sentence that gives a range ("ranging / ranged / range from X to Y", "between X and Y", "from a low of X
+# to a high of Y", "the lowest X ... the highest Y"), where X and Y are values of ONE number column of the rows, is
+# flagged when X is not that column's lowest value or Y not its highest (either order) - worked out over the rows of
+# the same series when the rows have a series / group column (a text column whose values repeat: 'monthly' /
+# 'daily', a customer of customer x month rows ...). The correction gives the real lowest and highest with their rows.
+# Never flagged: X or Y not in the rows, X and Y of different columns (a forecast's low_inr to high_inr) or of
+# different series, a range over a part the sentence names ("from Aug to Oct 2026 ...", "the last 3 months" of 6
+# rows, "excluding Nov ..."), a list cut at the row limit (the lowest may not be shown), percents, amounts under 1,000
+# (days, counts), a column with negative values, "the difference / gap between X and Y".
+_RANGE_AMOUNT = (r"(?:(?:INR|Rs\.?)\s*\d[\d,]*(?:\.\d+)?|\d{1,3}(?:,\d{2,3})+(?:\.\d+)?|\d+\.\d+)"
+                 r"(?:\s*(?:crores?|cr|lakhs?|lacs?|millions?|mn|billions?|bn|thousand)\b)?")
+_APPROX = r"(?:(?:about|around|roughly|approximately|approx\.?|nearly|almost|just|some)\s+)?"
+_RANGES = [re.compile(pattern, re.I) for pattern in (
+    # "ranging from X in May 2026 to Y in Oct 2026", "ranged widely from a low of X to a high of Y", "a range of X to Y"
+    rf"\b(?:rang(?:e|es|ed|ing)|var(?:y|ies|ied|ying)|fluctuat(?:e|es|ed|ing)|span(?:s|ned|ning)?)\s+(?:\w+\s+){{0,3}}?"
+    rf"(?:from|of)\s+{_APPROX}(?:a\s+(?:low|minimum)\s+of\s+{_APPROX})?(?P<x>{_RANGE_AMOUNT})(?P<mid>.{{0,90}}?)"
+    rf"\b(?:to|and)\s+{_APPROX}(?:a\s+(?:high|maximum|peak)\s+of\s+{_APPROX})?(?P<y>{_RANGE_AMOUNT})",
+    # "between X and Y"
+    rf"\bbetween\s+{_APPROX}(?P<x>{_RANGE_AMOUNT})(?P<mid>.{{0,90}}?)\band\s+{_APPROX}(?P<y>{_RANGE_AMOUNT})",
+    # "from a low of X (Jul 2026) to a high of Y"
+    rf"\bfrom\s+(?:a\s+)?(?:low|minimum|min)\s+of\s+{_APPROX}(?P<x>{_RANGE_AMOUNT})(?P<mid>.{{0,90}}?)"
+    rf"\bto\s+(?:a\s+)?(?:high|maximum|max|peak)\s+of\s+{_APPROX}(?P<y>{_RANGE_AMOUNT})",
+    # "the lowest month was Jul 2026 at X ... the highest was Oct 2026 at Y" (and the other way round) - the amount
+    # right after its word: in "Jul 2027 about INR 50.0 Cr (the lowest) and Aug 2027 INR 537,112,731.17" the amount
+    # after "lowest" is another month's, so no comma or ")" may come between the word and its amount
+    rf"\b(?:lowest|minimum|smallest|weakest)\b[^;,)]{{0,60}}?(?P<x>{_RANGE_AMOUNT})(?P<mid>[^;]{{0,150}}?)"
+    rf"\b(?:highest|maximum|largest|biggest|strongest|peak)\b[^;,)]{{0,60}}?(?P<y>{_RANGE_AMOUNT})",
+    rf"\b(?:highest|maximum|largest|biggest|strongest|peak)\b[^;,)]{{0,60}}?(?P<y>{_RANGE_AMOUNT})"
+    rf"(?P<mid>[^;]{{0,150}}?)\b(?:lowest|minimum|smallest|weakest)\b[^;,)]{{0,60}}?(?P<x>{_RANGE_AMOUNT})",
+)]
+_PERCENT_AFTER = re.compile(r"\s*(?:%|percent\b|per\s+cent\b)", re.I)
+# "the difference / gap / growth between X and Y" is no range
+_NOT_A_RANGE = re.compile(r"\b(?:differen\w*|differ\w*|gap|compar\w*|change[sd]?|growth|grew|ris(?:e|es|ing)|rose|"
+                          r"increase[sd]?|decrease[sd]?|drop(?:s|ped)?|f[ae]ll|falls|jump(?:s|ed)?|mov(?:e|es|ed)|"
+                          r"shift(?:s|ed)?|split|divided|ratio|vs\.?|versus)\b[^.;]{0,40}$", re.I)
+# a range over a part of the rows the sentence names in words
+_A_PART = re.compile(r"\b(?:excluding|exclude[sd]?|except|apart\s+from|other\s+than|among(?:st)?|without|only|"
+                     r"weekdays?|weekends?|working\s+days|q[1-4]|h[12]|quarters?|half|halves|so\s+far|to\s+date|"
+                     r"till\s+date)\b", re.I)
+_NUMBER_WORDS = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8, "nine": 9,
+                 "ten": 10, "eleven": 11, "twelve": 12}
+_FIRST_N = re.compile(rf"\b(?:first|last|past|previous|top|bottom|next|latest|recent)\s+"
+                      rf"(\d+|{'|'.join(_NUMBER_WORDS)})\b", re.I)
+_PERCENT_COLUMN = re.compile(r"pct|percent|share|ratio|rate", re.I)
+
+
+def _label_words(row):
+    """The words a sentence names a row by: its text cells and dates (_row_words) and its months ('oct')."""
+    words = _row_words(row)
+    for cell in row:
+        if isinstance(cell, str):
+            words |= {month.split()[0].lower() for month in months_in(cell)}
+    return words
+
+
+def _text_words(text):
+    return set(_ROW_WORD.findall((text or "").lower())) | {month.split()[0].lower() for month in months_in(text)}
+
+
+def _in_order(rows):
+    """The rows in time order (their first date, else their first month), else as they came."""
+    def when(row):
+        for cell in row:
+            if isinstance(cell, datetime.date):
+                return cell.date() if isinstance(cell, datetime.datetime) else cell
+        for cell in row:
+            if isinstance(cell, str) and months_in(cell):
+                word, year = months_in(cell)[0].split()
+                return datetime.date(int(year), list(_MONTHS.values()).index(word) + 1, 1)
+        return None
+    keys = [when(row) for row in rows]
+    if any(key is None for key in keys):
+        return list(rows)
+    return [row for _key, row in sorted(zip(keys, rows), key=lambda pair: pair[0])]
+
+
+def _ranges_in(sentence):
+    """[(x, y, the sentence without the range)] - x / y = (as written, value, scale, decimals) - of the ranges a
+    sentence gives; amounts written as percents, and ranges with another amount in between, are left out."""
+    found = {}
+    for pattern in _RANGES:
+        for match in pattern.finditer(sentence):
+            if pattern is _RANGES[1] and _NOT_A_RANGE.search(sentence[:match.start()]):
+                continue
+            if any(_PERCENT_AFTER.match(sentence, match.end(name)) for name in ("x", "y")):
+                continue
+            if any(float(v) * s >= MIN_AMOUNT for _w, v, s in answer_check.answer_numbers(match.group("mid"))):
+                continue
+            ends = []
+            for name in ("x", "y"):
+                numbers = answer_check.answer_numbers(match.group(name))
+                if len(numbers) != 1:
+                    break
+                _written, value, scale = numbers[0]
+                ends.append((match.group(name).strip(), value, scale, max(0, -value.as_tuple().exponent)))
+            if len(ends) != 2:
+                continue
+            # the range and the label right after its end ("... to Y in Oct 2026") are taken out of the sentence:
+            # what is left names the part of the rows the range is about ("From Aug to Oct 2026, ...")
+            tail = re.match(r"[^,;]{0,40}", sentence[match.end():]).group(0)
+            rest = sentence[:match.start()] + " " + sentence[match.end() + len(tail):]
+            found.setdefault((match.start("x"), match.start("y")), (ends[0], ends[1], rest))
+    return list(found.values())
+
+
+def _a_part_named(sentence, rest, scope, x_row, y_row, hit):
+    """True when the sentence gives the range of a part of the scope's rows: a few rows named apart from the range
+    ("From Aug to Oct 2026, ..."), "the last 3 months" of 6 rows, "excluding / only / Q2 ...". hit(row) = True when
+    the range's ends are that part's lowest and highest."""
+    if _A_PART.search(sentence):
+        return True
+    for count in _FIRST_N.findall(sentence):
+        if _NUMBER_WORDS.get(count.lower(), int(count) if count.isdigit() else 0) != len(scope):
+            return True
+    ordered = _in_order(scope)
+    common = set.intersection(*(_label_words(row) for row in ordered))
+    words = _text_words(rest)
+    named = [n for n, row in enumerate(ordered) if (_label_words(row) - common) & words]
+    if not named:
+        return False
+    if len(named) < 2 or max(named) - min(named) + 1 < len(ordered):
+        return True  # one row, or a run of rows that is not all of them
+    part = [ordered[n] for n in named] + [x_row, y_row]
+    return hit(part)
+
+
+def range_problems(result, answer):
+    """The correction sentences of check 10 ([] when nothing is wrong): a range of the answer whose ends are values of
+    one column of the rows but not that column's lowest and highest (in the same series)."""
+    rows = [row for row in (result.rows or [])
+            if not any(isinstance(cell, str) and _TOTAL_ROW.match(cell) for cell in row)]
+    if len(rows) < 3 or result.truncated or agent.found_nothing(rows):
+        return []
+    columns = [str(name) for name in (result.columns or [])]
+    numbers, groups = [], []
+    for i, name in enumerate(columns):
+        values = [row[i] for row in rows if i < len(row) and row[i] is not None]
+        if values and all(_number(v) for v in values):
+            if not (len(values) < 3 or any(v < 0 for v in values) or _PERCENT_COLUMN.search(name)
+                    or agent._PLAIN_INT.search(name) or agent._NOT_AN_AMOUNT.search(name)):
+                numbers.append(i)
+        elif values and all(isinstance(v, str) for v in values) and len(set(values)) < len(values):
+            groups.append(i)  # a series / group column: its values repeat ('monthly' / 'daily')
+    if not numbers:
+        return []
+    told = []
+    for sentence in re.split(r"(?<=[.!?])\s+|\n+", answer or ""):
+        for x, y, rest in _ranges_in(sentence):
+            if float(x[1]) * x[2] < MIN_AMOUNT or float(y[1]) * y[2] < MIN_AMOUNT:
+                continue
+            wrong = _wrong_range(rows, columns, numbers, groups, sentence, rest, x, y)
+            if wrong:
+                told.append(wrong)
+    return list(dict.fromkeys(told))
+
+
+def _wrong_range(rows, columns, numbers, groups, sentence, rest, x, y):
+    """The correction for one range, or '' when it is right, not checkable or about a part of the rows."""
+    def at(end, value):
+        return _found(float(end[1]), end[2], end[3], [abs(float(value))])
+
+    wrong = ""
+    for i in numbers:
+        x_rows = [row for row in rows if row[i] is not None and at(x, row[i])]
+        y_rows = [row for row in rows if row[i] is not None and at(y, row[i])]
+        for x_row in x_rows:
+            for y_row in y_rows:
+                if x_row is y_row:
+                    continue
+                same = [g for g in groups if x_row[g] == y_row[g]]
+                other = [g for g in groups if x_row[g] != y_row[g]]
+                scope = [row for row in rows if row[i] is not None and all(row[g] == x_row[g] for g in same)]
+                if len(scope) < 3 or (other and len({tuple(row[g] for g in other) for row in scope}) < len(scope)):
+                    continue  # the ends are of two series mixed in one column: not checked
+
+                def hit(part, i=i):
+                    low, high = min(part, key=lambda r: r[i]), max(part, key=lambda r: r[i])
+                    return (at(x, low[i]) and at(y, high[i])) or (at(x, high[i]) and at(y, low[i]))
+
+                if hit(scope) or _a_part_named(sentence, rest, scope, x_row, y_row, hit):
+                    return ""  # right (for some reading of the rows): never flagged
+                if not wrong:
+                    low, high = min(scope, key=lambda r: r[i]), max(scope, key=lambda r: r[i])
+                    series = " and ".join(f"{columns[g]} '{x_row[g]}'" for g in same)
+                    series = f" of the {series} rows" if series else ""
+
+                    def label(row):
+                        for g, cell in enumerate(row):
+                            if isinstance(cell, str) and cell.strip() and g not in same:
+                                return cell.strip()
+                        return next((agent.format_value(c)[0] for c in row if isinstance(c, datetime.date)), "")
+
+                    wrong = (f'Your answer says "{sentence.strip()}", but {x[0]} to {y[0]} is not the range of '
+                             f"{columns[i]}{series}: over its {len(scope)} rows the lowest is "
+                             f"{_shown(low[i], columns[i])} ({label(low)}) and the highest is "
+                             f"{_shown(high[i], columns[i])} ({label(high)}) - worked out by our code. Give that range "
+                             f"with these rows.")
+    return wrong
+
+
 # ------------------------------------------------------------------ the check and the correction
 def problems(result, answer, sent_text="", extra_facts="", correction=""):
     """(the correction message for the AI, the numbers it adds) - ('', '') when the answer is fine.
@@ -763,6 +970,7 @@ def _problems(result, answer, sent_text, extra_facts, correction=""):
     found += forecast_rupee_problems(result, answer)
     found += product_code_problems(result, answer)
     found += one_row_total_problems(result, answer)
+    found += range_problems(result, answer)
     missing = unknown_amounts(result, answer, f"{sent_text} {facts} {extra_facts} {correction}")
     if missing:
         one = len(missing) == 1

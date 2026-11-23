@@ -243,7 +243,8 @@ def month_row(year, month, amount):
     return [end.strftime("%b %Y"), start, end, Decimal(amount)]
 
 
-MONTHS_ROWS = [month_row(2026, m, f"{a}.00") for m, a in ((6, 1111111), (7, 2222222), (8, 3333333), (9, 4444444),
+# 23-Nov: Jun raised from 1,111,111 to 1,311,111 so the made-up answer "lowest in Nov 2026" is true for these rows (the new range check 10 rightly flagged it)
+MONTHS_ROWS = [month_row(2026, m, f"{a}.00") for m, a in ((6, 1311111), (7, 2222222), (8, 3333333), (9, 4444444),
                                                          (10, 5555555), (11, 1234567))]
 PART_ANSWER = ("Net sales were highest in Oct 2026 (INR 5,555,555.00) and lowest in Nov 2026 (INR 1,234,567.00).")
 
@@ -273,7 +274,7 @@ def test_a_month_after_the_data_end_told_as_incomplete_is_not_flagged(data_end, 
 
 def test_months_up_to_the_data_end_are_not_flagged(data_end):
     rows = MONTHS_ROWS[:-1]
-    answer = "Net sales were highest in Oct 2026 (INR 5,555,555.00) and lowest in Jun 2026 (INR 1,111,111.00)."
+    answer = "Net sales were highest in Oct 2026 (INR 5,555,555.00) and lowest in Jun 2026 (INR 1,311,111.00)."
     assert answer_verify.problems(result_of(MONTHS_SQL, MONTHS_COLUMNS, rows), answer) == ("", "")
 
 
